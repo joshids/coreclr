@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 
     //
@@ -94,16 +93,7 @@
         // Output
         MDA_DEFINE_OUTPUT(DangerousThreadingAPI)
         MDA_DEFINE_OUTPUT_END(DangerousThreadingAPI)         
-    MDA_DEFINE_ASSISTANT_END(DangerousThreadingAPI)
-    
-    // DateTimeInvalidLocalFormat
-    MDA_DEFINE_ASSISTANT(DateTimeInvalidLocalFormat, NULL)
-        // Input
-        MDA_DEFINE_INPUT_AS_SWITCH(DateTimeInvalidLocalFormat)
-        // Output
-        MDA_DEFINE_OUTPUT(DateTimeInvalidLocalFormat)
-        MDA_DEFINE_OUTPUT_END(DateTimeInvalidLocalFormat)
-    MDA_DEFINE_ASSISTANT_END(DateTimeInvalidLocalFormat)   
+    MDA_DEFINE_ASSISTANT_END(DangerousThreadingAPI)  
 
     // DirtyCastAndCallOnInterface
     MDA_DEFINE_ASSISTANT(DirtyCastAndCallOnInterface, NULL)
@@ -226,15 +216,6 @@
         MDA_DEFINE_OUTPUT_END(InvalidFunctionPointerInDelegate)      
     MDA_DEFINE_ASSISTANT_END(InvalidFunctionPointerInDelegate)
 
-    // InvalidGCHandleCookie
-    MDA_DEFINE_ASSISTANT(InvalidGCHandleCookie, NULL)
-        // Input
-        MDA_DEFINE_INPUT_AS_SWITCH(InvalidGCHandleCookie)
-        // Output
-        MDA_DEFINE_OUTPUT(InvalidGCHandleCookie)
-        MDA_DEFINE_OUTPUT_END(InvalidGCHandleCookie)         
-    MDA_DEFINE_ASSISTANT_END(InvalidGCHandleCookie)
-
     // InvalidIUnknown
     MDA_DEFINE_ASSISTANT(InvalidIUnknown, NULL)
         // Input
@@ -352,15 +333,6 @@
             MDA_XSD_CHOICE_END()
         MDA_DEFINE_OUTPUT_END(Marshaling)
     MDA_DEFINE_ASSISTANT_END(Marshaling)
-
-    // MemberInfoCacheCreation
-    MDA_DEFINE_ASSISTANT(MemberInfoCacheCreation, NULL)   
-        // Input
-        MDA_DEFINE_INPUT_AS_SWITCH(MemberInfoCacheCreation)
-        // Output
-        MDA_DEFINE_OUTPUT(MemberInfoCacheCreation)
-        MDA_DEFINE_OUTPUT_END(MemberInfoCacheCreation)         
-    MDA_DEFINE_ASSISTANT_END(MemberInfoCacheCreation)   
 
     // ModuloObjectHashcode
     MDA_DEFINE_ASSISTANT(ModuloObjectHashcode, W("moh"))
@@ -490,17 +462,6 @@
         MDA_DEFINE_OUTPUT(ReportAvOnComRelease)
         MDA_DEFINE_OUTPUT_END(ReportAvOnComRelease)
     MDA_DEFINE_ASSISTANT_END(ReportAvOnComRelease)   
-
-    // StreamWriterBufferedDataLost
-    MDA_DEFINE_ASSISTANT(StreamWriterBufferedDataLost, NULL)
-        // Input
-        MDA_DEFINE_INPUT(StreamWriterBufferedDataLost)
-            MDA_XSD_ATTRIBUTE_DEFAULT(CaptureAllocatedCallStack, BOOL, W("false"))
-        MDA_DEFINE_INPUT_END(StreamWriterBufferedDataLost)
-        //Output
-        MDA_DEFINE_OUTPUT(StreamWriterBufferedDataLost)
-        MDA_DEFINE_OUTPUT_END(StreamWriterBufferedDataLost)        
-    MDA_DEFINE_ASSISTANT_END(StreamWriterBufferedDataLost)
     
     // VirtualCERCall
     MDA_DEFINE_ASSISTANT(VirtualCERCall, NULL)

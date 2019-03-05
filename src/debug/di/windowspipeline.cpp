@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //*****************************************************************************
 // File: WindowsPipeline.cpp
 // 
@@ -75,7 +74,7 @@ public:
         LPPROCESS_INFORMATION lpProcessInformation);
 
     // Attach
-    virtual HRESULT DebugActiveProcess(MachineInfo machineInfo, DWORD processId);
+    virtual HRESULT DebugActiveProcess(MachineInfo machineInfo, const ProcessDescriptor& processDescriptor);
 
     // Detach
     virtual HRESULT DebugActiveProcessStop(DWORD processId);
@@ -206,15 +205,15 @@ HRESULT WindowsNativePipeline::CreateProcessUnderDebugger(
 }
 
 // Attach the debugger to this process.
-HRESULT WindowsNativePipeline::DebugActiveProcess(MachineInfo machineInfo, DWORD processId)
+HRESULT WindowsNativePipeline::DebugActiveProcess(MachineInfo machineInfo, const ProcessDescriptor& processDescriptor)
 {
     HRESULT hr = E_FAIL;
-    BOOL ret = ::DebugActiveProcess(processId);
+    BOOL ret = ::DebugActiveProcess(processDescriptor.m_Pid);
 
     if (ret)
     {
         hr = S_OK;
-        m_dwProcessId = processId;
+        m_dwProcessId = processDescriptor.m_Pid;
         UpdateDebugSetProcessKillOnExit();
     }
     else
@@ -234,7 +233,7 @@ HRESULT WindowsNativePipeline::DebugActiveProcess(MachineInfo machineInfo, DWORD
             // attached.  But I think it's better to only return the specific error code if we know for sure
             // the case is true.
             BOOL fIsDebuggerPresent = FALSE;
-            if (SUCCEEDED(IsRemoteDebuggerPresent(processId, &fIsDebuggerPresent)))
+            if (SUCCEEDED(IsRemoteDebuggerPresent(processDescriptor.m_Pid, &fIsDebuggerPresent)))
             {
                 if (fIsDebuggerPresent)
                 {

@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 // 
 // File: ILMarshalers.cpp
 // 
@@ -253,25 +252,60 @@ LocalDesc ILWSTRMarshaler::GetManagedType()
 void ILWSTRMarshaler::EmitConvertSpaceCLRToNative(ILCodeStream* pslILEmit)
 {
     LIMITED_METHOD_CONTRACT;
-    UNREACHABLE_MSG("Should be in-only and all other paths are covered by the EmitConvertSpaceAndContents* paths");
+    UNREACHABLE_MSG("All paths to this function are covered by the EmitConvertSpaceAndContents* paths");
 }
 
 void ILWSTRMarshaler::EmitConvertContentsCLRToNative(ILCodeStream* pslILEmit)
 {
-    LIMITED_METHOD_CONTRACT;
-    UNREACHABLE_MSG("Should be in-only and all other paths are covered by the EmitConvertSpaceAndContents* paths");
+    STANDARD_VM_CONTRACT;
+
+    // This code path should only be called by an out marshalling. Other codepaths that convert a string to native
+    // should all go through EmitConvertSpaceAndContentsCLRToNative
+    _ASSERTE(IsOut(m_dwMarshalFlags) && !IsCLRToNative(m_dwMarshalFlags) && !IsByref(m_dwMarshalFlags));
+    
+    ILCodeLabel* pNullRefLabel = pslILEmit->NewCodeLabel();
+
+    EmitLoadManagedValue(pslILEmit);
+    pslILEmit->EmitBRFALSE(pNullRefLabel);
+
+    EmitLoadManagedValue(pslILEmit);
+    EmitLoadNativeValue(pslILEmit);
+
+    EmitLoadManagedValue(pslILEmit);
+    EmitCheckManagedStringLength(pslILEmit);
+    
+    // static void System.String.InternalCopy(String src, IntPtr dest,int len)
+    pslILEmit->EmitCALL(METHOD__STRING__INTERNAL_COPY, 3, 0);
+    pslILEmit->EmitLabel(pNullRefLabel);
 }
 
 void ILWSTRMarshaler::EmitConvertSpaceNativeToCLR(ILCodeStream* pslILEmit)
 {
-    LIMITED_METHOD_CONTRACT;
-    UNREACHABLE_MSG("Should be in-only and all other paths are covered by the EmitConvertSpaceAndContents* paths");
+    STANDARD_VM_CONTRACT;
+    // We currently don't marshal strings from the native to the CLR side in a Reverse-PInvoke unless
+    // the parameter is explicitly annotated as an [In] parameter.
+    pslILEmit->EmitLDNULL();
+    EmitStoreManagedValue(pslILEmit);
 }    
 
 void ILWSTRMarshaler::EmitConvertContentsNativeToCLR(ILCodeStream* pslILEmit)
 {
-    LIMITED_METHOD_CONTRACT;
-    UNREACHABLE_MSG("Should be in-only and all other paths are covered by the EmitConvertSpaceAndContents* paths");
+    STANDARD_VM_CONTRACT;
+    
+    ILCodeLabel* pIsNullLabel = pslILEmit->NewCodeLabel();
+        
+    EmitLoadNativeValue(pslILEmit);
+    pslILEmit->EmitBRFALSE(pIsNullLabel);
+
+    EmitLoadNativeValue(pslILEmit);
+    pslILEmit->EmitDUP();
+    EmitCheckNativeStringLength(pslILEmit);
+    pslILEmit->EmitPOP();       // pop num chars
+    
+    pslILEmit->EmitNEWOBJ(METHOD__STRING__CTOR_CHARPTR, 1);
+    EmitStoreManagedValue(pslILEmit);
+    
+    pslILEmit->EmitLabel(pIsNullLabel);
 }    
 
 bool ILWSTRMarshaler::NeedsClearNative()
@@ -294,7 +328,7 @@ void ILWSTRMarshaler::EmitClearNative(ILCodeStream* pslILEmit)
 
     EmitLoadNativeValue(pslILEmit);
     // static void CoTaskMemFree(IntPtr ptr)
-    pslILEmit->EmitCALL(METHOD__WIN32NATIVE__COTASKMEMFREE, 1, 0);
+    pslILEmit->EmitCALL(METHOD__MARSHAL__FREE_CO_TASK_MEM, 1, 0);
 }
 
 void ILWSTRMarshaler::EmitClearNativeTemp(ILCodeStream* pslILEmit)
@@ -317,11 +351,10 @@ void ILWSTRMarshaler::EmitCheckManagedStringLength(ILCodeStream* pslILEmit)
 {
     STANDARD_VM_CONTRACT;
 
+    // Note: The maximum size of managed string is under 2GB bytes. This cannot overflow.
     pslILEmit->EmitCALL(METHOD__STRING__GET_LENGTH, 1, 1);
     pslILEmit->EmitLDC(1);
     pslILEmit->EmitADD();
-    pslILEmit->EmitDUP();
-    pslILEmit->EmitCALL(METHOD__STUBHELPERS__CHECK_STRING_LENGTH, 1, 0);
     pslILEmit->EmitDUP();
     pslILEmit->EmitADD();           // (length+1) * sizeof(WCHAR)
 }
@@ -449,27 +482,6 @@ void ILWSTRMarshaler::EmitCheckNativeStringLength(ILCodeStream* pslILEmit)
     pslILEmit->EmitCALL(METHOD__STUBHELPERS__CHECK_STRING_LENGTH, 1, 0);
 }
 
-void ILWSTRMarshaler::EmitConvertSpaceAndContentsNativeToCLR(ILCodeStream* pslILEmit)
-{
-    STANDARD_VM_CONTRACT;
-
-    ILCodeLabel* pIsNullLabelByref = pslILEmit->NewCodeLabel();
-        
-    EmitLoadNativeValue(pslILEmit);
-    pslILEmit->EmitBRFALSE(pIsNullLabelByref);
-
-    EmitLoadNativeValue(pslILEmit);
-    pslILEmit->EmitDUP();
-    EmitCheckNativeStringLength(pslILEmit);
-    pslILEmit->EmitPOP();       // pop num chars
-    
-    pslILEmit->EmitNEWOBJ(METHOD__STRING__CTOR_CHARPTR, 1);
-    EmitStoreManagedValue(pslILEmit);
-    
-    pslILEmit->EmitLabel(pIsNullLabelByref);
-}
-
-
 LocalDesc ILOptimizedAllocMarshaler::GetNativeType()
 {
     LIMITED_METHOD_CONTRACT;
@@ -507,6 +519,155 @@ void ILOptimizedAllocMarshaler::EmitClearNative(ILCodeStream* pslILEmit)
         pslILEmit->EmitLabel(pOptimize);
     }
 }
+
+LocalDesc ILUTF8BufferMarshaler::GetManagedType()
+{
+    STANDARD_VM_CONTRACT;
+    return LocalDesc(MscorlibBinder::GetClass(CLASS__STRING_BUILDER));
+}
+
+void ILUTF8BufferMarshaler::EmitConvertSpaceCLRToNative(ILCodeStream* pslILEmit)
+{
+    STANDARD_VM_CONTRACT;
+
+    ILCodeLabel* pNullRefLabel = pslILEmit->NewCodeLabel();
+
+    pslILEmit->EmitLoadNullPtr();
+    EmitStoreNativeValue(pslILEmit);
+
+    EmitLoadManagedValue(pslILEmit);
+    pslILEmit->EmitBRFALSE(pNullRefLabel);
+
+    EmitLoadManagedValue(pslILEmit);
+    // int System.Text.StringBuilder.get_Capacity()
+    pslILEmit->EmitCALL(METHOD__STRING_BUILDER__GET_CAPACITY, 1, 1);
+    pslILEmit->EmitDUP();
+
+    // static void StubHelpers.CheckStringLength(int length)
+    pslILEmit->EmitCALL(METHOD__STUBHELPERS__CHECK_STRING_LENGTH, 1, 0);
+
+    // Max number of bytes for UTF8 string in BMP plane is ( StringBuilder.Capacity + 1 ) * 3 + 1
+    // first +1 if the high surrogate is '?' and second +1 for null byte.
+
+    // stack: capacity_in_bytes
+    pslILEmit->EmitLDC(1);
+    pslILEmit->EmitADD();
+
+    // stack: capacity
+    pslILEmit->EmitLDC(3);
+    pslILEmit->EmitMUL();
+
+    // stack: offset_of_null
+    DWORD dwTmpOffsetOfSecretNull = pslILEmit->NewLocal(ELEMENT_TYPE_I4);
+    pslILEmit->EmitDUP();
+    pslILEmit->EmitSTLOC(dwTmpOffsetOfSecretNull); // make sure the stack is empty for localloc
+
+    // make space for '\0'
+    pslILEmit->EmitLDC(1);
+    pslILEmit->EmitADD();
+
+    // stack: alloc_size_in_bytes
+    ILCodeLabel *pAllocRejoin = pslILEmit->NewCodeLabel();
+    if (IsCLRToNative(m_dwMarshalFlags) && !IsByref(m_dwMarshalFlags))
+    {
+        ILCodeLabel *pNoOptimize = pslILEmit->NewCodeLabel();
+        m_dwLocalBuffer = pslILEmit->NewLocal(ELEMENT_TYPE_I);
+
+        // LocalBuffer = 0
+        pslILEmit->EmitLoadNullPtr();
+        pslILEmit->EmitSTLOC(m_dwLocalBuffer);
+
+        // if (alloc_size_in_bytes > MAX_LOCAL_BUFFER_LENGTH) goto NoOptimize
+        pslILEmit->EmitDUP();
+        pslILEmit->EmitLDC(MAX_LOCAL_BUFFER_LENGTH);
+        pslILEmit->EmitCGT_UN();
+        pslILEmit->EmitBRTRUE(pNoOptimize);
+
+        pslILEmit->EmitLOCALLOC();
+        pslILEmit->EmitDUP();
+        pslILEmit->EmitSTLOC(m_dwLocalBuffer);
+        pslILEmit->EmitBR(pAllocRejoin);
+
+        pslILEmit->EmitLabel(pNoOptimize);
+    }
+
+    // static IntPtr AllocCoTaskMem(int cb)
+    pslILEmit->EmitCALL(METHOD__MARSHAL__ALLOC_CO_TASK_MEM, 1, 1);
+
+    pslILEmit->EmitLabel(pAllocRejoin);
+
+    // stack: native_addr
+
+    pslILEmit->EmitDUP();
+    EmitStoreNativeValue(pslILEmit);
+
+    pslILEmit->EmitLDLOC(dwTmpOffsetOfSecretNull);
+
+    // stack: native_addr offset_of_null
+    pslILEmit->EmitADD();
+
+    // stack: addr_of_null0    
+    pslILEmit->EmitLDC(0);
+    pslILEmit->EmitSTIND_I1();
+
+    pslILEmit->EmitLabel(pNullRefLabel);
+}
+
+void ILUTF8BufferMarshaler::EmitConvertContentsCLRToNative(ILCodeStream* pslILEmit)
+{
+    STANDARD_VM_CONTRACT;
+    DWORD dwUtf8MarshalFlags =
+        (m_pargs->m_pMarshalInfo->GetBestFitMapping() & 0xFF) |
+        (m_pargs->m_pMarshalInfo->GetThrowOnUnmappableChar() << 8);
+
+    // setup to call UTF8BufferMarshaler.ConvertToNative
+    EmitLoadManagedValue(pslILEmit);
+    EmitLoadNativeValue(pslILEmit);
+    pslILEmit->EmitLDC(dwUtf8MarshalFlags);
+
+    //ConvertToNative(StringBuilder sb,IntPtr pNativeBuffer, int flags)	
+    pslILEmit->EmitCALL(METHOD__UTF8BUFFERMARSHALER__CONVERT_TO_NATIVE, 3, 1);
+    EmitStoreNativeValue(pslILEmit);
+}
+
+void ILUTF8BufferMarshaler::EmitConvertSpaceNativeToCLR(ILCodeStream* pslILEmit)
+{
+    STANDARD_VM_CONTRACT;
+
+    ILCodeLabel* pNullRefLabel = pslILEmit->NewCodeLabel();
+
+    EmitLoadNativeValue(pslILEmit);
+    pslILEmit->EmitBRFALSE(pNullRefLabel);
+
+    if (IsIn(m_dwMarshalFlags) || IsCLRToNative(m_dwMarshalFlags))
+    {
+        EmitLoadNativeValue(pslILEmit);
+        // static int System.String.strlen(byte* ptr)
+        pslILEmit->EmitCALL(METHOD__STRING__STRLEN, 1, 1);
+    }
+    else
+    {
+        // don't touch the native buffer in the native->CLR out-only case
+        pslILEmit->EmitLDC(0);
+    }
+    // Convert to UTF8 and then call 
+    // System.Text.StringBuilder..ctor(int capacity)
+    pslILEmit->EmitNEWOBJ(METHOD__STRING_BUILDER__CTOR_INT, 1);
+    EmitStoreManagedValue(pslILEmit);
+    pslILEmit->EmitLabel(pNullRefLabel);
+}
+
+void ILUTF8BufferMarshaler::EmitConvertContentsNativeToCLR(ILCodeStream* pslILEmit)
+{
+    STANDARD_VM_CONTRACT;
+
+    EmitLoadManagedValue(pslILEmit);
+    EmitLoadNativeValue(pslILEmit);
+
+    //void UTF8BufferMarshaler.ConvertToManaged(StringBuilder sb, IntPtr pNative)
+    pslILEmit->EmitCALL(METHOD__UTF8BUFFERMARSHALER__CONVERT_TO_MANAGED, 2, 0);
+}
+
 
 LocalDesc ILWSTRBufferMarshaler::GetManagedType()
 {
@@ -625,17 +786,9 @@ void ILWSTRBufferMarshaler::EmitConvertContentsCLRToNative(ILCodeStream* pslILEm
     pslILEmit->EmitCALL(METHOD__STRING_BUILDER__GET_LENGTH, 1, 1);
 
     // stack: StringBuilder length
-
-    // if (!fConvertSpaceJustCalled)
-    {
-        // we don't need to double-check the length because the length
-        // must be smaller than the capacity and the capacity was already
-        // checked by EmitConvertSpaceCLRToNative
-        
-        pslILEmit->EmitDUP();
-        // static void StubHelpers.CheckStringLength(int length)
-        pslILEmit->EmitCALL(METHOD__STUBHELPERS__CHECK_STRING_LENGTH, 1, 0);
-    }
+    pslILEmit->EmitDUP();
+    // static void StubHelpers.CheckStringLength(int length)
+    pslILEmit->EmitCALL(METHOD__STUBHELPERS__CHECK_STRING_LENGTH, 1, 0);
 
     // stack: StringBuilder length 
 
@@ -747,12 +900,12 @@ void ILCSTRBufferMarshaler::EmitConvertSpaceCLRToNative(ILCodeStream* pslILEmit)
     // stack: capacity
 
     pslILEmit->EmitLDSFLD(pslILEmit->GetToken(MscorlibBinder::GetField(FIELD__MARSHAL__SYSTEM_MAX_DBCS_CHAR_SIZE)));
-    pslILEmit->EmitMUL();
+    pslILEmit->EmitMUL_OVF();
 
     // stack: capacity_in_bytes
 
     pslILEmit->EmitLDC(1);  
-    pslILEmit->EmitADD();
+    pslILEmit->EmitADD_OVF();
 
     // stack: offset_of_secret_null
 
@@ -761,7 +914,7 @@ void ILCSTRBufferMarshaler::EmitConvertSpaceCLRToNative(ILCodeStream* pslILEmit)
     pslILEmit->EmitSTLOC(dwTmpOffsetOfSecretNull); // make sure the stack is empty for localloc
 
     pslILEmit->EmitLDC(3);
-    pslILEmit->EmitADD();
+    pslILEmit->EmitADD_OVF();
 
     // stack: alloc_size_in_bytes
     ILCodeLabel *pAllocRejoin = pslILEmit->NewCodeLabel(); 
@@ -886,8 +1039,8 @@ void ILCSTRBufferMarshaler::EmitConvertSpaceNativeToCLR(ILCodeStream* pslILEmit)
     if (IsIn(m_dwMarshalFlags) || IsCLRToNative(m_dwMarshalFlags))
     {
         EmitLoadNativeValue(pslILEmit);
-        // static int System.StubHelpers.StubHelpers.strlen(sbyte* ptr)
-        pslILEmit->EmitCALL(METHOD__STUBHELPERS__STRLEN, 1, 1);
+        // static int System.String.strlen(byte* ptr)
+        pslILEmit->EmitCALL(METHOD__STRING__STRLEN, 1, 1);
     }
     else
     {
@@ -915,8 +1068,8 @@ void ILCSTRBufferMarshaler::EmitConvertContentsNativeToCLR(ILCodeStream* pslILEm
     EmitLoadNativeValue(pslILEmit);
 
     pslILEmit->EmitDUP();
-    // static int System.StubHelpers.StubHelpers.strlen(sbyte* ptr)
-    pslILEmit->EmitCALL(METHOD__STUBHELPERS__STRLEN, 1, 1);
+    // static int System.String.strlen(byte* ptr)
+    pslILEmit->EmitCALL(METHOD__STRING__STRLEN, 1, 1);
     
     // void System.Text.StringBuilder.ReplaceBuffer(sbyte* newBuffer, int newLength);
     pslILEmit->EmitCALL(METHOD__STRING_BUILDER__REPLACE_BUFFER_ANSI_INTERNAL, 3, 0);
@@ -977,17 +1130,8 @@ void ILValueClassMarshaler::EmitConvertContentsCLRToNative(ILCodeStream* pslILEm
     pslILEmit->EmitLDTOKEN(managedVCToken); // pMT
     pslILEmit->EmitCALL(METHOD__RT_TYPE_HANDLE__GETVALUEINTERNAL, 1, 1); // Convert RTH to IntPtr
 
-    if (IsCLRToNative(m_dwMarshalFlags))
-    {
-        // this should only be needed in CLR-to-native scenarios for the SafeHandle field marshaler
-        m_pslNDirect->LoadCleanupWorkList(pslILEmit);
-    }
-    else
-    {
-        pslILEmit->EmitLoadNullPtr();
-    }
-
-    pslILEmit->EmitCALL(METHOD__VALUECLASSMARSHALER__CONVERT_TO_NATIVE, 4, 0);        // void ConvertToNative(IntPtr dst, IntPtr src, IntPtr pMT, ref CleanupWorkList pCleanupWorkList)
+    m_pslNDirect->LoadCleanupWorkList(pslILEmit);
+    pslILEmit->EmitCALL(METHOD__VALUECLASSMARSHALER__CONVERT_TO_NATIVE, 4, 0);        // void ConvertToNative(IntPtr dst, IntPtr src, IntPtr pMT, ref CleanupWorkListElement pCleanupWorkList)
 }
 
 void ILValueClassMarshaler::EmitConvertContentsNativeToCLR(ILCodeStream* pslILEmit)
@@ -1184,11 +1328,6 @@ void ILCurrencyMarshaler::EmitConvertContentsNativeToCLR(ILCodeStream* pslILEmit
     EmitLoadNativeValue(pslILEmit);
 
     pslILEmit->EmitCALL(METHOD__DECIMAL__CURRENCY_CTOR, 2, 0);
-
-    EmitLoadManagedHomeAddr(pslILEmit);
-
-    // static void System.StubHelpers.DecimalCanonicalizeInternal(ref Decimal dec);
-    pslILEmit->EmitCALL(METHOD__STUBHELPERS__DECIMAL_CANONICALIZE_INTERNAL, 1, 0);
 }    
 
 
@@ -1386,8 +1525,8 @@ LocalDesc ILOleColorMarshaler::GetManagedType()
 {
     STANDARD_VM_CONTRACT;
 
-    BaseDomain* pDomain = m_pargs->m_pMarshalInfo->GetModule()->GetDomain();
-    TypeHandle  hndColorType = pDomain->GetMarshalingData()->GetOleColorMarshalingInfo()->GetColorType();
+    LoaderAllocator* pLoader = m_pargs->m_pMarshalInfo->GetModule()->GetLoaderAllocator();
+    TypeHandle  hndColorType = pLoader->GetMarshalingData()->GetOleColorMarshalingInfo()->GetColorType();
 
     //
     // value class
@@ -1399,8 +1538,8 @@ void ILOleColorMarshaler::EmitConvertContentsCLRToNative(ILCodeStream* pslILEmit
 {
     STANDARD_VM_CONTRACT;
 
-    BaseDomain* pDomain = m_pargs->m_pMarshalInfo->GetModule()->GetDomain();
-    MethodDesc* pConvertMD = pDomain->GetMarshalingData()->GetOleColorMarshalingInfo()->GetSystemColorToOleColorMD();
+    LoaderAllocator* pLoader = m_pargs->m_pMarshalInfo->GetModule()->GetLoaderAllocator();
+    MethodDesc* pConvertMD = pLoader->GetMarshalingData()->GetOleColorMarshalingInfo()->GetSystemColorToOleColorMD();
 
     EmitLoadManagedValue(pslILEmit);
     // int System.Drawing.ColorTranslator.ToOle(System.Drawing.Color c)
@@ -1412,8 +1551,8 @@ void ILOleColorMarshaler::EmitConvertContentsNativeToCLR(ILCodeStream* pslILEmit
 {
     STANDARD_VM_CONTRACT;
 
-    BaseDomain* pDomain = m_pargs->m_pMarshalInfo->GetModule()->GetDomain();
-    MethodDesc* pConvertMD = pDomain->GetMarshalingData()->GetOleColorMarshalingInfo()->GetOleColorToSystemColorMD();
+    LoaderAllocator* pLoader = m_pargs->m_pMarshalInfo->GetModule()->GetLoaderAllocator();
+    MethodDesc* pConvertMD = pLoader->GetMarshalingData()->GetOleColorMarshalingInfo()->GetOleColorToSystemColorMD();
 
     EmitLoadNativeValue(pslILEmit);
     // System.Drawing.Color System.Drawing.ColorTranslator.FromOle(int oleColor)
@@ -1571,7 +1710,7 @@ void ILVBByValStrWMarshaler::EmitClearNative(ILCodeStream* pslILEmit)
     pslILEmit->EmitLDLOC(m_dwLocalBuffer);
     pslILEmit->EmitBRFALSE(pExitLabel);
     pslILEmit->EmitLDLOC(m_dwLocalBuffer);
-    pslILEmit->EmitCALL(METHOD__WIN32NATIVE__COTASKMEMFREE, 1, 0);
+    pslILEmit->EmitCALL(METHOD__MARSHAL__FREE_CO_TASK_MEM, 1, 0);
     pslILEmit->EmitLabel(pExitLabel);
 }
 
@@ -1658,6 +1797,7 @@ void ILVBByValStrMarshaler::EmitClearNative(ILCodeStream* pslILEmit)
     // static void ClearNative(IntPtr pNative);
     pslILEmit->EmitCALL(METHOD__VBBYVALSTRMARSHALER__CLEAR_NATIVE, 1, 0);
 }
+#endif // FEATURE_COMINTEROP
 
 LocalDesc ILBSTRMarshaler::GetManagedType()
 {
@@ -1744,7 +1884,6 @@ void ILBSTRMarshaler::EmitConvertContentsNativeToCLR(ILCodeStream* pslILEmit)
     EmitStoreManagedValue(pslILEmit);
 }
 
-
 LocalDesc ILAnsiBSTRMarshaler::GetNativeType()
 {
     LIMITED_METHOD_CONTRACT;
@@ -1795,6 +1934,8 @@ void ILAnsiBSTRMarshaler::EmitClearNative(ILCodeStream* pslILEmit)
     EmitLoadNativeValue(pslILEmit);
     pslILEmit->EmitCALL(METHOD__ANSIBSTRMARSHALER__CLEAR_NATIVE, 1, 0);
 }
+
+#ifdef FEATURE_COMINTEROP
 
 LocalDesc ILHSTRINGMarshaler::GetNativeType()
 {
@@ -1925,6 +2066,99 @@ void ILHSTRINGMarshaler::EmitClearNative(ILCodeStream* pslILEmit)
 
 #endif // FEATURE_COMINTEROP
 
+LocalDesc ILCUTF8Marshaler::GetManagedType()
+{
+	LIMITED_METHOD_CONTRACT;
+
+	return LocalDesc(ELEMENT_TYPE_STRING);
+}
+
+void ILCUTF8Marshaler::EmitConvertContentsCLRToNative(ILCodeStream* pslILEmit)
+{
+	STANDARD_VM_CONTRACT;
+
+	DWORD dwUtf8MarshalFlags =
+		(m_pargs->m_pMarshalInfo->GetBestFitMapping() & 0xFF) |
+		(m_pargs->m_pMarshalInfo->GetThrowOnUnmappableChar() << 8);
+
+	bool bPassByValueInOnly = IsIn(m_dwMarshalFlags) && !IsOut(m_dwMarshalFlags) && !IsByref(m_dwMarshalFlags);
+	if (bPassByValueInOnly)
+	{
+		DWORD dwBufSize = pslILEmit->NewLocal(ELEMENT_TYPE_I4);
+		m_dwLocalBuffer = pslILEmit->NewLocal(ELEMENT_TYPE_I);
+
+		// LocalBuffer = 0
+		pslILEmit->EmitLoadNullPtr();
+		pslILEmit->EmitSTLOC(m_dwLocalBuffer);
+
+		ILCodeLabel* pNoOptimize = pslILEmit->NewCodeLabel();
+
+		// if == NULL, goto NoOptimize
+		EmitLoadManagedValue(pslILEmit);
+		pslILEmit->EmitBRFALSE(pNoOptimize);
+				 		
+		// (String.Length + 1)
+		// Characters would be # of characters + 1 in case left over high surrogate is ?
+		EmitLoadManagedValue(pslILEmit);
+		pslILEmit->EmitCALL(METHOD__STRING__GET_LENGTH, 1, 1);
+		pslILEmit->EmitLDC(1);
+		pslILEmit->EmitADD();
+
+		// Max 3 bytes per char.
+		// (String.Length + 1) * 3		
+		pslILEmit->EmitLDC(3);
+		pslILEmit->EmitMUL();
+
+		// +1 for the 0x0 that we put in.
+		// ((String.Length + 1) * 3) + 1
+		pslILEmit->EmitLDC(1);
+		pslILEmit->EmitADD();
+				
+		// BufSize = ( (String.Length+1) * 3) + 1
+		pslILEmit->EmitSTLOC(dwBufSize);
+
+		// if (MAX_LOCAL_BUFFER_LENGTH < BufSize ) goto NoOptimize
+		pslILEmit->EmitLDC(MAX_LOCAL_BUFFER_LENGTH);
+		pslILEmit->EmitLDLOC(dwBufSize);
+		pslILEmit->EmitCLT();
+		pslILEmit->EmitBRTRUE(pNoOptimize);
+
+		// LocalBuffer = localloc(BufSize);
+		pslILEmit->EmitLDLOC(dwBufSize);
+		pslILEmit->EmitLOCALLOC();
+		pslILEmit->EmitSTLOC(m_dwLocalBuffer);
+
+		// NoOptimize:
+		pslILEmit->EmitLabel(pNoOptimize);
+	}
+
+	// UTF8Marshaler.ConvertToNative(dwUtf8MarshalFlags,pManaged, pLocalBuffer)
+	pslILEmit->EmitLDC(dwUtf8MarshalFlags);
+	EmitLoadManagedValue(pslILEmit);
+
+	if (m_dwLocalBuffer != LOCAL_NUM_UNUSED)
+	{
+		pslILEmit->EmitLDLOC(m_dwLocalBuffer);
+	}
+	else
+	{
+		pslILEmit->EmitLoadNullPtr();
+	}
+
+	pslILEmit->EmitCALL(METHOD__CUTF8MARSHALER__CONVERT_TO_NATIVE, 3, 1);
+
+	EmitStoreNativeValue(pslILEmit);
+}
+
+void ILCUTF8Marshaler::EmitConvertContentsNativeToCLR(ILCodeStream* pslILEmit)
+{
+	STANDARD_VM_CONTRACT;
+
+	EmitLoadNativeValue(pslILEmit);
+	pslILEmit->EmitCALL(METHOD__CUTF8MARSHALER__CONVERT_TO_MANAGED, 1, 1);
+	EmitStoreManagedValue(pslILEmit);
+}
+
 
 LocalDesc ILCSTRMarshaler::GetManagedType()
 {
@@ -1965,7 +2199,7 @@ void ILCSTRMarshaler::EmitConvertContentsCLRToNative(ILCodeStream* pslILEmit)
 
         // (String.Length + 2) * GetMaxDBCSCharByteSize()
         pslILEmit->EmitLDSFLD(pslILEmit->GetToken(MscorlibBinder::GetField(FIELD__MARSHAL__SYSTEM_MAX_DBCS_CHAR_SIZE)));
-        pslILEmit->EmitMUL();
+        pslILEmit->EmitMUL_OVF();
 
         // BufSize = (String.Length + 2) * GetMaxDBCSCharByteSize()
         pslILEmit->EmitSTLOC(dwBufSize);
@@ -2127,7 +2361,7 @@ void ILLayoutClassPtrMarshalerBase::EmitClearNative(ILCodeStream* pslILEmit)
 
     EmitClearNativeContents(pslILEmit);
     EmitLoadNativeValue(pslILEmit);
-    pslILEmit->EmitCALL(METHOD__WIN32NATIVE__COTASKMEMFREE, 1, 0);
+    pslILEmit->EmitCALL(METHOD__MARSHAL__FREE_CO_TASK_MEM, 1, 0);
 
     pslILEmit->EmitLabel(pNullRefLabel);
 }
@@ -2173,19 +2407,7 @@ void ILLayoutClassPtrMarshaler::EmitConvertContentsCLRToNative(ILCodeStream* psl
     EmitLoadManagedValue(pslILEmit);
     EmitLoadNativeValue(pslILEmit);
 
-    if (IsCLRToNative(m_dwMarshalFlags))
-    {
-        m_pslNDirect->LoadCleanupWorkList(pslILEmit);
-    }
-    else
-    {
-        //
-        // The assertion here is as follows:
-        //      1) the only field marshaler that requires the CleanupWorkList is FieldMarshaler_SafeHandle 
-        //      2) SafeHandle marshaling is disallowed in the native-to-CLR direction, so we'll never see it..
-        //
-        pslILEmit->EmitLDNULL();  // pass a NULL CleanupWorkList in the native-to-CLR case
-    }
+    m_pslNDirect->LoadCleanupWorkList(pslILEmit);
 
     // static void FmtClassUpdateNativeInternal(object obj, byte* pNative, IntPtr pOptionalCleanupList);
 
@@ -2231,7 +2453,7 @@ void ILBlittablePtrMarshaler::EmitConvertContentsCLRToNative(ILCodeStream* pslIL
 
     ILCodeLabel* pNullRefLabel = pslILEmit->NewCodeLabel();
     UINT uNativeSize = m_pargs->m_pMT->GetNativeSize();
-    int fieldDef = pslILEmit->GetToken(MscorlibBinder::GetField(FIELD__PINNING_HELPER__M_DATA));
+    int fieldDef = pslILEmit->GetToken(MscorlibBinder::GetField(FIELD__RAW_DATA__DATA));
 
     EmitLoadNativeValue(pslILEmit);
     pslILEmit->EmitBRFALSE(pNullRefLabel);
@@ -2253,7 +2475,7 @@ void ILBlittablePtrMarshaler::EmitConvertContentsNativeToCLR(ILCodeStream* pslIL
     
     ILCodeLabel* pNullRefLabel = pslILEmit->NewCodeLabel();
     UINT uNativeSize = m_pargs->m_pMT->GetNativeSize();
-    int fieldDef = pslILEmit->GetToken(MscorlibBinder::GetField(FIELD__PINNING_HELPER__M_DATA));
+    int fieldDef = pslILEmit->GetToken(MscorlibBinder::GetField(FIELD__RAW_DATA__DATA));
     
     EmitLoadManagedValue(pslILEmit);
     pslILEmit->EmitBRFALSE(pNullRefLabel);
@@ -2331,6 +2553,7 @@ MarshalerOverrideStatus ILHandleRefMarshaler::ArgumentOverride(NDirectStubLinker
 
     ILCodeStream* pcsMarshal    = psl->GetMarshalCodeStream();
     ILCodeStream* pcsDispatch   = psl->GetDispatchCodeStream();
+    ILCodeStream* pcsUnmarshal  = psl->GetUnmarshalCodeStream();
 
     if (fManagedToNative && !byref)
     {
@@ -2339,10 +2562,15 @@ MarshalerOverrideStatus ILHandleRefMarshaler::ArgumentOverride(NDirectStubLinker
 
         // HandleRefs are valuetypes, so pinning is not needed.
         // The argument address is on the stack and will not move.
-        pcsDispatch->EmitLDARGA(argidx);
-        pcsDispatch->EmitLDC(offsetof(HANDLEREF, m_handle));
-        pcsDispatch->EmitADD();
-        pcsDispatch->EmitLDIND_I();
+        mdFieldDef handleField = pcsDispatch->GetToken(MscorlibBinder::GetField(FIELD__HANDLE_REF__HANDLE));
+        pcsDispatch->EmitLDARG(argidx);
+        pcsDispatch->EmitLDFLD(handleField);
+
+        mdFieldDef wrapperField = pcsUnmarshal->GetToken(MscorlibBinder::GetField(FIELD__HANDLE_REF__WRAPPER));
+        pcsUnmarshal->EmitLDARG(argidx);
+        pcsUnmarshal->EmitLDFLD(wrapperField);
+        pcsUnmarshal->EmitCALL(METHOD__GC__KEEP_ALIVE, 1, 0);
+
         return OVERRIDDEN;
     }
     else
@@ -2541,7 +2769,7 @@ MarshalerOverrideStatus ILSafeHandleMarshaler::ArgumentOverride(NDirectStubLinke
                 pslIL->EmitLDLOC(dwInputHandleLocal);
 
                 // This is realiable, i.e. the cleanup will happen if and only if the SH was actually AddRef'ed.
-                pslIL->EmitCALL(METHOD__STUBHELPERS__ADD_TO_CLEANUP_LIST, 2, 1);
+                pslIL->EmitCALL(METHOD__STUBHELPERS__ADD_TO_CLEANUP_LIST_SAFEHANDLE, 2, 1);
 
                 pslIL->EmitSTLOC(dwNativeHandleLocal);
 
@@ -3064,135 +3292,6 @@ ILCriticalHandleMarshaler::ReturnOverride(
     return OVERRIDDEN;
 } // ILCriticalHandleMarshaler::ReturnOverride
 
-#ifndef FEATURE_CORECLR
-//---------------------------------------------------------------------------------------
-// 
-MarshalerOverrideStatus ILBlittableValueClassWithCopyCtorMarshaler::ArgumentOverride(NDirectStubLinker* psl,
-                                                BOOL               byref,
-                                                BOOL               fin,
-                                                BOOL               fout,
-                                                BOOL               fManagedToNative,
-                                                OverrideProcArgs*  pargs,
-                                                UINT*              pResID,
-                                                UINT               argidx,
-                                                UINT               nativeStackOffset)
-{
-    CONTRACTL
-    {
-        THROWS;
-        GC_TRIGGERS;
-        MODE_ANY;
-    }
-    CONTRACTL_END;
-    
-    ILCodeStream* pslIL         = psl->GetMarshalCodeStream();
-    ILCodeStream* pslILDispatch = psl->GetDispatchCodeStream();
-
-    if (byref)
-    {
-        *pResID = IDS_EE_BADMARSHAL_COPYCTORRESTRICTION;
-        return DISALLOWED;
-    }        
-
-    if (fManagedToNative)
-    {
-#ifdef _TARGET_X86_
-        _ASSERTE(nativeStackOffset != (UINT)-1);
-
-        // get a new copy ctor cookie
-        DWORD dwCookieLocalNum = psl->CreateCopyCtorCookie(pslIL);
-
-        // and initialize it with our values
-        pslIL->EmitLDLOCA(dwCookieLocalNum);
-        pslIL->EmitLDARG(argidx);
-        pslIL->EmitLDC(nativeStackOffset);
-
-        // SetData takes pointers to managed methods although code:CopyCtorCallStubWorker
-        // currently calls them via reverse P/Invokes
-        if (pargs->mm.m_pCopyCtor)
-        {
-            pslIL->EmitLDFTN(pslIL->GetToken(pargs->mm.m_pCopyCtor));
-        }
-        else
-        {
-            pslIL->EmitLoadNullPtr();
-        }
-
-        if (pargs->mm.m_pDtor)
-        {
-            pslIL->EmitLDFTN(pslIL->GetToken(pargs->mm.m_pDtor));
-        }
-        else
-        {
-            pslIL->EmitLoadNullPtr();
-        }
-
-        // <dwCookieLocalNum>.SetData(<argidx>, <nativeStackOffset>, ctorPtr, dtorPtr)
-        pslIL->EmitCALL(METHOD__COPYCTORSTUBCOOKIE__SET_DATA, 5, 0);
-
-        LocalDesc   locDesc(pargs->mm.m_pMT);
-        pslIL->SetStubTargetArgType(&locDesc);              // native type is the value type
-
-        pslILDispatch->EmitLDARG(argidx);                   // we load the argument directly
-        pslILDispatch->EmitLDOBJ(pslILDispatch->GetToken(pargs->mm.m_pMT));
-#else // _TARGET_X86_
-        // On WIN64 platforms, copy-constructed arguments are actually passed by reference.
-        // This is the same calling convention as used by managed code, but to maintain parity,
-        // we mimic the x86 behaviour:
-        // 
-        // 1) create new native value type local
-        // 2) run new->CopyCtor(old)
-        // 3) run old->Dtor()
-
-        LocalDesc   locDesc(pargs->mm.m_pMT);
-
-        DWORD       dwNewValueTypeLocal;
-
-        // Step 1
-        dwNewValueTypeLocal = pslIL->NewLocal(locDesc);
-
-        // Step 2
-        if (pargs->mm.m_pCopyCtor)
-        {
-            pslIL->EmitLDLOCA(dwNewValueTypeLocal);
-            pslIL->EmitLDARG(argidx);
-            pslIL->EmitCALL(pslIL->GetToken(pargs->mm.m_pCopyCtor), 2, 0);
-        }
-        else
-        {
-            pslIL->EmitLDARG(argidx);
-            pslIL->EmitLDOBJ(pslIL->GetToken(pargs->mm.m_pMT));
-            pslIL->EmitSTLOC(dwNewValueTypeLocal);
-        }
-
-        // Step 3
-        if (pargs->mm.m_pDtor)
-        {
-            pslIL->EmitLDARG(argidx);
-            pslIL->EmitCALL(pslIL->GetToken(pargs->mm.m_pDtor), 1, 0);
-        }
-
-        pslIL->SetStubTargetArgType(ELEMENT_TYPE_I);        // native type is a pointer
-        pslILDispatch->EmitLDLOCA(dwNewValueTypeLocal);
-#endif // _TARGET_X86_
-
-        return OVERRIDDEN;
-    }
-    else
-    {
-        // nothing to do but pass the value along
-        // note that on x86 the argument comes by-value but is converted to pointer by the UM thunk
-        // so that we don't make copies that would not be accounted for by copy ctors
-        LocalDesc   locDesc(pargs->mm.m_pMT);
-        locDesc.MakeCopyConstructedPointer();
-
-        pslIL->SetStubTargetArgType(&locDesc);              // native type is a pointer
-        pslILDispatch->EmitLDARG(argidx);
-
-        return OVERRIDDEN;
-    }
-}
-#endif // FEATURE_CORECLR
 
 LocalDesc ILArgIteratorMarshaler::GetNativeType()
 {
@@ -3379,10 +3478,8 @@ void ILArrayWithOffsetMarshaler::EmitConvertSpaceAndContentsCLRToNativeTemp(ILCo
     EmitLoadNativeValue(pslILEmit);                 // dest
 
     pslILEmit->EmitLDLOC(m_dwPinnedLocalNum);
+    pslILEmit->EmitCALL(METHOD__ARRAY__GET_RAW_ARRAY_DATA, 1, 1);
     pslILEmit->EmitCONV_I();
-    pslILEmit->EmitLDLOC(m_dwPinnedLocalNum);
-    pslILEmit->EmitCALL(METHOD__ARRAY__GET_DATA_PTR_OFFSET_INTERNAL, 1, 1);
-    pslILEmit->EmitADD(); // TODO Phase5: Use UnsafeAddrOfPinnedArrayElement
 
     EmitLoadManagedValue(pslILEmit);
     pslILEmit->EmitLDFLD(tokArrayWithOffset_m_offset);
@@ -3425,10 +3522,8 @@ void ILArrayWithOffsetMarshaler::EmitConvertContentsNativeToCLR(ILCodeStream* ps
     pslILEmit->EmitSTLOC(m_dwPinnedLocalNum);
 
     pslILEmit->EmitLDLOC(m_dwPinnedLocalNum);
+    pslILEmit->EmitCALL(METHOD__ARRAY__GET_RAW_ARRAY_DATA, 1, 1);
     pslILEmit->EmitCONV_I();
-    pslILEmit->EmitLDLOC(m_dwPinnedLocalNum);
-    pslILEmit->EmitCALL(METHOD__ARRAY__GET_DATA_PTR_OFFSET_INTERNAL, 1, 1);
-    pslILEmit->EmitADD(); // TODO Phase5: Use UnsafeAddrOfPinnedArrayElement
 
     pslILEmit->EmitLDLOC(m_dwOffsetLocalNum);
     pslILEmit->EmitADD();                           // dest
@@ -3459,7 +3554,7 @@ void ILArrayWithOffsetMarshaler::EmitClearNativeTemp(ILCodeStream* pslILEmit)
 
     // CoTaskMemFree
     EmitLoadNativeValue(pslILEmit);
-    pslILEmit->EmitCALL(METHOD__WIN32NATIVE__COTASKMEMFREE, 1, 0);
+    pslILEmit->EmitCALL(METHOD__MARSHAL__FREE_CO_TASK_MEM, 1, 0);
 
     pslILEmit->EmitLabel(pDoneLabel);
 }
@@ -3692,10 +3787,6 @@ void ILNativeArrayMarshaler::EmitMarshalArgumentCLRToNative()
         // the other.  Since there is no enforcement of this, apps blithely depend
         // on it.  
         //
-        
-        // The base offset should only be 0 for System.Array parameters for which
-        // OleVariant::GetMarshalerForVarType(vt) should never return NULL.
-        _ASSERTE(m_pargs->na.m_optionalbaseoffset != 0);
 
         EmitSetupSigAndDefaultHomesCLRToNative();
 
@@ -3709,13 +3800,21 @@ void ILNativeArrayMarshaler::EmitMarshalArgumentCLRToNative()
         EmitStoreNativeValue(m_pcsMarshal);
 
         EmitLoadManagedValue(m_pcsMarshal);
-        m_pcsMarshal->EmitBRFALSE(pNullRefLabel);
+        m_pcsMarshal->EmitBRFALSE(pNullRefLabel);        
 
+        // COMPAT: We cannot generate the same code that the C# compiler generates for
+        // a fixed() statement on an array since we need to provide a non-null value
+        // for a 0-length array. For compat reasons, we need to preserve old behavior.
+        // Additionally, we need to ensure that we do not pass non-null for a zero-length
+        // array when interacting with GDI/GDI+ since they fail on null arrays but succeed
+        // on 0-length arrays.
         EmitLoadManagedValue(m_pcsMarshal);
         m_pcsMarshal->EmitSTLOC(dwPinnedLocal);
         m_pcsMarshal->EmitLDLOC(dwPinnedLocal);
         m_pcsMarshal->EmitCONV_I();
-        m_pcsMarshal->EmitLDC(m_pargs->na.m_optionalbaseoffset);
+        // Optimize marshalling by emitting the data ptr offset directly into the IL stream
+        // instead of doing an FCall to recalulate it each time when possible.
+        m_pcsMarshal->EmitLDC(ArrayBase::GetDataPtrOffset(m_pargs->m_pMarshalInfo->GetArrayElementTypeHandle().MakeSZArray().GetMethodTable()));
         m_pcsMarshal->EmitADD();
         EmitStoreNativeValue(m_pcsMarshal);
 
@@ -3936,7 +4035,7 @@ void ILNativeArrayMarshaler::EmitConvertSpaceNativeToCLR(ILCodeStream* pslILEmit
     if (IsByref(m_dwMarshalFlags))
     {
         //
-        // Reset the element count just in case there is a exception thrown in the code emitted by
+        // Reset the element count just in case there is an exception thrown in the code emitted by
         // EmitLoadElementCount. The best thing we can do here is to avoid a crash.
         //
         _ASSERTE(m_dwSavedSizeArg != LOCAL_NUM_UNUSED);
@@ -4131,20 +4230,19 @@ FCIMPL3(void, MngdNativeArrayMarshaler::ConvertContentsToNative, MngdNativeArray
     if (*pArrayRef != NULL)
     {
         const OleVariant::Marshaler* pMarshaler = OleVariant::GetMarshalerForVarType(pThis->m_vt, TRUE);
-    
+        SIZE_T cElements = (*pArrayRef)->GetNumComponents();
         if (pMarshaler == NULL || pMarshaler->ComToOleArray == NULL)
         {
-            SIZE_T cElements = (*pArrayRef)->GetNumComponents();
-            SIZE_T cbArray = cElements;
-            if ( (!SafeMulSIZE_T(&cbArray, OleVariant::GetElementSizeForVarType(pThis->m_vt, pThis->m_pElementMT))) || cbArray > MAX_SIZE_FOR_INTEROP)
+            if ( (!SafeMulSIZE_T(&cElements, OleVariant::GetElementSizeForVarType(pThis->m_vt, pThis->m_pElementMT))) || cElements > MAX_SIZE_FOR_INTEROP)
                 COMPlusThrow(kArgumentException, IDS_EE_STRUCTARRAYTOOLARGE);
     
             _ASSERTE(!GetTypeHandleForCVType(OleVariant::GetCVTypeForVarType(pThis->m_vt)).GetMethodTable()->ContainsPointers());
-            memcpyNoGCRefs(*pNativeHome, (*pArrayRef)->GetDataPtr(), cbArray);
+            memcpyNoGCRefs(*pNativeHome, (*pArrayRef)->GetDataPtr(), cElements);
         }
         else
         {
-            pMarshaler->ComToOleArray(pArrayRef, *pNativeHome, pThis->m_pElementMT, pThis->m_BestFitMap, pThis->m_ThrowOnUnmappableChar, pThis->m_NativeDataValid);
+            pMarshaler->ComToOleArray(pArrayRef, *pNativeHome, pThis->m_pElementMT, pThis->m_BestFitMap, 
+                                      pThis->m_ThrowOnUnmappableChar, pThis->m_NativeDataValid, cElements);
         }
     }
     HELPER_METHOD_FRAME_END();
@@ -4196,13 +4294,12 @@ FCIMPL3(void, MngdNativeArrayMarshaler::ConvertContentsToManaged, MngdNativeArra
         if (pMarshaler == NULL || pMarshaler->OleToComArray == NULL)
         {
             SIZE_T cElements = (*pArrayRef)->GetNumComponents();
-            SIZE_T cbArray = cElements;
-            if ( (!SafeMulSIZE_T(&cbArray, OleVariant::GetElementSizeForVarType(pThis->m_vt, pThis->m_pElementMT))) || cbArray > MAX_SIZE_FOR_INTEROP)
+            if ( (!SafeMulSIZE_T(&cElements, OleVariant::GetElementSizeForVarType(pThis->m_vt, pThis->m_pElementMT))) || cElements > MAX_SIZE_FOR_INTEROP)
                 COMPlusThrow(kArgumentException, IDS_EE_STRUCTARRAYTOOLARGE);
     
                 // If we are copying variants, strings, etc, we need to use write barrier
             _ASSERTE(!GetTypeHandleForCVType(OleVariant::GetCVTypeForVarType(pThis->m_vt)).GetMethodTable()->ContainsPointers());
-            memcpyNoGCRefs((*pArrayRef)->GetDataPtr(), *pNativeHome, cbArray );
+            memcpyNoGCRefs((*pArrayRef)->GetDataPtr(), *pNativeHome, cElements);
         }
         else
         {
@@ -4537,6 +4634,7 @@ LocalDesc ILHiddenLengthArrayMarshaler::GetNativeType()
 LocalDesc ILHiddenLengthArrayMarshaler::GetManagedType()
 {
     LIMITED_METHOD_CONTRACT;
+
     return LocalDesc(ELEMENT_TYPE_OBJECT);
 }
 
@@ -4593,9 +4691,17 @@ void ILHiddenLengthArrayMarshaler::EmitMarshalArgumentCLRToNative()
         m_pcsMarshal->EmitSTLOC(dwPinnedLocal);
 
         // native = pinnedLocal + dataOffset
+
+        // COMPAT: We cannot generate the same code that the C# compiler generates for
+        // a fixed() statement on an array since we need to provide a non-null value
+        // for a 0-length array. For compat reasons, we need to preserve old behavior.
+        EmitLoadManagedValue(m_pcsMarshal);
+        m_pcsMarshal->EmitSTLOC(dwPinnedLocal);
         m_pcsMarshal->EmitLDLOC(dwPinnedLocal);
         m_pcsMarshal->EmitCONV_I();
-        m_pcsMarshal->EmitLDC(m_pargs->na.m_optionalbaseoffset);
+        // Optimize marshalling by emitting the data ptr offset directly into the IL stream
+        // instead of doing an FCall to recalulate it each time.
+        m_pcsMarshal->EmitLDC(ArrayBase::GetDataPtrOffset(m_pargs->m_pMarshalInfo->GetArrayElementTypeHandle().MakeSZArray().GetMethodTable()));
         m_pcsMarshal->EmitADD();
         EmitStoreNativeValue(m_pcsMarshal);
 
@@ -4706,15 +4812,15 @@ void ILHiddenLengthArrayMarshaler::EmitConvertContentsCLRToNative(ILCodeStream* 
             switch (m_pargs->na.m_redirectedTypeIndex)
             {
                 case WinMDAdapter::RedirectedTypeIndex_System_Uri:
-                    ILUriMarshaler::EmitConvertCLRUriToWinRTUri(pslILEmit, m_pargs->m_pMarshalInfo->GetModule()->GetDomain());
+                    ILUriMarshaler::EmitConvertCLRUriToWinRTUri(pslILEmit, m_pargs->m_pMarshalInfo->GetModule()->GetLoaderAllocator());
                     break;
 
                 case WinMDAdapter::RedirectedTypeIndex_System_Collections_Specialized_NotifyCollectionChangedEventArgs:
-                    ILNCCEventArgsMarshaler::EmitConvertCLREventArgsToWinRTEventArgs(pslILEmit, m_pargs->m_pMarshalInfo->GetModule()->GetDomain());
+                    ILNCCEventArgsMarshaler::EmitConvertCLREventArgsToWinRTEventArgs(pslILEmit, m_pargs->m_pMarshalInfo->GetModule()->GetLoaderAllocator());
                     break;
 
                 case WinMDAdapter::RedirectedTypeIndex_System_ComponentModel_PropertyChangedEventArgs:
-                    ILPCEventArgsMarshaler::EmitConvertCLREventArgsToWinRTEventArgs(pslILEmit, m_pargs->m_pMarshalInfo->GetModule()->GetDomain());
+                    ILPCEventArgsMarshaler::EmitConvertCLREventArgsToWinRTEventArgs(pslILEmit, m_pargs->m_pMarshalInfo->GetModule()->GetLoaderAllocator());
                     break;
 
                 default: UNREACHABLE();
@@ -4779,15 +4885,15 @@ void ILHiddenLengthArrayMarshaler::EmitConvertContentsNativeToCLR(ILCodeStream* 
             switch (m_pargs->na.m_redirectedTypeIndex)
             {
                 case WinMDAdapter::RedirectedTypeIndex_System_Uri:
-                    ILUriMarshaler::EmitConvertWinRTUriToCLRUri(pslILEmit, m_pargs->m_pMarshalInfo->GetModule()->GetDomain());
+                    ILUriMarshaler::EmitConvertWinRTUriToCLRUri(pslILEmit, m_pargs->m_pMarshalInfo->GetModule()->GetLoaderAllocator());
                     break;
 
                 case WinMDAdapter::RedirectedTypeIndex_System_Collections_Specialized_NotifyCollectionChangedEventArgs:
-                    ILNCCEventArgsMarshaler::EmitConvertWinRTEventArgsToCLREventArgs(pslILEmit, m_pargs->m_pMarshalInfo->GetModule()->GetDomain());
+                    ILNCCEventArgsMarshaler::EmitConvertWinRTEventArgsToCLREventArgs(pslILEmit, m_pargs->m_pMarshalInfo->GetModule()->GetLoaderAllocator());
                     break;
 
                 case WinMDAdapter::RedirectedTypeIndex_System_ComponentModel_PropertyChangedEventArgs:
-                    ILPCEventArgsMarshaler::EmitConvertWinRTEventArgsToCLREventArgs(pslILEmit, m_pargs->m_pMarshalInfo->GetModule()->GetDomain());
+                    ILPCEventArgsMarshaler::EmitConvertWinRTEventArgsToCLREventArgs(pslILEmit, m_pargs->m_pMarshalInfo->GetModule()->GetLoaderAllocator());
                     break;
 
                 default: UNREACHABLE();
@@ -4887,11 +4993,6 @@ bool ILHiddenLengthArrayMarshaler::CanUsePinnedArray()
     }
 
     if (IsRetval(m_dwMarshalFlags))
-    {
-        return false;
-    }
-
-    if (m_pargs->na.m_optionalbaseoffset == 0)
     {
         return false;
     }
@@ -5040,7 +5141,7 @@ MethodDesc *ILHiddenLengthArrayMarshaler::GetExactMarshalerMethod(MethodDesc *pG
         pGenericMD,
         pGenericMD->GetMethodTable(),
         FALSE,                                 // forceBoxedEntryPoint
-        m_pargs->na.m_pMT->GetInstantiation(), // methodInst
+        m_pargs->m_pMarshalInfo->GetArrayElementTypeHandle().GetInstantiation(), // methodInst
         FALSE,                                 // allowInstParam
         TRUE);                                 // forceRemotableMethod
 }
@@ -5583,8 +5684,8 @@ LocalDesc ILUriMarshaler::GetNativeType()
 LocalDesc ILUriMarshaler::GetManagedType()
 {
     STANDARD_VM_CONTRACT;;    
-    BaseDomain* pDomain = m_pargs->m_pMarshalInfo->GetModule()->GetDomain();
-    TypeHandle  hndUriType = pDomain->GetMarshalingData()->GetUriMarshalingInfo()->GetSystemUriType();
+    LoaderAllocator* pLoader = m_pargs->m_pMarshalInfo->GetModule()->GetLoaderAllocator();
+    TypeHandle  hndUriType = pLoader->GetMarshalingData()->GetUriMarshalingInfo()->GetSystemUriType();
 
     return LocalDesc(hndUriType); // System.Uri
 }
@@ -5597,11 +5698,11 @@ bool ILUriMarshaler::NeedsClearNative()
 
 // Note that this method expects the CLR Uri on top of the evaluation stack and leaves the WinRT Uri there.
 //static
-void ILUriMarshaler::EmitConvertCLRUriToWinRTUri(ILCodeStream* pslILEmit, BaseDomain* pDomain)
+void ILUriMarshaler::EmitConvertCLRUriToWinRTUri(ILCodeStream* pslILEmit, LoaderAllocator* pLoader)
 {
     STANDARD_VM_CONTRACT;
 
-    UriMarshalingInfo* marshalingInfo = pDomain->GetMarshalingData()->GetUriMarshalingInfo();
+    UriMarshalingInfo* marshalingInfo = pLoader->GetMarshalingData()->GetUriMarshalingInfo();
 
     ILCodeLabel *pNotNullLabel = pslILEmit->NewCodeLabel();
     ILCodeLabel *pDoneLabel = pslILEmit->NewCodeLabel();
@@ -5629,17 +5730,17 @@ void ILUriMarshaler::EmitConvertContentsCLRToNative(ILCodeStream* pslILEmit)
     STANDARD_VM_CONTRACT;
 
     EmitLoadManagedValue(pslILEmit);
-    EmitConvertCLRUriToWinRTUri(pslILEmit, m_pargs->m_pMarshalInfo->GetModule()->GetDomain());
+    EmitConvertCLRUriToWinRTUri(pslILEmit, m_pargs->m_pMarshalInfo->GetModule()->GetLoaderAllocator());
     EmitStoreNativeValue(pslILEmit);
 }
 
 // Note that this method expects the WinRT Uri on top of the evaluation stack and leaves the CLR Uri there.
 //static
-void ILUriMarshaler::EmitConvertWinRTUriToCLRUri(ILCodeStream* pslILEmit, BaseDomain* pDomain)
+void ILUriMarshaler::EmitConvertWinRTUriToCLRUri(ILCodeStream* pslILEmit, LoaderAllocator* pLoader)
 {
     STANDARD_VM_CONTRACT;
 
-    MethodDesc* pSystemUriCtorMD = pDomain->GetMarshalingData()->GetUriMarshalingInfo()->GetSystemUriCtorMD();
+    MethodDesc* pSystemUriCtorMD = pLoader->GetMarshalingData()->GetUriMarshalingInfo()->GetSystemUriCtorMD();
 
     ILCodeLabel *pNotNullLabel = pslILEmit->NewCodeLabel();
     ILCodeLabel *pDoneLabel = pslILEmit->NewCodeLabel();
@@ -5667,7 +5768,7 @@ void ILUriMarshaler::EmitConvertContentsNativeToCLR(ILCodeStream* pslILEmit)
     STANDARD_VM_CONTRACT;
 
     EmitLoadNativeValue(pslILEmit);
-    EmitConvertWinRTUriToCLRUri(pslILEmit, m_pargs->m_pMarshalInfo->GetModule()->GetDomain());
+    EmitConvertWinRTUriToCLRUri(pslILEmit, m_pargs->m_pMarshalInfo->GetModule()->GetLoaderAllocator());
     EmitStoreManagedValue(pslILEmit);
 }
 
@@ -5691,8 +5792,8 @@ LocalDesc ILNCCEventArgsMarshaler::GetManagedType()
 {
     STANDARD_VM_CONTRACT;;    
     
-    BaseDomain *pDomain = m_pargs->m_pMarshalInfo->GetModule()->GetDomain();
-    TypeHandle  hndNCCEventArgType = pDomain->GetMarshalingData()->GetEventArgsMarshalingInfo()->GetSystemNCCEventArgsType();
+    LoaderAllocator *pLoader = m_pargs->m_pMarshalInfo->GetModule()->GetLoaderAllocator();
+    TypeHandle  hndNCCEventArgType = pLoader->GetMarshalingData()->GetEventArgsMarshalingInfo()->GetSystemNCCEventArgsType();
 
     return LocalDesc(hndNCCEventArgType); // System.Collections.Specialized.NotifyCollectionChangedEventArgs
 }
@@ -5706,11 +5807,11 @@ bool ILNCCEventArgsMarshaler::NeedsClearNative()
 // Note that this method expects the CLR NotifyCollectionChangedEventArgs on top of the evaluation stack and
 // leaves the WinRT NotifyCollectionChangedEventArgs IP there.
 //static
-void ILNCCEventArgsMarshaler::EmitConvertCLREventArgsToWinRTEventArgs(ILCodeStream *pslILEmit, BaseDomain *pDomain)
+void ILNCCEventArgsMarshaler::EmitConvertCLREventArgsToWinRTEventArgs(ILCodeStream *pslILEmit, LoaderAllocator* pLoader)
 {
     STANDARD_VM_CONTRACT;
 
-    MethodDesc *pConvertMD = pDomain->GetMarshalingData()->GetEventArgsMarshalingInfo()->GetSystemNCCEventArgsToWinRTNCCEventArgsMD();
+    MethodDesc *pConvertMD = pLoader->GetMarshalingData()->GetEventArgsMarshalingInfo()->GetSystemNCCEventArgsToWinRTNCCEventArgsMD();
 
     // IntPtr System.Runtime.InteropServices.WindowsRuntime.NotifyCollectionChangedEventArgsMarshaler.ConvertToNative(NotifyCollectionChangedEventArgs)
     pslILEmit->EmitCALL(pslILEmit->GetToken(pConvertMD), 1, 1);
@@ -5721,18 +5822,18 @@ void ILNCCEventArgsMarshaler::EmitConvertContentsCLRToNative(ILCodeStream *pslIL
     STANDARD_VM_CONTRACT;
 
     EmitLoadManagedValue(pslILEmit);
-    EmitConvertCLREventArgsToWinRTEventArgs(pslILEmit, m_pargs->m_pMarshalInfo->GetModule()->GetDomain());
+    EmitConvertCLREventArgsToWinRTEventArgs(pslILEmit, m_pargs->m_pMarshalInfo->GetModule()->GetLoaderAllocator());
     EmitStoreNativeValue(pslILEmit);
 }
 
 // Note that this method expects the WinRT NotifyCollectionChangedEventArgs on top of the evaluation stack and
 // leaves the CLR NotifyCollectionChangedEventArgs there.
 //static
-void ILNCCEventArgsMarshaler::EmitConvertWinRTEventArgsToCLREventArgs(ILCodeStream* pslILEmit, BaseDomain* pDomain)
+void ILNCCEventArgsMarshaler::EmitConvertWinRTEventArgsToCLREventArgs(ILCodeStream* pslILEmit, LoaderAllocator* pLoader)
 {
     STANDARD_VM_CONTRACT;
 
-    MethodDesc *pConvertMD = pDomain->GetMarshalingData()->GetEventArgsMarshalingInfo()->GetWinRTNCCEventArgsToSystemNCCEventArgsMD();
+    MethodDesc *pConvertMD = pLoader->GetMarshalingData()->GetEventArgsMarshalingInfo()->GetWinRTNCCEventArgsToSystemNCCEventArgsMD();
 
     // NotifyCollectionChangedEventArgs System.Runtime.InteropServices.WindowsRuntime.NotifyCollectionChangedEventArgsMarshaler.ConvertToManaged(IntPtr)
     pslILEmit->EmitCALL(pslILEmit->GetToken(pConvertMD), 1, 1);
@@ -5743,7 +5844,7 @@ void ILNCCEventArgsMarshaler::EmitConvertContentsNativeToCLR(ILCodeStream* pslIL
     STANDARD_VM_CONTRACT;
 
     EmitLoadNativeValue(pslILEmit);
-    EmitConvertWinRTEventArgsToCLREventArgs(pslILEmit, m_pargs->m_pMarshalInfo->GetModule()->GetDomain());
+    EmitConvertWinRTEventArgsToCLREventArgs(pslILEmit, m_pargs->m_pMarshalInfo->GetModule()->GetLoaderAllocator());
     EmitStoreManagedValue(pslILEmit);
 }
 
@@ -5767,8 +5868,8 @@ LocalDesc ILPCEventArgsMarshaler::GetManagedType()
 {
     STANDARD_VM_CONTRACT;;    
     
-    BaseDomain *pDomain = m_pargs->m_pMarshalInfo->GetModule()->GetDomain();
-    TypeHandle  hndPCEventArgType = pDomain->GetMarshalingData()->GetEventArgsMarshalingInfo()->GetSystemPCEventArgsType();
+    LoaderAllocator* pLoader = m_pargs->m_pMarshalInfo->GetModule()->GetLoaderAllocator();
+    TypeHandle  hndPCEventArgType = pLoader->GetMarshalingData()->GetEventArgsMarshalingInfo()->GetSystemPCEventArgsType();
 
     return LocalDesc(hndPCEventArgType); // System.ComponentModel.PropertyChangedEventArgs
 }
@@ -5782,11 +5883,11 @@ bool ILPCEventArgsMarshaler::NeedsClearNative()
 // Note that this method expects the CLR PropertyChangedEventArgs on top of the evaluation stack and
 // leaves the WinRT PropertyChangedEventArgs IP there.
 //static
-void ILPCEventArgsMarshaler::EmitConvertCLREventArgsToWinRTEventArgs(ILCodeStream *pslILEmit, BaseDomain *pDomain)
+void ILPCEventArgsMarshaler::EmitConvertCLREventArgsToWinRTEventArgs(ILCodeStream *pslILEmit, LoaderAllocator* pLoader)
 {
     STANDARD_VM_CONTRACT;
 
-    MethodDesc *pConvertMD = pDomain->GetMarshalingData()->GetEventArgsMarshalingInfo()->GetSystemPCEventArgsToWinRTPCEventArgsMD();
+    MethodDesc *pConvertMD = pLoader->GetMarshalingData()->GetEventArgsMarshalingInfo()->GetSystemPCEventArgsToWinRTPCEventArgsMD();
 
     // IntPtr System.Runtime.InteropServices.WindowsRuntime.PropertyChangedEventArgsMarshaler.ConvertToNative(PropertyChangedEventArgs)
     pslILEmit->EmitCALL(pslILEmit->GetToken(pConvertMD), 1, 1);
@@ -5797,18 +5898,18 @@ void ILPCEventArgsMarshaler::EmitConvertContentsCLRToNative(ILCodeStream *pslILE
     STANDARD_VM_CONTRACT;
 
     EmitLoadManagedValue(pslILEmit);
-    EmitConvertCLREventArgsToWinRTEventArgs(pslILEmit, m_pargs->m_pMarshalInfo->GetModule()->GetDomain());
+    EmitConvertCLREventArgsToWinRTEventArgs(pslILEmit, m_pargs->m_pMarshalInfo->GetModule()->GetLoaderAllocator());
     EmitStoreNativeValue(pslILEmit);
 }
 
 // Note that this method expects the WinRT PropertyChangedEventArgs on top of the evaluation stack and
 // leaves the CLR PropertyChangedEventArgs there.
 //static
-void ILPCEventArgsMarshaler::EmitConvertWinRTEventArgsToCLREventArgs(ILCodeStream* pslILEmit, BaseDomain* pDomain)
+void ILPCEventArgsMarshaler::EmitConvertWinRTEventArgsToCLREventArgs(ILCodeStream* pslILEmit, LoaderAllocator* pLoader)
 {
     STANDARD_VM_CONTRACT;
 
-    MethodDesc *pConvertMD = pDomain->GetMarshalingData()->GetEventArgsMarshalingInfo()->GetWinRTPCEventArgsToSystemPCEventArgsMD();
+    MethodDesc *pConvertMD = pLoader->GetMarshalingData()->GetEventArgsMarshalingInfo()->GetWinRTPCEventArgsToSystemPCEventArgsMD();
 
     // PropertyChangedEventArgs System.Runtime.InteropServices.WindowsRuntime.PropertyChangedEventArgsMarshaler.ConvertToManaged(IntPtr)
     pslILEmit->EmitCALL(pslILEmit->GetToken(pConvertMD), 1, 1);
@@ -5819,7 +5920,7 @@ void ILPCEventArgsMarshaler::EmitConvertContentsNativeToCLR(ILCodeStream* pslILE
     STANDARD_VM_CONTRACT;
 
     EmitLoadNativeValue(pslILEmit);
-    EmitConvertWinRTEventArgsToCLREventArgs(pslILEmit, m_pargs->m_pMarshalInfo->GetModule()->GetDomain());
+    EmitConvertWinRTEventArgsToCLREventArgs(pslILEmit, m_pargs->m_pMarshalInfo->GetModule()->GetLoaderAllocator());
     EmitStoreManagedValue(pslILEmit);
 }
 

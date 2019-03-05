@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 /*============================================================
 **
@@ -31,7 +30,7 @@
 #define MNGSTDITF_DEFINE_METH3(FriendlyName, MethName, MethSig, FcallDecl) \
     MNGSTDITF_DEFINE_METH_IMPL(FriendlyName, MethName##_3, MethName, MethSig, FcallDecl)
         
-#define CUSTOM_MARSHALER_ASM ", CustomMarshalers, Version=" VER_ASSEMBLYVERSION_STR ", Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a"
+#define CUSTOM_MARSHALER_ASM ", System.Private.CoreLib, Version=" VER_ASSEMBLYVERSION_STR ", Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a"
 
 
 

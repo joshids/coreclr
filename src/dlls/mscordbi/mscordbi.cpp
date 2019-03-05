@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //*****************************************************************************
 // MSCorDBI.cpp
 //
@@ -12,7 +11,7 @@
 //*****************************************************************************
 #include "stdafx.h"
 
-extern BOOL STDMETHODCALLTYPE DbgDllMain(HINSTANCE hInstance, DWORD dwReason,
+extern BOOL WINAPI DbgDllMain(HINSTANCE hInstance, DWORD dwReason,
                                          LPVOID lpReserved);
 
 //*****************************************************************************
@@ -20,11 +19,11 @@ extern BOOL STDMETHODCALLTYPE DbgDllMain(HINSTANCE hInstance, DWORD dwReason,
 // OS when the dll gets loaded.  Control is simply deferred to the main code.
 //*****************************************************************************
 extern "C"
+#ifdef FEATURE_PAL
+DLLEXPORT // For Win32 PAL LoadLibrary emulation
+#endif
 BOOL WINAPI DllMain(HINSTANCE hInstance, DWORD dwReason, LPVOID lpReserved)
 {
-	//<TODO> Shoud we call DisableThreadLibraryCalls?  Or does this code
-	//	need native thread attatch/detatch notifications? </TODO>
-
 	// Defer to the main debugging code.
     return DbgDllMain(hInstance, dwReason, lpReserved);
 }

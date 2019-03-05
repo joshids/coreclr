@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 // ===========================================================================
 // File: CEELOAD.INL
 // 
@@ -27,6 +26,8 @@ TYPE LookupMap<TYPE>::GetValueAt(PTR_TADDR pValue, TADDR* pFlags, TADDR supporte
     return (TYPE)(dac_cast<TADDR>(value) & ~supportedFlags);
 }
 
+#ifndef DACCESS_COMPILE
+
 template<typename TYPE>
 inline 
 void LookupMap<TYPE>::SetValueAt(PTR_TADDR pValue, TYPE value, TADDR flags)
@@ -35,10 +36,10 @@ void LookupMap<TYPE>::SetValueAt(PTR_TADDR pValue, TYPE value, TADDR flags)
 
     value = (TYPE)(dac_cast<TADDR>(value) | flags);
 
-    RelativePointer<TYPE>::SetValueAtPtr(dac_cast<TADDR>(pValue), value);
+    RelativePointer<TYPE> *pRelPtr = (RelativePointer<TYPE> *)pValue;
+    pRelPtr->SetValue(value);
 }
 
-#ifndef DACCESS_COMPILE
 //
 // Specialization of Get/SetValueAt methods to support maps of pointer-sized value types
 //
@@ -268,10 +269,12 @@ void LookupMap<TYPE>::EnsureElementCanBeStored(Module * pModule, DWORD rid)
     }
     CONTRACTL_END;
 
+#ifdef FEATURE_PREJIT
     // don't attempt to call GetElementPtr for rids inside the compressed portion of
     // a multi-node map
     if (MapIsCompressed() && rid < dwCount)
         return;
+#endif
     PTR_TADDR pElement = GetElementPtr(rid);
     if (pElement == NULL)
         GrowMap(pModule, rid);
@@ -397,7 +400,6 @@ inline MethodDesc *Module::LookupMethodDef(mdMethodDef token)
     {
         NOTHROW;
         GC_NOTRIGGER;
-        SO_TOLERANT;
         MODE_ANY;
         SUPPORTS_DAC;
     }
@@ -462,7 +464,13 @@ inline BOOL Module::IsEditAndContinueCapable()
     WRAPPER_NO_CONTRACT; 
     SUPPORTS_DAC;
 
-    return IsEditAndContinueCapable(m_file) && !GetAssembly()->IsDomainNeutral() && !this->IsReflection(); 
+    BOOL isEnCCapable = IsEditAndContinueCapable(m_pAssembly, m_file);
+    
+    // for now, Module::IsReflection is equivalent to m_file->IsDynamic,
+    // which is checked by IsEditAndContinueCapable(m_pAssembly, m_file)
+    _ASSERTE(!isEnCCapable || (!this->IsReflection()));
+
+    return isEnCCapable;
 }
 
 FORCEINLINE PTR_DomainLocalModule Module::GetDomainLocalModule(AppDomain *pDomain)
@@ -488,19 +496,6 @@ FORCEINLINE PTR_DomainLocalModule Module::GetDomainLocalModule(AppDomain *pDomai
 
     return pDomain->GetDomainLocalBlock()->GetModuleSlot(GetModuleIndex());
 }
-
-FORCEINLINE ULONG Module::GetNumberOfActivations()
-{
-    _ASSERTE(m_Crst.OwnedByCurrentThread());
-    return m_dwNumberOfActivations;
-}
-
-FORCEINLINE ULONG Module::IncrementNumberOfActivations()
-{
-    CrstHolder lock(&m_Crst);
-    return ++m_dwNumberOfActivations;
-}
-
 
 #ifdef FEATURE_PREJIT
 
@@ -649,10 +644,12 @@ inline MethodTable* Module::GetDynamicClassMT(DWORD dynamicClassID)
     return m_pDynamicStaticsInfo[dynamicClassID].pEnclosingMT;
 }
 
-inline ReJitManager * Module::GetReJitManager()
+#ifdef FEATURE_CODE_VERSIONING
+inline CodeVersionManager * Module::GetCodeVersionManager()
 {
     LIMITED_METHOD_CONTRACT;
-    return GetDomain()->GetReJitManager();
+    return GetDomain()->GetCodeVersionManager();
 }
+#endif // FEATURE_CODE_VERSIONING
 
 #endif  // CEELOAD_INL_

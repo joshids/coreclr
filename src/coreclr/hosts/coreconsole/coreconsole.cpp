@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 //
 // A simple CoreCLR host that runs a managed binary with the same name as this executable but with *.dll extension
@@ -45,7 +44,7 @@ public:
             m_capacity = m_defaultSize;
         }
         if (m_length + strLen + 1 > m_capacity) {
-            size_t newCapacity = m_capacity * 2;
+            size_t newCapacity = (m_length + strLen + 1) * 2;
             wchar_t* newBuffer = new wchar_t[newCapacity];
             wcsncpy_s(newBuffer, newCapacity, m_buffer, m_length);
             delete[] m_buffer;
@@ -72,7 +71,7 @@ class HostEnvironment
     // The list of paths to the assemblies that will be trusted by CoreCLR
     StringBuffer m_tpaList;
 
-    ICLRRuntimeHost2* m_CLRRuntimeHost;
+    ICLRRuntimeHost4* m_CLRRuntimeHost;
 
     HMODULE m_coreCLRModule;
 
@@ -186,7 +185,7 @@ public:
         }
     }
 
-    bool TPAListContainsFile(wchar_t* fileNameWithoutExtension, wchar_t** rgTPAExtensions, int countExtensions)
+    bool TPAListContainsFile(_In_z_ wchar_t* fileNameWithoutExtension, _In_reads_(countExtensions) const wchar_t** rgTPAExtensions, int countExtensions)
     {
         if (!m_tpaList.CStr()) return false;
 
@@ -206,7 +205,7 @@ public:
         return false;
     }
 
-    void RemoveExtensionAndNi(wchar_t* fileName)
+    void RemoveExtensionAndNi(_In_z_ wchar_t* fileName)
     {
         // Remove extension, if it exists
         wchar_t* extension = wcsrchr(fileName, W('.')); 
@@ -226,7 +225,7 @@ public:
         }
     }
 
-    void AddFilesFromDirectoryToTPAList(wchar_t* targetPath, wchar_t** rgTPAExtensions, int countExtensions)
+    void AddFilesFromDirectoryToTPAList(_In_z_ wchar_t* targetPath, _In_reads_(countExtensions) const wchar_t** rgTPAExtensions, int countExtensions)
     {
         *m_log << W("Adding assemblies from ") << targetPath << W(" to the TPA list") << Logger::endl;
         wchar_t assemblyPath[MAX_LONGPATH];
@@ -289,7 +288,7 @@ public:
     // On first call, scans the coreclr directory for dlls and adds them all to the list.
     const wchar_t * GetTpaList() {
         if (!m_tpaList.CStr()) {
-            wchar_t *rgTPAExtensions[] = {
+            const wchar_t *rgTPAExtensions[] = {
                         W("*.ni.dll"),		// Probe for .ni.dll first so that it's preferred if ni and il coexist in the same dir
                         W("*.dll"),
                         W("*.ni.exe"),
@@ -327,8 +326,8 @@ public:
         return m_hostExeName;
     }
 
-    // Returns the ICLRRuntimeHost2 instance, loading it from CoreCLR.dll if necessary, or nullptr on failure.
-    ICLRRuntimeHost2* GetCLRRuntimeHost() {
+    // Returns the ICLRRuntimeHost4 instance, loading it from CoreCLR.dll if necessary, or nullptr on failure.
+    ICLRRuntimeHost4* GetCLRRuntimeHost() {
         if (!m_CLRRuntimeHost) {
 
             if (!m_coreCLRModule) {
@@ -348,9 +347,9 @@ public:
 
             *m_log << W("Calling GetCLRRuntimeHost(...)") << Logger::endl;
 
-            HRESULT hr = pfnGetCLRRuntimeHost(IID_ICLRRuntimeHost2, (IUnknown**)&m_CLRRuntimeHost);
+            HRESULT hr = pfnGetCLRRuntimeHost(IID_ICLRRuntimeHost4, (IUnknown**)&m_CLRRuntimeHost);
             if (FAILED(hr)) {
-                *m_log << W("Failed to get ICLRRuntimeHost2 interface. ERRORCODE: ") << hr << Logger::endl;
+                *m_log << W("Failed to get ICLRRuntimeHost4 interface. ERRORCODE: ") << hr << Logger::endl;
                 return nullptr;
             }
         }
@@ -361,7 +360,7 @@ public:
 
 };
 
-bool TryRun(const int argc, const wchar_t* argv[], Logger &log, const bool verbose, const bool waitForDebugger, DWORD &exitCode, wchar_t* programPath)
+bool TryRun(const int argc, const wchar_t* argv[], Logger &log, const bool verbose, const bool waitForDebugger, DWORD &exitCode, _In_z_ wchar_t* programPath)
 {
     // Assume failure
     exitCode = -1;
@@ -406,25 +405,26 @@ bool TryRun(const int argc, const wchar_t* argv[], Logger &log, const bool verbo
 
     // Start the CoreCLR
 
-    ICLRRuntimeHost2 *host = hostEnvironment.GetCLRRuntimeHost();
+    ICLRRuntimeHost4 *host = hostEnvironment.GetCLRRuntimeHost();
     if (!host) {
         return false;
     }
 
     HRESULT hr;
 
-    log << W("Setting ICLRRuntimeHost2 startup flags") << Logger::endl;
+    log << W("Setting ICLRRuntimeHost4 startup flags") << Logger::endl;
 
     // Default startup flags
     hr = host->SetStartupFlags((STARTUP_FLAGS)
         (STARTUP_FLAGS::STARTUP_LOADER_OPTIMIZATION_SINGLE_DOMAIN | 
-        STARTUP_FLAGS::STARTUP_SINGLE_APPDOMAIN)); 
+        STARTUP_FLAGS::STARTUP_SINGLE_APPDOMAIN |
+        STARTUP_FLAGS::STARTUP_CONCURRENT_GC));
     if (FAILED(hr)) {
         log << W("Failed to set startup flags. ERRORCODE: ") << hr << Logger::endl;
         return false;
     }
 
-    log << W("Starting ICLRRuntimeHost2") << Logger::endl;
+    log << W("Starting ICLRRuntimeHost4") << Logger::endl;
 
     hr = host->Start();
     if (FAILED(hr)) {
@@ -456,8 +456,7 @@ bool TryRun(const int argc, const wchar_t* argv[], Logger &log, const bool verbo
         W("TRUSTED_PLATFORM_ASSEMBLIES"),
         W("APP_PATHS"),
         W("APP_NI_PATHS"),
-        W("NATIVE_DLL_SEARCH_DIRECTORIES")
-		W("AppDomainCompatSwitch"),
+        W("NATIVE_DLL_SEARCH_DIRECTORIES"),
     };
     const wchar_t *property_values[] = { 
         // TRUSTED_PLATFORM_ASSEMBLIES
@@ -542,15 +541,17 @@ bool TryRun(const int argc, const wchar_t* argv[], Logger &log, const bool verbo
 
     log << W("Unloading the AppDomain") << Logger::endl;
 
-    hr = host->UnloadAppDomain(
+    hr = host->UnloadAppDomain2(
         domainId, 
-        true);                          // Wait until done
+        true,
+        (int *)&exitCode);                          // Wait until done
 
     if (FAILED(hr)) {
         log << W("Failed to unload the AppDomain. ERRORCODE: ") << hr << Logger::endl;
         return false;
     }
 
+    log << W("App domain unloaded exit value = ") << exitCode << Logger::endl;
 
     //-------------------------------------------------------------
 
@@ -569,7 +570,7 @@ bool TryRun(const int argc, const wchar_t* argv[], Logger &log, const bool verbo
 
     // Release the reference to the host
 
-    log << W("Releasing ICLRRuntimeHost2") << Logger::endl;
+    log << W("Releasing ICLRRuntimeHost4") << Logger::endl;
 
     host->Release();
 
@@ -593,29 +594,25 @@ void showHelp() {
 		);
 }
 
+static wchar_t programPath[MAX_LONGPATH];
+
 int __cdecl wmain(const int argc, const wchar_t* argv[])
 {
-    auto programPath = _wcsdup(argv[0]);
+    DWORD dwModuleFileName = GetModuleFileName(NULL, programPath, MAX_LONGPATH);
+    if (dwModuleFileName == 0 || dwModuleFileName >= MAX_LONGPATH) {
+        ::wprintf(W("Failed to get the path to the current executable"));
+        return -1;
+    }
     auto extension = wcsrchr(programPath, '.');
-    if (extension == NULL) {
-        // We were called without the extension so need a bigger buffer
-        size_t pathLen = wcslen(programPath);
-        size_t bufLen = pathLen + 5;
-        wchar_t *newPath = new wchar_t[bufLen];
-        wcscpy_s(newPath, bufLen, programPath);
-        wcscat_s(newPath, bufLen, W(".dll"));
-        programPath = newPath;
+    if (extension == NULL || (wcscmp(extension, L".exe") != 0)) {
+        ::wprintf(W("This executable needs to have 'exe' extension"));
+        return -1;
     }
-    else {
-        extension += 1;
-        if (wcscmp(extension, L"exe") != 0) {
-            ::wprintf(W("This executable needs to have 'exe' extension"));
-            return -1;
-        }
-        extension[0] = 'd';
-        extension[1] = 'l';
-        extension[2] = 'l';
-    }
+
+    // Change the extension from ".exe" to ".dll"
+    extension[1] = 'd';
+    extension[2] = 'l';
+    extension[3] = 'l';
 
     // Parse the options from the command line
     bool verbose = false;

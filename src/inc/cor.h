@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 /*****************************************************************************
  **                                                                         **
@@ -172,7 +171,6 @@ DEPRECATED_CLR_STDAPI_(void)   CoUninitializeEE(BOOL fFlags);
 DEPRECATED_CLR_STDAPI_(void)   CoEEShutDownCOM(void);
 
 
-#ifdef FEATURE_MAIN_CLR_MODULE_USES_CORE_NAME
 
 #define MAIN_CLR_MODULE_NAME_W        W("coreclr")
 #define MAIN_CLR_MODULE_NAME_A         "coreclr"
@@ -180,24 +178,10 @@ DEPRECATED_CLR_STDAPI_(void)   CoEEShutDownCOM(void);
 #define MAIN_CLR_DLL_NAME_W           MAKEDLLNAME_W(MAIN_CLR_MODULE_NAME_W)
 #define MAIN_CLR_DLL_NAME_A           MAKEDLLNAME_A(MAIN_CLR_MODULE_NAME_A)
 
-#else //FEATURE_MAIN_CLR_MODULE_USES_CORE_NAME
-
-#define MAIN_CLR_MODULE_NAME_W        L"clr"
-#define MAIN_CLR_MODULE_NAME_A         "clr"
-
-#define MAIN_CLR_DLL_NAME_W           MAKEDLLNAME_W(MAIN_CLR_MODULE_NAME_W)
-#define MAIN_CLR_DLL_NAME_A           MAKEDLLNAME_A(MAIN_CLR_MODULE_NAME_A)
-
-#endif //FEATURE_MAIN_CLR_MODULE_USES_CORE_NAME
 
 
-#ifdef FEATURE_CORECLR
 #define MSCOREE_SHIM_W               MAIN_CLR_DLL_NAME_W
 #define MSCOREE_SHIM_A               MAIN_CLR_DLL_NAME_A
-#else
-#define MSCOREE_SHIM_W                L"mscoree.dll"
-#define MSCOREE_SHIM_A                "mscoree.dll"
-#endif // FEATURE_CORECLR
 
 #define SWITCHOUT_HANDLE_VALUE ((HANDLE)(LONG_PTR)-2)
 
@@ -1972,7 +1956,6 @@ typedef enum
     nltAnsi         = 2,    // ansi keyword specified
     nltUnicode      = 3,    // unicode keyword specified
     nltAuto         = 4,    // auto keyword specified
-    nltOle          = 5,    // ole keyword specified
     nltMaxValue     = 7,    // used so we can assert how many bits are required for this enum
 } CorNativeLinkType;
 
@@ -2012,7 +1995,7 @@ typedef enum
 // slot on the caller's stack.
 //
 
-#define COR_REQUIRES_SECOBJ_ATTRIBUTE L"System.Security.DynamicSecurityMethodAttribute"
+#define COR_REQUIRES_SECOBJ_ATTRIBUTE W("System.Security.DynamicSecurityMethodAttribute")
 #define COR_REQUIRES_SECOBJ_ATTRIBUTE_ANSI "System.Security.DynamicSecurityMethodAttribute"
 
 #define COR_COMPILERSERVICE_DISCARDABLEATTRIBUTE L"System.Runtime.CompilerServices.DiscardableAttribute"
@@ -2043,17 +2026,9 @@ typedef enum
 
 #ifndef DEBUG_NOINLINE
 #if defined(_DEBUG)
-#define DEBUG_NOINLINE __declspec(noinline)
+#define DEBUG_NOINLINE NOINLINE
 #else
 #define DEBUG_NOINLINE
-#endif
-#endif
-
-#ifndef DBG_NOINLINE_X86__RET_INLINE
-#if defined(_DEBUG) && defined(_X86_)
-#define DBG_NOINLINE_X86__RET_INLINE __declspec(noinline)
-#else
-#define DBG_NOINLINE_X86__RET_INLINE FORCEINLINE
 #endif
 #endif
 
@@ -2220,7 +2195,11 @@ inline ULONG CorSigUncompressData(      // return number of bytes of that compre
 
 
 #if !defined(SELECTANY)
+#if defined(__GNUC__)
+    #define SELECTANY extern __attribute__((weak))
+#else
     #define SELECTANY extern __declspec(selectany)
+#endif
 #endif
 
 SELECTANY const mdToken g_tkCorEncodeToken[4] ={mdtTypeDef, mdtTypeRef, mdtTypeSpec, mdtBaseType};

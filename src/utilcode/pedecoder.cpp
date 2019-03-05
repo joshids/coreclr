@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 // --------------------------------------------------------------------------------
 // PEDecoder.cpp
 //
@@ -35,7 +34,7 @@ CHECK PEDecoder::CheckFormat() const
         {
             CHECK(CheckCorHeader());
 
-#if !defined(FEATURE_MIXEDMODE) && !defined(FEATURE_PREJIT)
+#if !defined(FEATURE_PREJIT)
             CHECK(IsILOnly());
 #endif
 
@@ -161,7 +160,6 @@ BOOL PEDecoder::HasNTHeaders() const
         GC_NOTRIGGER;
         SUPPORTS_DAC;
         PRECONDITION(HasContents());
-        SO_TOLERANT;
     }
     CONTRACT_END;
 
@@ -244,7 +242,6 @@ CHECK PEDecoder::CheckNTHeaders() const
         GC_NOTRIGGER;
         SUPPORTS_DAC;
         PRECONDITION(HasContents());
-        SO_TOLERANT;
     }
     CONTRACT_CHECK_END;
 
@@ -264,9 +261,6 @@ CHECK PEDecoder::CheckNTHeaders() const
     CHECK(CheckAligned((UINT)VAL32(pNT->OptionalHeader.FileAlignment), 512));
     CHECK(CheckAligned((UINT)VAL32(pNT->OptionalHeader.SectionAlignment), VAL32(pNT->OptionalHeader.FileAlignment)));
 
-    // INVESTIGATE: this doesn't seem to be necessary on Win64 - why??
-    //CHECK(CheckAligned((UINT)VAL32(pNT->OptionalHeader.SectionAlignment), OS_PAGE_SIZE));
-    CHECK(CheckAligned((UINT)VAL32(pNT->OptionalHeader.SectionAlignment), 0x1000)); // for base relocs logic
     CHECK(CheckAligned((UINT)VAL32(pNT->OptionalHeader.SizeOfImage), VAL32(pNT->OptionalHeader.SectionAlignment)));
     CHECK(CheckAligned((UINT)VAL32(pNT->OptionalHeader.SizeOfHeaders), VAL32(pNT->OptionalHeader.FileAlignment)));
 
@@ -301,7 +295,7 @@ CHECK PEDecoder::CheckNTHeaders() const
         // Ideally we would require the layout address to honor the section alignment constraints.
         // However, we do have 8K aligned IL only images which we load on 32 bit platforms. In this
         // case, we can only guarantee OS page alignment (which after all, is good enough.)
-        CHECK(CheckAligned(m_base, OS_PAGE_SIZE));
+        CHECK(CheckAligned(m_base, GetOsPageSize()));
     }
 
     // @todo: check NumberOfSections for overflow of SizeOfHeaders
@@ -396,7 +390,6 @@ CHECK PEDecoder::CheckSection(COUNT_T previousAddressEnd, COUNT_T addressStart, 
         NOTHROW;
         GC_NOTRIGGER;
         SUPPORTS_DAC;
-        SO_TOLERANT;
     }
     CONTRACT_CHECK_END;
 
@@ -444,6 +437,37 @@ CHECK PEDecoder::CheckSection(COUNT_T previousAddressEnd, COUNT_T addressStart, 
     CHECK_OK;
 }
 
+BOOL PEDecoder::HasWriteableSections() const
+{
+    CONTRACT_CHECK
+    {
+        INSTANCE_CHECK;
+        PRECONDITION(CheckNTHeaders());
+        PRECONDITION(CheckFormat());
+        NOTHROW;
+        GC_NOTRIGGER;
+        SUPPORTS_DAC;
+    }
+    CONTRACT_CHECK_END;
+
+    PTR_IMAGE_SECTION_HEADER pSection = FindFirstSection();
+    _ASSERTE(pSection != NULL);
+
+    PTR_IMAGE_SECTION_HEADER pSectionEnd = pSection + VAL16(FindNTHeaders()->FileHeader.NumberOfSections);
+
+    while (pSection < pSectionEnd)
+    {
+        if ((pSection->Characteristics & VAL32(IMAGE_SCN_MEM_WRITE)) != 0)
+        {
+            return TRUE;
+        }
+
+        pSection++;
+    }
+
+    return FALSE;
+}
+
 CHECK PEDecoder::CheckDirectoryEntry(int entry, int forbiddenFlags, IsNullOK ok) const
 {
     CONTRACT_CHECK
@@ -454,7 +478,6 @@ CHECK PEDecoder::CheckDirectoryEntry(int entry, int forbiddenFlags, IsNullOK ok)
         PRECONDITION(HasDirectoryEntry(entry));
         NOTHROW;
         GC_NOTRIGGER;
-        SO_TOLERANT;
     }
     CONTRACT_CHECK_END;
 
@@ -473,7 +496,6 @@ CHECK PEDecoder::CheckDirectory(IMAGE_DATA_DIRECTORY *pDir, int forbiddenFlags, 
         NOTHROW;
         GC_NOTRIGGER;
         SUPPORTS_DAC;
-        SO_TOLERANT;
     }
     CONTRACT_CHECK_END;
 
@@ -490,7 +512,6 @@ CHECK PEDecoder::CheckRva(RVA rva, COUNT_T size, int forbiddenFlags, IsNullOK ok
         NOTHROW;
         GC_NOTRIGGER;
         SUPPORTS_DAC;
-        SO_TOLERANT;
     }
     CONTRACT_CHECK_END;
 
@@ -529,7 +550,6 @@ CHECK PEDecoder::CheckRva(RVA rva, IsNullOK ok) const
         NOTHROW;
         GC_NOTRIGGER;
         SUPPORTS_DAC;
-        SO_TOLERANT;
     }
     CONTRACT_CHECK_END;
 
@@ -656,7 +676,6 @@ CHECK PEDecoder::CheckInternalAddress(SIZE_T address, IsNullOK ok) const
         PRECONDITION(CheckNTHeaders());
         NOTHROW;
         GC_NOTRIGGER;
-        SO_TOLERANT;
     }
     CONTRACT_CHECK_END;
 
@@ -676,7 +695,6 @@ CHECK PEDecoder::CheckInternalAddress(SIZE_T address, COUNT_T size, IsNullOK ok)
         PRECONDITION(CheckNTHeaders());
         NOTHROW;
         GC_NOTRIGGER;
-        SO_TOLERANT;
     }
     CONTRACT_CHECK_END;
 
@@ -702,7 +720,6 @@ RVA PEDecoder::InternalAddressToRva(SIZE_T address) const
         NOTHROW;
         GC_NOTRIGGER;
         POSTCONDITION(CheckRva(RETVAL));
-        SO_TOLERANT;
     }
     CONTRACT_END;
 
@@ -730,7 +747,6 @@ IMAGE_SECTION_HEADER *PEDecoder::FindSection(LPCSTR sectionName) const
         NOTHROW;
         GC_NOTRIGGER;
         CANNOT_TAKE_LOCK;
-        SO_TOLERANT;
         POSTCONDITION(CheckPointer(RETVAL, NULL_OK));
     }
     CONTRACT_END;
@@ -782,7 +798,6 @@ IMAGE_SECTION_HEADER *PEDecoder::RvaToSection(RVA rva) const
         CANNOT_TAKE_LOCK;
         POSTCONDITION(CheckPointer(RETVAL, NULL_OK));
         SUPPORTS_DAC;
-        SO_TOLERANT;
     }
     CONTRACT_END;
 
@@ -818,7 +833,6 @@ IMAGE_SECTION_HEADER *PEDecoder::OffsetToSection(COUNT_T fileOffset) const
         GC_NOTRIGGER;
         POSTCONDITION(CheckPointer(RETVAL, NULL_OK));
         SUPPORTS_DAC;
-        SO_TOLERANT;
     }
     CONTRACT_END;
 
@@ -850,7 +864,6 @@ TADDR PEDecoder::GetRvaData(RVA rva, IsNullOK ok /*= NULL_NOT_OK*/) const
         PRECONDITION(CheckRva(rva, NULL_OK));
         NOTHROW;
         GC_NOTRIGGER;
-        SO_TOLERANT;
         CANNOT_TAKE_LOCK;
         SUPPORTS_DAC;
     }
@@ -902,7 +915,6 @@ BOOL PEDecoder::PointerInPE(PTR_CVOID data) const
         NOTHROW;
         GC_NOTRIGGER;
         FORBID_FAULT;
-        SO_TOLERANT;
         SUPPORTS_DAC;
     }
     CONTRACTL_END;
@@ -983,7 +995,6 @@ inline PTR_STORAGESTREAM NextStorageStream(PTR_STORAGESTREAM pSS)
     {
         NOTHROW;
         GC_NOTRIGGER;
-        SO_TOLERANT;
         CANNOT_TAKE_LOCK;
     }
     CONTRACTL_END;
@@ -1004,7 +1015,6 @@ CHECK PEDecoder::CheckCorHeader() const
         NOTHROW;
         GC_NOTRIGGER;
         SUPPORTS_DAC;
-        SO_TOLERANT;
     }
     CONTRACT_CHECK_END;
 
@@ -1076,8 +1086,8 @@ CHECK PEDecoder::CheckCorHeader() const
     if (IsStrongNameSigned())
         CHECK(HasStrongNameSignature());
 
-    // IL library files (really a misnomer - these are native images) only
-    // may have a native image header
+    // IL library files (really a misnomer - these are native images or ReadyToRun images)
+    // only they can have a native image header
     if ((pCor->Flags&VAL32(COMIMAGE_FLAGS_IL_LIBRARY)) == 0)
     {
         CHECK(VAL32(pCor->ManagedNativeHeader.Size) == 0);
@@ -1174,12 +1184,6 @@ CHECK PEDecoder::CheckCorHeader() const
     CHECK_OK;
 }
 
-#if !defined(FEATURE_CORECLR)
-#define WHIDBEY_SP2_VERSION_MAJOR 2
-#define WHIDBEY_SP2_VERSION_MINOR 0
-#define WHIDBEY_SP2_VERSION_BUILD 50727
-#define WHIDBEY_SP2_VERSION_PRIVATE_BUILD 3053
-#endif // !defined(FEATURE_CORECLR)
 
 
 // This function exists to provide compatibility between two different native image
@@ -1226,79 +1230,21 @@ IMAGE_DATA_DIRECTORY *PEDecoder::GetMetaDataHelper(METADATA_SECTION_TYPE type) c
 
     // Visual Studio took dependency on crossgen /CreatePDB returning COR_E_NI_AND_RUNTIME_VERSION_MISMATCH
     // when crossgen and the native image come from different runtimes. In order to reach error path that returns
-    // COR_E_NI_AND_RUNTIME_VERSION_MISMATCH in this case, size of CORCOMPILE_HEADER has to remain constant to pass earlier 
+    // COR_E_NI_AND_RUNTIME_VERSION_MISMATCH in this case, size of CORCOMPILE_HEADER has to remain constant,
+    // and the offset of PEKind and Machine fields inside CORCOMPILE_HEADER also have to remain constant, to pass earlier
     // checks that lead to different error codes. See Windows Phone Blue Bug #45406 for details.
     _ASSERTE(sizeof(CORCOMPILE_HEADER) == 160 + sizeof(TADDR));
+    _ASSERTE(offsetof(CORCOMPILE_HEADER, PEKind) == 108 + sizeof(TADDR));
+    _ASSERTE(offsetof(CORCOMPILE_HEADER, Machine) == 116 + sizeof(TADDR));
 
     // Handle NGEN format; otherwise, there is only one MetaData section in the
     // COR_HEADER and so the value of pDirRet is correct
     if (HasNativeHeader())
     {
-#ifdef FEATURE_CORECLR
 
         if (type == METADATA_SECTION_MANIFEST)
             pDirRet = &GetNativeHeader()->ManifestMetaData;
 
-#else // FEATURE_CORECLR
-
-        IMAGE_DATA_DIRECTORY *pDirNativeHeader = &GetNativeHeader()->ManifestMetaData;
-
-        // This code leverages the fact that pre-Whidbey SP2 private build numbers can never
-        // be greater than Whidbey SP2 private build number, because otherwise major setup
-        // issues would arise. To prevent this, it is standard to bump the private build
-        // number up a significant amount for SPs, as was the case between Whidbey SP1 and
-        // Whidbey SP2.
-        // 
-        // Since we could be reading an older version of native image, we tell
-        // GetNativeVersionInfoMaybeNull to skip checking the native header.
-        CORCOMPILE_VERSION_INFO *pVerInfo = GetNativeVersionInfoMaybeNull(true);
-        bool fIsPreWhidbeySP2 = false;
-
-        // If pVerInfo is NULL, we assume that we're in an NGEN compilation domain and that
-        // the information has not yet been written. Since an NGEN compilation domain running
-        // in the v4.0 runtime can only complie v4.0 native images, we'll assume the default
-        // fIsPreWhidbeySP2 value (false) is correct.
-        if (pVerInfo != NULL && pVerInfo->wVersionMajor <= WHIDBEY_SP2_VERSION_MAJOR)
-        {
-            if (pVerInfo->wVersionMajor < WHIDBEY_SP2_VERSION_MAJOR)
-                fIsPreWhidbeySP2 = true;
-            else if (pVerInfo->wVersionMajor == WHIDBEY_SP2_VERSION_MAJOR)
-            {
-                // If the sp2 minor version isn't 0, we need this logic:
-                //     if (pVerInfo->wVersionMinor < WHIDBEY_SP2_VERSION_MINOR)
-                //         fIsPreWhidbeySP2 = true;
-                //     else
-                // However, if it is zero, with that logic we get a warning about the comparison
-                // of an unsigned variable to zero always being false.
-                _ASSERTE(WHIDBEY_SP2_VERSION_MINOR == 0);
-
-                if (pVerInfo->wVersionMinor == WHIDBEY_SP2_VERSION_MINOR)
-                {
-                    if (pVerInfo->wVersionBuildNumber < WHIDBEY_SP2_VERSION_BUILD)
-                        fIsPreWhidbeySP2 = true;
-                    else if (pVerInfo->wVersionBuildNumber == WHIDBEY_SP2_VERSION_BUILD)
-                    {
-                        if (pVerInfo->wVersionPrivateBuildNumber < WHIDBEY_SP2_VERSION_PRIVATE_BUILD)
-                            fIsPreWhidbeySP2 = true;
-                    }
-                }
-            }
-        }
-
-        // In pre-Whidbey SP2, pDirRet points to manifest and pDirNativeHeader points to full.
-        if (fIsPreWhidbeySP2)
-        {
-            if (type == METADATA_SECTION_FULL)
-                pDirRet = pDirNativeHeader;
-        }
-        // In Whidbey SP2 and later, pDirRet points to full and pDirNativeHeader points to manifest.
-        else
-        {
-            if (type == METADATA_SECTION_MANIFEST)
-                pDirRet = pDirNativeHeader;
-        }
-
-#endif // FEATURE_CORECLR
 
     }
 
@@ -1787,7 +1733,7 @@ void PEDecoder::LayoutILOnly(void *base, BOOL allowFullPE) const
         // Ideally we would require the layout address to honor the section alignment constraints.
         // However, we do have 8K aligned IL only images which we load on 32 bit platforms. In this
         // case, we can only guarantee OS page alignment (which after all, is good enough.)
-        PRECONDITION(CheckAligned((SIZE_T)base, OS_PAGE_SIZE));
+        PRECONDITION(CheckAligned((SIZE_T)base, GetOsPageSize()));
         THROWS;
         GC_NOTRIGGER;
     }
@@ -1888,13 +1834,12 @@ BOOL PEDecoder::HasNativeHeader() const
         NOTHROW;
         GC_NOTRIGGER;
         SUPPORTS_DAC;
-        SO_TOLERANT;
     }
     CONTRACT_END;
 
 #ifdef FEATURE_PREJIT
     // Pretend that ready-to-run images do not have native header
-    RETURN (((GetCorHeader()->Flags & VAL32(COMIMAGE_FLAGS_IL_LIBRARY)) != 0) && !HasReadyToRunHeader());
+    RETURN (GetCorHeader() && ((GetCorHeader()->Flags & VAL32(COMIMAGE_FLAGS_IL_LIBRARY)) != 0) && !HasReadyToRunHeader());
 #else
     RETURN FALSE;
 #endif
@@ -1907,7 +1852,6 @@ CHECK PEDecoder::CheckNativeHeader() const
         NOTHROW;
         GC_NOTRIGGER;
         SUPPORTS_DAC;
-        SO_TOLERANT;
     }
     CONTRACT_CHECK_END;
 
@@ -1991,7 +1935,6 @@ READYTORUN_HEADER * PEDecoder::FindReadyToRunHeader() const
         NOTHROW;
         GC_NOTRIGGER;
         SUPPORTS_DAC;
-        SO_TOLERANT;
     }
     CONTRACTL_END;
 
@@ -2418,7 +2361,6 @@ CORCOMPILE_CODE_MANAGER_ENTRY *PEDecoder::GetNativeCodeManagerTable() const
         SUPPORTS_DAC;
         NOTHROW;
         GC_NOTRIGGER;
-        SO_TOLERANT;
     }
     CONTRACT_END;
 
@@ -2436,7 +2378,6 @@ PCODE PEDecoder::GetNativeHotCode(COUNT_T * pSize) const
         SUPPORTS_DAC;
         NOTHROW;
         GC_NOTRIGGER;
-        SO_TOLERANT;
     }
     CONTRACT_END;
 
@@ -2457,7 +2398,6 @@ PCODE PEDecoder::GetNativeCode(COUNT_T * pSize) const
         SUPPORTS_DAC;
         NOTHROW;
         GC_NOTRIGGER;
-        SO_TOLERANT;
     }
     CONTRACT_END;
 
@@ -2517,69 +2457,39 @@ PTR_CVOID PEDecoder::GetNativeManifestMetadata(COUNT_T *pSize) const
     CONTRACT(PTR_CVOID)
     {
         INSTANCE_CHECK;
-        PRECONDITION(CheckNativeHeader());
+        PRECONDITION(HasReadyToRunHeader() || CheckNativeHeader());
         POSTCONDITION(CheckPointer(RETVAL, NULL_OK)); // TBD - may not store metadata for IJW
         NOTHROW;
         GC_NOTRIGGER;
     }
     CONTRACT_END;
+    
+    IMAGE_DATA_DIRECTORY *pDir;
+    if (HasReadyToRunHeader())
+    {
+        READYTORUN_HEADER * pHeader = GetReadyToRunHeader();
 
-    IMAGE_DATA_DIRECTORY *pDir = GetMetaDataHelper(METADATA_SECTION_MANIFEST);
+        PTR_READYTORUN_SECTION pSections = dac_cast<PTR_READYTORUN_SECTION>(dac_cast<TADDR>(pHeader) + sizeof(READYTORUN_HEADER));
+        for (DWORD i = 0; i < pHeader->NumberOfSections; i++)
+        {
+            // Verify that section types are sorted
+            _ASSERTE(i == 0 || (pSections[i - 1].Type < pSections[i].Type));
+
+            READYTORUN_SECTION * pSection = pSections + i;
+            if (pSection->Type == READYTORUN_SECTION_MANIFEST_METADATA)
+                // Set pDir to the address of the manifest metadata section
+                pDir = &pSection->Section;
+        }
+    }
+    else
+    {
+        pDir = GetMetaDataHelper(METADATA_SECTION_MANIFEST);
+    }
 
     if (pSize != NULL)
         *pSize = VAL32(pDir->Size);
 
     RETURN dac_cast<PTR_VOID>(GetDirectoryData(pDir));
-}
-
-CHECK PEDecoder::CheckNativeImportFromIndex(COUNT_T index) const
-{
-    CONTRACT_CHECK
-    {
-        PRECONDITION(CheckNativeHeader());
-        NOTHROW;
-        GC_NOTRIGGER;
-    }
-    CONTRACT_CHECK_END;
-
-    CHECK_MSG(index >= 0 && index < GetNativeImportTableCount(), "Bad Native Import Index");
-
-    CHECK_OK;
-}
-
-COUNT_T PEDecoder::GetNativeImportTableCount() const
-{
-    CONTRACT(COUNT_T)
-    {
-        PRECONDITION(CheckNativeHeader());
-        NOTHROW;
-        GC_NOTRIGGER;
-    }
-    CONTRACT_END;
-
-    IMAGE_DATA_DIRECTORY *pDir = &GetNativeHeader()->ImportTable;
-
-    RETURN (VAL32(pDir->Size) / sizeof(CORCOMPILE_IMPORT_TABLE_ENTRY));
-}
-
-CORCOMPILE_IMPORT_TABLE_ENTRY *PEDecoder::GetNativeImportFromIndex(COUNT_T index) const
-{
-    CONTRACT(CORCOMPILE_IMPORT_TABLE_ENTRY *)
-    {
-        PRECONDITION(CheckNativeHeader());
-        PRECONDITION(CheckNativeImportFromIndex(index));
-        POSTCONDITION(CheckPointer(RETVAL));
-        NOTHROW;
-        GC_NOTRIGGER;
-    }
-    CONTRACT_END;
-
-    IMAGE_DATA_DIRECTORY *pDir = &GetNativeHeader()->ImportTable;
-
-    CORCOMPILE_IMPORT_TABLE_ENTRY *pEntry
-      = (CORCOMPILE_IMPORT_TABLE_ENTRY *) GetDirectoryData(pDir);
-
-    RETURN pEntry + index;
 }
 
 PTR_CORCOMPILE_IMPORT_SECTION PEDecoder::GetNativeImportSections(COUNT_T *pCount) const
@@ -2798,15 +2708,12 @@ BOOL PEDecoder::ForceRelocForDLL(LPCWSTR lpFileName)
 #ifdef _DEBUG
 		STATIC_CONTRACT_NOTHROW;                                        \
 		ANNOTATION_DEBUG_ONLY;                                          \
-		STATIC_CONTRACT_CANNOT_TAKE_LOCK;                               \
-		ANNOTATION_FN_SO_NOT_MAINLINE;
+		STATIC_CONTRACT_CANNOT_TAKE_LOCK;
 #endif
 
 #if defined(DACCESS_COMPILE) || defined(FEATURE_PAL)
     return TRUE;
 #else
-
-    CONTRACT_VIOLATION(SOToleranceViolation);
 
     // Contracts in ConfigDWORD do WszLoadLibrary(MSCOREE_SHIM_W).
     // This check prevents recursion.

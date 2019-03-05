@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 
 #ifndef _MDA_
@@ -296,7 +295,6 @@ private:
     friend class MdaXmlMessage;
     friend class MdaXmlIndustry;
     friend class MdaConfigFactory;
-    friend class EEConfigFactory;
     friend class MdaFramework;
     friend void EEStartupHelper(COINITIEE fFlags);
 
@@ -1187,7 +1185,7 @@ private: // Assistant Definitions
     
 private: // <xs:*>    
     void DefineSchema() { WRAPPER_NO_CONTRACT; m_tos = m_schemaRootFactory.Create(); }    
-    void DefineSchemaEnd() { CONTRACTL {NOTHROW; GC_NOTRIGGER; SO_TOLERANT; MODE_ANY; PRECONDITION(m_stack.GetDepth() == 0); } CONTRACTL_END; }
+    void DefineSchemaEnd() { CONTRACTL {NOTHROW; GC_NOTRIGGER; MODE_ANY; PRECONDITION(m_stack.GetDepth() == 0); } CONTRACTL_END; }
     void AddElement(MdaElemDeclDef name) { WRAPPER_NO_CONTRACT; Push(CreateDeclDef(name, &m_elementFactory)); Push(m_complexTypeFactory.Create()); }
     void AddElementRefType(MdaElemDeclDef name, MdaElemDeclDef type) { WRAPPER_NO_CONTRACT; AddTerminal(CreateDeclDef(name, &m_elementRefTypeFactory)->InitRef(GetDef(type))); }
     void AddElementAny(MdaElemDeclDef name) { WRAPPER_NO_CONTRACT; AddTerminal(CreateDeclDef(name, &m_elementAnyFactory)); }

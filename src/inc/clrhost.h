@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //
 
 //
@@ -23,6 +22,7 @@
 #include "predeftlsslot.h"
 #include "safemath.h"
 #include "debugreturn.h"
+#include "yieldprocessornormalized.h"
 
 #if !defined(_DEBUG_IMPL) && defined(_DEBUG) && !defined(DACCESS_COMPILE)
 #define _DEBUG_IMPL 1
@@ -45,7 +45,7 @@
 //
 #ifdef _DEBUG
 
-#define LAST_ERROR_TRASH_VALUE 42424
+#define LAST_ERROR_TRASH_VALUE 42424 /* = 0xa5b8 */
 
 #define TRASH_LASTERROR \
     SetLastError(LAST_ERROR_TRASH_VALUE)
@@ -56,9 +56,7 @@
 
 #endif // _DEBUG
 
-#ifndef CLR_STANDALONE_BINDER
 IExecutionEngine *GetExecutionEngine();
-#endif
 IEEMemoryManager *GetEEMemoryManager();
 
 LPVOID ClrVirtualAlloc(LPVOID lpAddress, SIZE_T dwSize, DWORD flAllocationType, DWORD flProtect);
@@ -82,12 +80,9 @@ extern int RFS_HashStack();
 
 void ClrFlsAssociateCallback(DWORD slot, PTLS_CALLBACK_FUNCTION callback);
 
-// Function pointer for fast TLS fetch - do not use directly
-typedef LPVOID (*POPTIMIZEDTLSGETTER)();
+typedef LPVOID* (*CLRFLSGETBLOCK)();
+extern CLRFLSGETBLOCK __ClrFlsGetBlock;
 
-extern POPTIMIZEDTLSGETTER __ClrFlsGetBlock;
-
-#ifndef CLR_STANDALONE_BINDER
 // Combining getter/setter into a single call
 inline void ClrFlsIncrementValue(DWORD slot, int increment)
 {
@@ -95,11 +90,10 @@ inline void ClrFlsIncrementValue(DWORD slot, int increment)
     STATIC_CONTRACT_GC_NOTRIGGER;
     STATIC_CONTRACT_MODE_ANY;
     STATIC_CONTRACT_CANNOT_TAKE_LOCK;
-    STATIC_CONTRACT_SO_TOLERANT;
 
     _ASSERTE(increment != 0);
-
-    void **block = (void **) (*__ClrFlsGetBlock)();
+    
+    void **block = (*__ClrFlsGetBlock)();
     size_t value;
 
     if (block != NULL)
@@ -112,8 +106,6 @@ inline void ClrFlsIncrementValue(DWORD slot, int increment)
     else
     {
         BEGIN_PRESERVE_LAST_ERROR;
-
-        ANNOTATION_VIOLATION(SOToleranceViolation);
 
         IExecutionEngine * pEngine = GetExecutionEngine();
         value = (size_t) pEngine->TLS_GetValue(slot);
@@ -132,17 +124,14 @@ inline void * ClrFlsGetValue (DWORD slot)
     STATIC_CONTRACT_GC_NOTRIGGER;
     STATIC_CONTRACT_MODE_ANY;
     STATIC_CONTRACT_CANNOT_TAKE_LOCK;
-    STATIC_CONTRACT_SO_TOLERANT;
 
-    void **block = (void **) (*__ClrFlsGetBlock)();
-    if (block != NULL)
+	void **block = (*__ClrFlsGetBlock)();
+	if (block != NULL)
     {
         return block[slot];
     }
     else
     {
-        ANNOTATION_VIOLATION(SOToleranceViolation);
-
         void * value = GetExecutionEngine()->TLS_GetValue(slot);
         return value;
     }
@@ -154,20 +143,18 @@ inline BOOL ClrFlsCheckValue(DWORD slot, void ** pValue)
     STATIC_CONTRACT_NOTHROW;
     STATIC_CONTRACT_GC_NOTRIGGER;
     STATIC_CONTRACT_MODE_ANY;
-    STATIC_CONTRACT_SO_TOLERANT;
 
 #ifdef _DEBUG
     *pValue = ULongToPtr(0xcccccccc);
 #endif //_DEBUG 
-    void **block = (void **) (*__ClrFlsGetBlock)();
-    if (block != NULL)
+	void **block = (*__ClrFlsGetBlock)();
+	if (block != NULL)
     {
         *pValue = block[slot];
         return TRUE;    
     }
     else
     {
-        ANNOTATION_VIOLATION(SOToleranceViolation);    
         BOOL result = GetExecutionEngine()->TLS_CheckValue(slot, pValue);
         return result;
     }
@@ -179,9 +166,8 @@ inline void ClrFlsSetValue(DWORD slot, void *pData)
     STATIC_CONTRACT_GC_NOTRIGGER;
     STATIC_CONTRACT_MODE_ANY;
     STATIC_CONTRACT_CANNOT_TAKE_LOCK;
-    STATIC_CONTRACT_SO_TOLERANT;
 
-    void **block = (void **) (*__ClrFlsGetBlock)();
+    void **block = (*__ClrFlsGetBlock)();
     if (block != NULL)
     {
         block[slot] = pData;
@@ -190,13 +176,11 @@ inline void ClrFlsSetValue(DWORD slot, void *pData)
     {
         BEGIN_PRESERVE_LAST_ERROR;
 
-        ANNOTATION_VIOLATION(SOToleranceViolation);
         GetExecutionEngine()->TLS_SetValue(slot, pData);
 
         END_PRESERVE_LAST_ERROR;
     }
 }
-#endif //!CLR_STANDALONE_BINDER
 
 typedef LPVOID (*FastAllocInProcessHeapFunc)(DWORD dwFlags, SIZE_T dwBytes);
 extern FastAllocInProcessHeapFunc __ClrAllocInProcessHeap;
@@ -371,9 +355,7 @@ private:
     SEMAPHORE_COOKIE m_semaphore;
 };
 
-#if defined(FEATURE_CORECLR) || !defined(SELF_NO_HOST) || defined(DACCESS_COMPILE)
 HMODULE GetCLRModule ();
-#endif // defined(FEATURE_CORECLR) || !defined(SELF_NO_HOST) || defined(DACCESS_COMPILE)
 
 #ifndef FEATURE_NO_HOST
 /*
@@ -614,7 +596,6 @@ public:
 
 // At places where want to allocate stress log, we need to first check if we are allowed to do so.
 // If ClrTlsInfo doesn't exist for this thread, we take it as can alloc
-#ifndef CLR_STANDALONE_BINDER
 inline bool IsInCantAllocRegion ()
 {
     size_t count = 0;
@@ -627,8 +608,5 @@ inline bool IsInCantAllocRegion ()
 }
 // for stress log the rule is more restrict, we have to check the global counter too
 extern BOOL IsInCantAllocStressLogRegion();
-#endif // !CLR_STANDALONE_BINDER
-
-#include "genericstackprobe.inl"
 
 #endif

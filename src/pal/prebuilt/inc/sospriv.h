@@ -1,14 +1,19 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-//
-
 
 
 /* this ALWAYS GENERATED file contains the definitions for the interfaces */
 
 
- /* File created by MIDL compiler version 8.00.0603 */
+ /* File created by MIDL compiler version 8.00.0613 */
+/* at Mon Jan 18 19:14:07 2038
+ */
+/* Compiler settings for C:/ssd/coreclr/src/inc/sospriv.idl:
+    Oicf, W1, Zp8, env=Win32 (32b run), target_arch=X86 8.00.0613 
+    protocol : dce , ms_ext, c_ext, robust
+    error checks: allocation ref bounds_check enum stub_data 
+    VC __declspec() decoration level: 
+         __declspec(uuid()), __declspec(selectany), __declspec(novtable)
+         DECLSPEC_UUID(), MIDL_INTERFACE()
+*/
 /* @@MIDL_FILE_HEADING(  ) */
 
 #pragma warning( disable: 4049 )  /* more than 64k source lines */
@@ -24,7 +29,7 @@
 
 #ifndef __RPCNDR_H_VERSION__
 #error this stub requires an updated version of <rpcndr.h>
-#endif // __RPCNDR_H_VERSION__
+#endif /* __RPCNDR_H_VERSION__ */
 
 #ifndef COM_NO_WINDOWS_H
 #include "windows.h"
@@ -80,6 +85,20 @@ typedef interface ISOSDacInterface ISOSDacInterface;
 typedef interface ISOSDacInterface2 ISOSDacInterface2;
 
 #endif 	/* __ISOSDacInterface2_FWD_DEFINED__ */
+
+
+#ifndef __ISOSDacInterface3_FWD_DEFINED__
+#define __ISOSDacInterface3_FWD_DEFINED__
+typedef interface ISOSDacInterface3 ISOSDacInterface3;
+
+#endif 	/* __ISOSDacInterface3_FWD_DEFINED__ */
+
+
+#ifndef __ISOSDacInterface4_FWD_DEFINED__
+#define __ISOSDacInterface4_FWD_DEFINED__
+typedef interface ISOSDacInterface4 ISOSDacInterface4;
+
+#endif 	/* __ISOSDacInterface4_FWD_DEFINED__ */
 
 
 /* header files for imported files */
@@ -1980,6 +1999,358 @@ EXTERN_C const IID IID_ISOSDacInterface2;
 
 #endif 	/* __ISOSDacInterface2_INTERFACE_DEFINED__ */
 
+
+#ifndef __ISOSDacInterface3_INTERFACE_DEFINED__
+#define __ISOSDacInterface3_INTERFACE_DEFINED__
+
+/* interface ISOSDacInterface3 */
+/* [uuid][local][object] */ 
+
+
+EXTERN_C const IID IID_ISOSDacInterface3;
+
+#if defined(__cplusplus) && !defined(CINTERFACE)
+    
+    MIDL_INTERFACE("B08C5CDC-FD8A-49C5-AB38-5FEEF35235B4")
+    ISOSDacInterface3 : public IUnknown
+    {
+    public:
+        virtual HRESULT STDMETHODCALLTYPE GetGCInterestingInfoData( 
+            CLRDATA_ADDRESS interestingInfoAddr,
+            struct DacpGCInterestingInfoData *data) = 0;
+        
+        virtual HRESULT STDMETHODCALLTYPE GetGCInterestingInfoStaticData( 
+            struct DacpGCInterestingInfoData *data) = 0;
+        
+        virtual HRESULT STDMETHODCALLTYPE GetGCGlobalMechanisms( 
+            size_t *globalMechanisms) = 0;
+        
+    };
+    
+    
+#else 	/* C style interface */
+
+    typedef struct ISOSDacInterface3Vtbl
+    {
+        BEGIN_INTERFACE
+        
+        HRESULT ( STDMETHODCALLTYPE *QueryInterface )( 
+            ISOSDacInterface3 * This,
+            /* [in] */ REFIID riid,
+            /* [annotation][iid_is][out] */ 
+            _COM_Outptr_  void **ppvObject);
+        
+        ULONG ( STDMETHODCALLTYPE *AddRef )( 
+            ISOSDacInterface3 * This);
+        
+        ULONG ( STDMETHODCALLTYPE *Release )( 
+            ISOSDacInterface3 * This);
+        
+        HRESULT ( STDMETHODCALLTYPE *GetGCInterestingInfoData )( 
+            ISOSDacInterface3 * This,
+            CLRDATA_ADDRESS interestingInfoAddr,
+            struct DacpGCInterestingInfoData *data);
+        
+        HRESULT ( STDMETHODCALLTYPE *GetGCInterestingInfoStaticData )( 
+            ISOSDacInterface3 * This,
+            struct DacpGCInterestingInfoData *data);
+        
+        HRESULT ( STDMETHODCALLTYPE *GetGCGlobalMechanisms )( 
+            ISOSDacInterface3 * This,
+            size_t *globalMechanisms);
+        
+        END_INTERFACE
+    } ISOSDacInterface3Vtbl;
+
+    interface ISOSDacInterface3
+    {
+        CONST_VTBL struct ISOSDacInterface3Vtbl *lpVtbl;
+    };
+
+    
+
+#ifdef COBJMACROS
+
+
+#define ISOSDacInterface3_QueryInterface(This,riid,ppvObject)	\
+    ( (This)->lpVtbl -> QueryInterface(This,riid,ppvObject) ) 
+
+#define ISOSDacInterface3_AddRef(This)	\
+    ( (This)->lpVtbl -> AddRef(This) ) 
+
+#define ISOSDacInterface3_Release(This)	\
+    ( (This)->lpVtbl -> Release(This) ) 
+
+
+#define ISOSDacInterface3_GetGCInterestingInfoData(This,interestingInfoAddr,data)	\
+    ( (This)->lpVtbl -> GetGCInterestingInfoData(This,interestingInfoAddr,data) ) 
+
+#define ISOSDacInterface3_GetGCInterestingInfoStaticData(This,data)	\
+    ( (This)->lpVtbl -> GetGCInterestingInfoStaticData(This,data) ) 
+
+#define ISOSDacInterface3_GetGCGlobalMechanisms(This,globalMechanisms)	\
+    ( (This)->lpVtbl -> GetGCGlobalMechanisms(This,globalMechanisms) ) 
+
+#endif /* COBJMACROS */
+
+
+#endif 	/* C style interface */
+
+
+
+
+#endif 	/* __ISOSDacInterface3_INTERFACE_DEFINED__ */
+
+
+#ifndef __ISOSDacInterface4_INTERFACE_DEFINED__
+#define __ISOSDacInterface4_INTERFACE_DEFINED__
+
+/* interface ISOSDacInterface4 */
+/* [uuid][local][object] */ 
+
+
+EXTERN_C const IID IID_ISOSDacInterface4;
+
+#if defined(__cplusplus) && !defined(CINTERFACE)
+    
+    MIDL_INTERFACE("74B9D34C-A612-4B07-93DD-5462178FCE11")
+    ISOSDacInterface4 : public IUnknown
+    {
+    public:
+        virtual HRESULT STDMETHODCALLTYPE GetClrNotification( 
+            CLRDATA_ADDRESS arguments[  ],
+            int count,
+            int *pNeeded) = 0;
+        
+    };
+    
+    
+#else 	/* C style interface */
+
+    typedef struct ISOSDacInterface4Vtbl
+    {
+        BEGIN_INTERFACE
+        
+        HRESULT ( STDMETHODCALLTYPE *QueryInterface )( 
+            ISOSDacInterface4 * This,
+            /* [in] */ REFIID riid,
+            /* [annotation][iid_is][out] */ 
+            _COM_Outptr_  void **ppvObject);
+        
+        ULONG ( STDMETHODCALLTYPE *AddRef )( 
+            ISOSDacInterface4 * This);
+        
+        ULONG ( STDMETHODCALLTYPE *Release )( 
+            ISOSDacInterface4 * This);
+        
+        HRESULT ( STDMETHODCALLTYPE *GetClrNotification )( 
+            ISOSDacInterface4 * This,
+            CLRDATA_ADDRESS arguments[  ],
+            int count,
+            int *pNeeded);
+        
+        END_INTERFACE
+    } ISOSDacInterface4Vtbl;
+
+    interface ISOSDacInterface4
+    {
+        CONST_VTBL struct ISOSDacInterface4Vtbl *lpVtbl;
+    };
+
+    
+
+#ifdef COBJMACROS
+
+
+#define ISOSDacInterface4_QueryInterface(This,riid,ppvObject)	\
+    ( (This)->lpVtbl -> QueryInterface(This,riid,ppvObject) ) 
+
+#define ISOSDacInterface4_AddRef(This)	\
+    ( (This)->lpVtbl -> AddRef(This) ) 
+
+#define ISOSDacInterface4_Release(This)	\
+    ( (This)->lpVtbl -> Release(This) ) 
+
+
+#define ISOSDacInterface4_GetClrNotification(This,arguments,count,pNeeded)	\
+    ( (This)->lpVtbl -> GetClrNotification(This,arguments,count,pNeeded) ) 
+
+#endif /* COBJMACROS */
+
+
+#endif 	/* C style interface */
+
+
+
+
+#endif 	/* __ISOSDacInterface4_INTERFACE_DEFINED__ */
+
+
+#ifndef __ISOSDacInterface5_INTERFACE_DEFINED__
+#define __ISOSDacInterface5_INTERFACE_DEFINED__
+
+/* interface ISOSDacInterface5 */
+/* [uuid][local][object] */ 
+
+
+EXTERN_C const IID IID_ISOSDacInterface5;
+
+#if defined(__cplusplus) && !defined(CINTERFACE)
+    
+    MIDL_INTERFACE("127d6abe-6c86-4e48-8e7b-220781c58101")
+    ISOSDacInterface5 : public IUnknown
+    {
+    public:
+        virtual HRESULT STDMETHODCALLTYPE GetTieredVersions( 
+            CLRDATA_ADDRESS methodDesc,
+            int rejitId,
+            struct DacpTieredVersionData *nativeCodeAddrs,
+            int cNativeCodeAddrs,
+            int *pcNativeCodeAddrs) = 0;
+        
+    };
+    
+    
+#else 	/* C style interface */
+
+    typedef struct ISOSDacInterface5Vtbl
+    {
+        BEGIN_INTERFACE
+        
+        HRESULT ( STDMETHODCALLTYPE *QueryInterface )( 
+            ISOSDacInterface5 * This,
+            /* [in] */ REFIID riid,
+            /* [annotation][iid_is][out] */ 
+            _COM_Outptr_  void **ppvObject);
+        
+        ULONG ( STDMETHODCALLTYPE *AddRef )( 
+            ISOSDacInterface5 * This);
+        
+        ULONG ( STDMETHODCALLTYPE *Release )( 
+            ISOSDacInterface5 * This);
+        
+        HRESULT ( STDMETHODCALLTYPE *GetTieredVersions )( 
+            ISOSDacInterface5 * This,
+            CLRDATA_ADDRESS methodDesc,
+            int rejitId,
+            CLRDATA_ADDRESS *nativeCodeAddrs,
+            int cNativeCodeAddrs);
+        
+        END_INTERFACE
+    } ISOSDacInterface5Vtbl;
+
+    interface ISOSDacInterface5
+    {
+        CONST_VTBL struct ISOSDacInterface5Vtbl *lpVtbl;
+    };
+
+    
+
+#ifdef COBJMACROS
+
+
+#define ISOSDacInterface5_QueryInterface(This,riid,ppvObject)	\
+    ( (This)->lpVtbl -> QueryInterface(This,riid,ppvObject) ) 
+
+#define ISOSDacInterface5_AddRef(This)	\
+    ( (This)->lpVtbl -> AddRef(This) ) 
+
+#define ISOSDacInterface5_Release(This)	\
+    ( (This)->lpVtbl -> Release(This) ) 
+
+
+#define ISOSDacInterface5_GetTieredVersions(This,methodDesc,rejitId,nativeCodeAddrs,cNativeCodeAddrs)	\
+    ( (This)->lpVtbl -> GetTieredVersions(This,methodDesc,rejitId,nativeCodeAddrs,cNativeCodeAddrs) ) 
+
+#endif /* COBJMACROS */
+
+
+#endif 	/* C style interface */
+
+
+
+
+#endif 	/* __ISOSDacInterface5_INTERFACE_DEFINED__ */
+
+
+#ifndef __ISOSDacInterface6_INTERFACE_DEFINED__
+#define __ISOSDacInterface6_INTERFACE_DEFINED__
+
+    /* interface ISOSDacInterface6 */
+    /* [uuid][local][object] */
+
+
+    EXTERN_C const IID IID_ISOSDacInterface6;
+
+#if defined(__cplusplus) && !defined(CINTERFACE)
+
+    MIDL_INTERFACE("11206399-4B66-4EDB-98EA-85654E59AD45")
+    ISOSDacInterface6 : public IUnknown
+    {
+    public:
+        virtual HRESULT STDMETHODCALLTYPE GetMethodTableCollectibleData(
+            CLRDATA_ADDRESS mt, 
+            struct DacpMethodTableCollectibleData *data) = 0;
+    };
+
+
+#else 	/* C style interface */
+
+    typedef struct ISOSDacInterface6Vtbl
+    {
+        BEGIN_INTERFACE
+
+        HRESULT(STDMETHODCALLTYPE *QueryInterface)(
+            ISOSDacInterface5 * This,
+            /* [in] */ REFIID riid,
+            /* [annotation][iid_is][out] */
+            _COM_Outptr_  void **ppvObject);
+
+        ULONG(STDMETHODCALLTYPE *AddRef)(
+            ISOSDacInterface5 * This);
+
+        ULONG(STDMETHODCALLTYPE *Release)(
+            ISOSDacInterface5 * This);
+
+        HRESULT(STDMETHODCALLTYPE *GetMethodTableCollectibleData)(
+            CLRDATA_ADDRESS mt, 
+            struct DacpMethodTableCollectibleData *data);
+
+        END_INTERFACE
+    } ISOSDacInterface6Vtbl;
+
+    interface ISOSDacInterface6
+    {
+        CONST_VTBL struct ISOSDacInterface6Vtbl *lpVtbl;
+    };
+
+
+
+#ifdef COBJMACROS
+
+
+#define ISOSDacInterface6_QueryInterface(This,riid,ppvObject)	\
+    ( (This)->lpVtbl -> QueryInterface(This,riid,ppvObject) ) 
+
+#define ISOSDacInterface6_AddRef(This)	\
+    ( (This)->lpVtbl -> AddRef(This) ) 
+
+#define ISOSDacInterface6_Release(This)	\
+    ( (This)->lpVtbl -> Release(This) ) 
+
+
+#define ISOSDacInterface6_GetMethodTableCollectibleData(This,mt,data)	\
+    ( (This)->lpVtbl -> GetMethodTableCollectibleData(This,mt,data) ) 
+
+#endif /* COBJMACROS */
+
+
+#endif 	/* C style interface */
+
+
+
+
+#endif 	/* __ISOSDacInterface6_INTERFACE_DEFINED__ */
 
 /* Additional Prototypes for ALL interfaces */
 

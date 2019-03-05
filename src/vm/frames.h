@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 // FRAMES.H
 
 
@@ -50,11 +49,6 @@
 #endif // FEATURE_HIJACK
 //    |
 //    |
-#ifdef FEATURE_REMOTING
-//    +-GCSafeCollectionFrame   - this handles reporting for GCSafeCollections, which are
-//    |                           generally used during appdomain transitions
-//    |
-#endif // FEATURE_REMOTING
 //    |
 //    +-InlinedCallFrame        - if a call to unmanaged code is hoisted into
 //    |                           a JIT'ted caller, the calling method keeps
@@ -65,6 +59,8 @@
 //    + +-HelperMethodFrame_1OBJ- reports additional object references
 //    | |
 //    + +-HelperMethodFrame_2OBJ- reports additional object references
+//    | |
+//    + +-HelperMethodFrame_3OBJ- reports additional object references
 //    | |
 //    + +-HelperMethodFrame_PROTECTOBJ - reports additional object references
 //    |
@@ -114,8 +110,10 @@
 //    |   +-ComPrestubMethodFrame - prestub frame for calls from COM to CLR
 //    |
 #endif //FEATURE_COMINTEROP
+#ifdef _TARGET_X86_
 //    | +-UMThkCallFrame        - this frame represents an unmanaged->managed
 //    |                           transition through N/Direct
+#endif
 //    |
 //    +-ContextTransitionFrame  - this frame is used to mark an appdomain transition
 //    |
@@ -139,17 +137,8 @@
 //    +-FuncEvalFrame         - frame for debugger function evaluation
 #endif // DEBUGGING_SUPPORTED
 //    |
-#if defined(FEATURE_INCLUDE_ALL_INTERFACES) && defined(_TARGET_X86_)
-//    |
-//    +-ReverseEnterRuntimeFrame
-//    |
-//    +-LeaveRuntimeFrame
-//    |
-#endif
 //    |
 //    +-ExceptionFilterFrame - this frame wraps call to exception filter
-//    |
-//    +-SecurityContextFrame - place the security context of an assembly on the stack to ensure it will be included in security demands
 //
 //------------------------------------------------------------------------
 #if 0
@@ -228,11 +217,9 @@ FRAME_TYPE_NAME(FuncEvalFrame)
 FRAME_TYPE_NAME(HelperMethodFrame)
 FRAME_TYPE_NAME(HelperMethodFrame_1OBJ)
 FRAME_TYPE_NAME(HelperMethodFrame_2OBJ)
+FRAME_TYPE_NAME(HelperMethodFrame_3OBJ)
 FRAME_TYPE_NAME(HelperMethodFrame_PROTECTOBJ)
 FRAME_ABSTRACT_TYPE_NAME(FramedMethodFrame)
-#ifdef FEATURE_REMOTING
-FRAME_TYPE_NAME(TPMethodFrame)
-#endif
 FRAME_TYPE_NAME(SecureDelegateFrame)
 FRAME_TYPE_NAME(MulticastFrame)
 FRAME_ABSTRACT_TYPE_NAME(UnmanagedToManagedFrame)
@@ -260,19 +247,12 @@ FRAME_TYPE_NAME(InterpreterFrame)
 #endif // FEATURE_INTERPRETER
 FRAME_TYPE_NAME(ProtectByRefsFrame)
 FRAME_TYPE_NAME(ProtectValueClassFrame)
-#ifdef FEATURE_REMOTING
-FRAME_TYPE_NAME(GCSafeCollectionFrame)
-#endif // FEATURE_REMOTING
 FRAME_TYPE_NAME(DebuggerClassInitMarkFrame)
 FRAME_TYPE_NAME(DebuggerSecurityCodeMarkFrame)
 FRAME_TYPE_NAME(DebuggerExitFrame)
 FRAME_TYPE_NAME(DebuggerU2MCatchHandlerFrame)
 #ifdef _TARGET_X86_
 FRAME_TYPE_NAME(UMThkCallFrame)
-#endif
-#if defined(FEATURE_INCLUDE_ALL_INTERFACES) && defined(_TARGET_X86_)
-FRAME_TYPE_NAME(ReverseEnterRuntimeFrame)
-FRAME_TYPE_NAME(LeaveRuntimeFrame)
 #endif
 FRAME_TYPE_NAME(InlinedCallFrame)
 FRAME_TYPE_NAME(ContextTransitionFrame)
@@ -281,7 +261,6 @@ FRAME_TYPE_NAME(ExceptionFilterFrame)
 #if defined(_DEBUG)
 FRAME_TYPE_NAME(AssumeByrefFromJITStack)
 #endif // _DEBUG
-FRAME_TYPE_NAME(SecurityContextFrame)
 
 #undef FRAME_ABSTRACT_TYPE_NAME
 #undef FRAME_TYPE_NAME
@@ -300,11 +279,8 @@ FRAME_TYPE_NAME(SecurityContextFrame)
 #include "vars.hpp"
 #include "regdisp.h"
 #include "object.h"
-#include "objecthandle.h"
 #include <stddef.h>
 #include "siginfo.hpp"
-// context headers
-#include "context.h"
 #include "method.hpp"
 #include "stackwalk.h"
 #include "stubmgr.h"
@@ -341,6 +317,18 @@ class ComCallMethodDesc;
 
 #ifndef DACCESS_COMPILE
 
+#if defined(FEATURE_PAL) && !defined(CROSSGEN_COMPILE)
+
+#define DEFINE_DTOR(klass)                      \
+    public:                                     \
+        virtual ~klass() { PopIfChained(); }
+
+#else
+
+#define DEFINE_DTOR(klass)
+
+#endif // FEATURE_PAL && !CROSSGEN_COMPILE
+
 #define DEFINE_VTABLE_GETTER(klass)             \
     public:                                     \
         static TADDR GetMethodFrameVPtr() {     \
@@ -350,9 +338,18 @@ class ComCallMethodDesc;
         }                                       \
         klass(bool dummy) { LIMITED_METHOD_CONTRACT; }
 
+#define DEFINE_VTABLE_GETTER_AND_DTOR(klass)    \
+        DEFINE_VTABLE_GETTER(klass)             \
+        DEFINE_DTOR(klass)
+
 #define DEFINE_VTABLE_GETTER_AND_CTOR(klass)    \
         DEFINE_VTABLE_GETTER(klass)             \
     protected:                                  \
+        klass() { LIMITED_METHOD_CONTRACT; }
+
+#define DEFINE_VTABLE_GETTER_AND_CTOR_AND_DTOR(klass)    \
+        DEFINE_VTABLE_GETTER_AND_DTOR(klass)             \
+    protected:                                           \
         klass() { LIMITED_METHOD_CONTRACT; }
 
 #else
@@ -364,8 +361,14 @@ class ComCallMethodDesc;
             return klass::VPtrTargetVTable();   \
         }                                       \
 
+#define DEFINE_VTABLE_GETTER_AND_DTOR(klass)    \
+        DEFINE_VTABLE_GETTER(klass)             \
+
 #define DEFINE_VTABLE_GETTER_AND_CTOR(klass)    \
         DEFINE_VTABLE_GETTER(klass)             \
+
+#define DEFINE_VTABLE_GETTER_AND_CTOR_AND_DTOR(klass)    \
+        DEFINE_VTABLE_GETTER_AND_CTOR(klass)             \
 
 #endif // #ifndef DACCESS_COMPILE
 
@@ -418,10 +421,6 @@ class Frame : public FrameBase
 
 public:
 
-#if defined(FEATURE_PAL) && !defined(DACCESS_COMPILE) && !defined(CROSSGEN_COMPILE)
-    virtual ~Frame();
-#endif // FEATURE_PAL && !DACCESS_COMPILE && !CROSSGEN_COMPILE
-
     //------------------------------------------------------------------------
     // Special characteristics of a frame
     //------------------------------------------------------------------------
@@ -431,7 +430,7 @@ public:
         FRAME_ATTR_OUT_OF_LINE = 2,         // The exception out of line (IP of the frame is not correct)
         FRAME_ATTR_FAULTED = 4,             // Exception caused by Win32 fault
         FRAME_ATTR_RESUMABLE = 8,           // We may resume from this frame
-        FRAME_ATTR_CAPTURE_DEPTH_2 = 0x10,  // This is a helperMethodFrame and the capture occured at depth 2
+        FRAME_ATTR_CAPTURE_DEPTH_2 = 0x10,  // This is a helperMethodFrame and the capture occurred at depth 2
         FRAME_ATTR_EXACT_DEPTH = 0x20,      // This is a helperMethodFrame and a jit helper, but only crawl to the given depth
         FRAME_ATTR_NO_THREAD_ABORT = 0x40,  // This is a helperMethodFrame that should not trigger thread aborts on entry
     };
@@ -486,7 +485,7 @@ public:
 
     // indicate the current X86 IP address within the current method
     // return 0 if the information is not available
-    virtual const PTR_BYTE GetIP()
+    virtual PTR_BYTE GetIP()
     {
         LIMITED_METHOD_CONTRACT;
         return NULL;
@@ -507,30 +506,10 @@ public:
         return (ptr != NULL) ? *PTR_PCODE(ptr) : NULL;
     }
 
-    virtual PTR_Context* GetReturnContextAddr()
-    {
-        LIMITED_METHOD_DAC_CONTRACT;
-        return NULL;
-    }
-
-    Context *GetReturnContext()
-    {
-        WRAPPER_NO_CONTRACT;
-        SUPPORTS_DAC;
-        PTR_Context* ppReturnContext = GetReturnContextAddr();
-        if (! ppReturnContext)
-            return NULL;
-        return *ppReturnContext;
-    }
-
     AppDomain *GetReturnDomain()
     {
-        WRAPPER_NO_CONTRACT;
-        SUPPORTS_DAC;
-
-        if (! GetReturnContext())
-            return NULL;
-        return GetReturnContext()->GetDomain();
+        LIMITED_METHOD_CONTRACT;
+        return NULL;
     }
 
 #ifndef DACCESS_COMPILE
@@ -546,34 +525,6 @@ public:
         TADDR ptr = GetReturnAddressPtr();
         _ASSERTE(ptr != NULL);
         *(TADDR*)ptr = val;
-    }
-
-#ifndef DACCESS_COMPILE
-    void SetReturnContext(Context *pReturnContext)
-    {
-        WRAPPER_NO_CONTRACT;
-        PTR_Context* ppReturnContext = GetReturnContextAddr();
-        _ASSERTE(ppReturnContext);
-        *ppReturnContext = pReturnContext;
-    }
-#endif
-
-    void SetReturnExecutionContext(OBJECTREF ref)
-    {
-        WRAPPER_NO_CONTRACT;
-        Object **pRef = GetReturnExecutionContextAddr();
-        if (pRef != NULL)
-            *pRef = OBJECTREFToObject(ref);
-    }
-
-    OBJECTREF GetReturnExecutionContext()
-    {
-        WRAPPER_NO_CONTRACT;
-        Object **pRef = GetReturnExecutionContextAddr();
-        if (pRef == NULL)
-            return NULL;
-        else
-            return ObjectToOBJECTREF(*pRef);
     }
 #endif // #ifndef DACCESS_COMPILE
 
@@ -637,9 +588,6 @@ public:
         TYPE_SECURITY,
         TYPE_CALL,
         TYPE_FUNC_EVAL,
-#ifdef FEATURE_REMOTING        
-        TYPE_TP_METHOD_FRAME,
-#endif        
         TYPE_MULTICAST,
         
         // HMFs and derived classes should use this so the profiling API knows it needs
@@ -821,7 +769,7 @@ private:
     friend FCDECL0(VOID, JIT_StressGC);
 #ifdef _DEBUG
     friend LONG WINAPI CLRVectoredExceptionHandlerShim(PEXCEPTION_POINTERS pExceptionInfo);
-#endif // _DEBUG
+#endif
 #ifdef _WIN64
     friend Thread * __stdcall JIT_InitPInvokeFrame(InlinedCallFrame *pFrame, PTR_VOID StubSecretArg);
 #endif
@@ -831,9 +779,6 @@ private:
 #if defined(DACCESS_COMPILE)
     friend class DacDbiInterfaceImpl;
 #endif // DACCESS_COMPILE
-#ifdef FEATURE_COMINTEROP
-    friend void COMToCLRWorkerBodyWithADTransition(Thread *pThread, ComMethodFrame *pFrame, ComCallWrapper *pWrap, UINT64 *pRetValOut);
-#endif // FEATURE_COMINTEROP
 
     PTR_Frame  Next()
     {
@@ -845,9 +790,16 @@ protected:
     // Frame is considered an abstract class: this protected constructor
     // causes any attempt to instantiate one to fail at compile-time.
     Frame()
+    : m_Next(dac_cast<PTR_Frame>(nullptr))
     { 
         LIMITED_METHOD_CONTRACT;
     }
+
+#if defined(FEATURE_PAL) && !defined(DACCESS_COMPILE) && !defined(CROSSGEN_COMPILE)
+    virtual ~Frame() { LIMITED_METHOD_CONTRACT; }
+
+    void PopIfChained();
+#endif // FEATURE_PAL && !DACCESS_COMPILE && !CROSSGEN_COMPILE
 };
 
 
@@ -909,7 +861,7 @@ protected:
     PTR_CONTEXT m_Regs;
 
     // Keep as last entry in class
-    DEFINE_VTABLE_GETTER_AND_CTOR(ResumableFrame)
+    DEFINE_VTABLE_GETTER_AND_CTOR_AND_DTOR(ResumableFrame)
 };
 
 
@@ -932,7 +884,7 @@ public:
 #endif
 
     // Keep as last entry in class
-    DEFINE_VTABLE_GETTER_AND_CTOR(RedirectedThreadFrame)
+    DEFINE_VTABLE_GETTER_AND_CTOR_AND_DTOR(RedirectedThreadFrame)
 };
 
 typedef DPTR(RedirectedThreadFrame) PTR_RedirectedThreadFrame;
@@ -1005,6 +957,15 @@ public:
     // Get the extra info for shared generic code.
     //---------------------------------------------------------------
     PTR_VOID GetParamTypeArg();
+
+    //---------------------------------------------------------------
+    // Gets value indicating whether the generic parameter type
+    // argument should be supressed.
+    //---------------------------------------------------------------
+    virtual BOOL SuppressParamTypeArg()
+    {
+        return FALSE;
+    }
 
 protected:  // we don't want people using this directly
     //---------------------------------------------------------------
@@ -1083,17 +1044,19 @@ class FaultingExceptionFrame : public Frame
 {
     friend class CheckAsmOffsets;
 
-#if defined(_TARGET_X86_)
+#ifndef WIN64EXCEPTIONS
+#ifdef _TARGET_X86_
     DWORD                   m_Esp;
     CalleeSavedRegisters    m_regs;
     TADDR                   m_ReturnAddress;
-#endif
-
-#ifdef WIN64EXCEPTIONS
+#else  // _TARGET_X86_
+    #error "Unsupported architecture"
+#endif // _TARGET_X86_
+#else // WIN64EXCEPTIONS
     BOOL                    m_fFilterExecuted;  // Flag for FirstCallToHandler
     TADDR                   m_ReturnAddress;
     T_CONTEXT               m_ctx;
-#endif // WIN64EXCEPTIONS
+#endif // !WIN64EXCEPTIONS
 
     VPTR_VTABLE_CLASS(FaultingExceptionFrame, Frame)
 
@@ -1125,13 +1088,17 @@ public:
         return FRAME_ATTR_EXCEPTION | FRAME_ATTR_FAULTED;
     }
 
-#if defined(_TARGET_X86_)
+#ifndef WIN64EXCEPTIONS
     CalleeSavedRegisters *GetCalleeSavedRegisters()
     {
+#ifdef _TARGET_X86_
         LIMITED_METHOD_DAC_CONTRACT;
         return &m_regs;
+#else
+        PORTABILITY_ASSERT("GetCalleeSavedRegisters");
+#endif // _TARGET_X86_
     }
-#endif
+#endif // WIN64EXCEPTIONS
 
 #ifdef WIN64EXCEPTIONS
     T_CONTEXT *GetExceptionContext ()
@@ -1155,7 +1122,7 @@ public:
     virtual void UpdateRegDisplay(const PREGDISPLAY);
 
     // Keep as last entry in class
-    DEFINE_VTABLE_GETTER(FaultingExceptionFrame)
+    DEFINE_VTABLE_GETTER_AND_DTOR(FaultingExceptionFrame)
 };
 
 //-----------------------------------------------------------------------
@@ -1234,7 +1201,7 @@ public:
     }
 
     // Keep as last entry in class
-    DEFINE_VTABLE_GETTER_AND_CTOR(FuncEvalFrame)
+    DEFINE_VTABLE_GETTER_AND_CTOR_AND_DTOR(FuncEvalFrame)
 };
 
 typedef VPTR(FuncEvalFrame) PTR_FuncEvalFrame;
@@ -1392,7 +1359,7 @@ protected:
     LazyMachState m_MachState;       // pRetAddr points to the return address and the stack arguments
 
     // Keep as last entry in class
-    DEFINE_VTABLE_GETTER_AND_CTOR(HelperMethodFrame)
+    DEFINE_VTABLE_GETTER_AND_CTOR_AND_DTOR(HelperMethodFrame)
 };
 
 // Restores registers saved in m_MachState
@@ -1477,7 +1444,7 @@ private:
     PTR_OBJECTREF gcPtrs[1];
 
     // Keep as last entry in class
-    DEFINE_VTABLE_GETTER_AND_CTOR(HelperMethodFrame_1OBJ)
+    DEFINE_VTABLE_GETTER_AND_CTOR_AND_DTOR(HelperMethodFrame_1OBJ)
 };
 
 
@@ -1538,7 +1505,73 @@ private:
     PTR_OBJECTREF gcPtrs[2];
 
     // Keep as last entry in class
-    DEFINE_VTABLE_GETTER_AND_CTOR(HelperMethodFrame_2OBJ)
+    DEFINE_VTABLE_GETTER_AND_CTOR_AND_DTOR(HelperMethodFrame_2OBJ)
+};
+
+//-----------------------------------------------------------------------------
+// HelperMethodFrame_3OBJ
+//-----------------------------------------------------------------------------
+
+class HelperMethodFrame_3OBJ : public HelperMethodFrame
+{
+    VPTR_VTABLE_CLASS(HelperMethodFrame_3OBJ, HelperMethodFrame)
+
+public:
+#if !defined(DACCESS_COMPILE) && !defined(CROSSGEN_COMPILE)
+    HelperMethodFrame_3OBJ(
+            void* fCallFtnEntry, 
+            unsigned attribs, 
+            OBJECTREF* aGCPtr1, 
+            OBJECTREF* aGCPtr2,
+            OBJECTREF* aGCPtr3)
+        : HelperMethodFrame(fCallFtnEntry, attribs)
+    {
+        LIMITED_METHOD_CONTRACT;
+        gcPtrs[0] = aGCPtr1;
+        gcPtrs[1] = aGCPtr2;
+        gcPtrs[2] = aGCPtr3;
+        INDEBUG(Thread::ObjectRefProtected(aGCPtr1);)
+        INDEBUG(Thread::ObjectRefProtected(aGCPtr2);)
+        INDEBUG(Thread::ObjectRefProtected(aGCPtr3);)
+        INDEBUG((*aGCPtr1).Validate();)
+        INDEBUG((*aGCPtr2).Validate();)
+        INDEBUG((*aGCPtr3).Validate();)
+    }
+#endif
+
+    virtual void GcScanRoots(promote_func *fn, ScanContext* sc)
+    {
+        WRAPPER_NO_CONTRACT;
+        DoPromote(fn, sc, gcPtrs[0], FALSE);
+        DoPromote(fn, sc, gcPtrs[1], FALSE);
+        DoPromote(fn, sc, gcPtrs[2], FALSE);
+        HelperMethodFrame::GcScanRoots(fn, sc);
+    }
+
+#ifdef _DEBUG
+#ifndef DACCESS_COMPILE
+    void Pop()
+    {
+        WRAPPER_NO_CONTRACT;
+        HelperMethodFrame::Pop();
+        Thread::ObjectRefNew(gcPtrs[0]);
+        Thread::ObjectRefNew(gcPtrs[1]);
+        Thread::ObjectRefNew(gcPtrs[2]);
+    }
+#endif // DACCESS_COMPILE
+
+    BOOL Protects(OBJECTREF *ppORef)
+    {
+        LIMITED_METHOD_CONTRACT;
+        return (ppORef == gcPtrs[0] || ppORef == gcPtrs[1] || ppORef == gcPtrs[2]) ? TRUE : FALSE;
+    }
+#endif
+
+private:
+    PTR_OBJECTREF gcPtrs[3];
+
+    // Keep as last entry in class
+    DEFINE_VTABLE_GETTER_AND_CTOR_AND_DTOR(HelperMethodFrame_3OBJ)
 };
 
 
@@ -1604,7 +1637,7 @@ private:
     UINT       m_numObjRefs;
 
     // Keep as last entry in class
-    DEFINE_VTABLE_GETTER_AND_CTOR(HelperMethodFrame_PROTECTOBJ)
+    DEFINE_VTABLE_GETTER_AND_CTOR_AND_DTOR(HelperMethodFrame_PROTECTOBJ)
 };
 
 class FramedMethodFrame : public TransitionFrame
@@ -1645,7 +1678,6 @@ public:
             NOTHROW;
             GC_NOTRIGGER;
             MODE_COOPERATIVE; // Frame MethodDesc should be always updated in cooperative mode to avoid racing with GC stackwalk
-            SO_TOLERANT;
         }
         CONTRACTL_END;
 
@@ -1721,48 +1753,6 @@ protected:
 // 
 //
 //+----------------------------------------------------------------------------
-#ifdef FEATURE_REMOTING
-class TPMethodFrame : public FramedMethodFrame
-{
-    VPTR_VTABLE_CLASS(TPMethodFrame, FramedMethodFrame)
-
-public:
-    TPMethodFrame(TransitionBlock * pTransitionBlock);
-
-    virtual int GetFrameType()
-    {
-        LIMITED_METHOD_DAC_CONTRACT;
-        return TYPE_TP_METHOD_FRAME;
-    }
-
-    // GC protect arguments
-    virtual void GcScanRoots(promote_func *fn, ScanContext* sc);
-
-    // Our base class is a a M2U TransitionType; but we're not. So override and set us back to None.
-    ETransitionType GetTransitionType()
-    {
-        LIMITED_METHOD_DAC_CONTRACT;
-        return TT_NONE;
-    }
-
-#if defined(_TARGET_X86_) && !defined(DACCESS_COMPILE)
-    void SetCbStackPop(UINT cbStackPop)
-    {
-        LIMITED_METHOD_CONTRACT;
-        // Number of bytes to pop for x86 is stored right before the return value
-        void * pReturnValue = GetReturnValuePtr();
-        *(((DWORD *)pReturnValue) - 1) = cbStackPop;
-    }
-#endif
-
-    // Aid the debugger in finding the actual address of callee
-    virtual BOOL TraceFrame(Thread *thread, BOOL fromPatch,
-                            TraceDestination *trace, REGDISPLAY *regs);
-
-    // Keep as last entry in class
-    DEFINE_VTABLE_GETTER_AND_CTOR(TPMethodFrame)
-};
-#endif // FEATURE_REMOTING
 
 //------------------------------------------------------------------------
 // This represents a call Delegate.Invoke for secure delegate
@@ -1833,7 +1823,7 @@ public:
                             TraceDestination *trace, REGDISPLAY *regs);
 
     // Keep as last entry in class
-    DEFINE_VTABLE_GETTER_AND_CTOR(SecureDelegateFrame)
+    DEFINE_VTABLE_GETTER_AND_CTOR_AND_DTOR(SecureDelegateFrame)
 };
 
 
@@ -1864,7 +1854,7 @@ class MulticastFrame : public SecureDelegateFrame
                             TraceDestination *trace, REGDISPLAY *regs);
 
     // Keep as last entry in class
-    DEFINE_VTABLE_GETTER_AND_CTOR(MulticastFrame)
+    DEFINE_VTABLE_GETTER_AND_CTOR_AND_DTOR(MulticastFrame)
 };
 
 
@@ -1876,7 +1866,7 @@ class UnmanagedToManagedFrame : public Frame
 {
     friend class CheckAsmOffsets;
 
-    VPTR_ABSTRACT_VTABLE_CLASS(UnmanagedToManagedFrame, Frame)
+    VPTR_ABSTRACT_VTABLE_CLASS_AND_CTOR(UnmanagedToManagedFrame, Frame)
 
 public:
 
@@ -1969,6 +1959,7 @@ protected:
 #elif defined (_TARGET_ARM64_)
     TADDR           m_fp;
     TADDR           m_ReturnAddress;
+    TADDR           m_x8; // ret buff arg
     ArgumentRegisters m_argumentRegisters;
 #else
     TADDR           m_ReturnAddress;  // return address into unmanaged code
@@ -2005,7 +1996,7 @@ public:
 
 protected:
     // Keep as last entry in class
-    DEFINE_VTABLE_GETTER_AND_CTOR(ComMethodFrame)
+    DEFINE_VTABLE_GETTER_AND_CTOR_AND_DTOR(ComMethodFrame)
 };
 
 typedef DPTR(class ComMethodFrame) PTR_ComMethodFrame;
@@ -2043,7 +2034,7 @@ public:
                     TraceDestination *trace, REGDISPLAY *regs);
 
     // Keep as last entry in class
-    DEFINE_VTABLE_GETTER_AND_CTOR(ComPlusMethodFrame)
+    DEFINE_VTABLE_GETTER_AND_CTOR_AND_DTOR(ComPlusMethodFrame)
 };
 
 #endif // FEATURE_COMINTEROP
@@ -2110,7 +2101,7 @@ public:
     }
 
     // Keep as last entry in class
-    DEFINE_VTABLE_GETTER_AND_CTOR(PInvokeCalliFrame)
+    DEFINE_VTABLE_GETTER_AND_CTOR_AND_DTOR(PInvokeCalliFrame)
 };
 
 // Some context-related forwards.
@@ -2142,10 +2133,11 @@ public:
     }
 
     virtual void UpdateRegDisplay(const PREGDISPLAY);
+    virtual void GcScanRoots(promote_func *fn, ScanContext* sc);
 
-    // HijackFrames are created by trip functions. See OnHijackObjectTripThread()
-    // and OnHijackScalarTripThread().  They are real C++ objects on the stack.  So
-    // it's a public function -- but that doesn't mean you should make some.
+    // HijackFrames are created by trip functions. See OnHijackTripThread()
+    // They are real C++ objects on the stack. 
+    // So, it's a public function -- but that doesn't mean you should make some.
     HijackFrame(LPVOID returnAddress, Thread *thread, HijackArgs *args);
 
 protected:
@@ -2155,7 +2147,7 @@ protected:
     DPTR(HijackArgs)    m_Args;
 
     // Keep as last entry in class
-    DEFINE_VTABLE_GETTER_AND_CTOR(HijackFrame)
+    DEFINE_VTABLE_GETTER_AND_CTOR_AND_DTOR(HijackFrame)
 };
 
 #endif // FEATURE_HIJACK
@@ -2199,7 +2191,7 @@ public:
     Interception GetInterception();
 
     // Keep as last entry in class
-    DEFINE_VTABLE_GETTER_AND_CTOR(PrestubMethodFrame)
+    DEFINE_VTABLE_GETTER_AND_CTOR_AND_DTOR(PrestubMethodFrame)
 };
 
 //------------------------------------------------------------------------
@@ -2283,11 +2275,27 @@ public:
 
     Interception GetInterception();
 
+    virtual BOOL SuppressParamTypeArg()
+    {
+        //
+        // Shared default interface methods (i.e. virtual interface methods with an implementation) require
+        // an instantiation argument. But if we're in the stub dispatch frame, we haven't actually resolved
+        // the method yet (we could end up in class's override of this method, for example).
+        //
+        // So we need to pretent that unresolved default interface methods are like any other interface
+        // methods and don't have an instantiation argument.
+        //
+        // See code:CEEInfo::getMethodSigInternal
+        //
+        assert(GetFunction()->GetMethodTable()->IsInterface());
+        return TRUE;
+    }
+
 private:
     friend class VirtualCallStubManager;
 
     // Keep as last entry in class
-    DEFINE_VTABLE_GETTER_AND_CTOR(StubDispatchFrame)
+    DEFINE_VTABLE_GETTER_AND_CTOR_AND_DTOR(StubDispatchFrame)
 };
 
 typedef VPTR(class StubDispatchFrame) PTR_StubDispatchFrame;
@@ -2341,7 +2349,7 @@ public:
 #endif
     
     // Keep as last entry in class
-    DEFINE_VTABLE_GETTER_AND_CTOR(ExternalMethodFrame)
+    DEFINE_VTABLE_GETTER_AND_CTOR_AND_DTOR(ExternalMethodFrame)
 };
 
 typedef VPTR(class ExternalMethodFrame) PTR_ExternalMethodFrame;
@@ -2359,11 +2367,7 @@ public:
     virtual void GcScanRoots(promote_func *fn, ScanContext* sc);
 
 #ifdef _TARGET_X86_
-    virtual void UpdateRegDisplay(const PREGDISPLAY pRD)
-    {
-        WRAPPER_NO_CONTRACT;
-        UpdateRegDisplayHelper(pRD, 0);
-    }
+    virtual void UpdateRegDisplay(const PREGDISPLAY pRD);
 #endif
 
     virtual ETransitionType GetTransitionType()
@@ -2373,7 +2377,7 @@ public:
     }
     
     // Keep as last entry in class
-    DEFINE_VTABLE_GETTER_AND_CTOR(DynamicHelperFrame)
+    DEFINE_VTABLE_GETTER_AND_CTOR_AND_DTOR(DynamicHelperFrame)
 };
 
 typedef VPTR(class DynamicHelperFrame) PTR_DynamicHelperFrame;
@@ -2409,7 +2413,7 @@ class StubHelperFrame : public TransitionFrame
 
 private:
     // Keep as last entry in class
-    DEFINE_VTABLE_GETTER_AND_CTOR(StubHelperFrame)
+    DEFINE_VTABLE_GETTER_AND_CTOR_AND_DTOR(StubHelperFrame)
 };
 #endif // _TARGET_X86_
 
@@ -2460,7 +2464,7 @@ public:
 
 private:
     // Keep as last entry in class
-    DEFINE_VTABLE_GETTER_AND_CTOR(ComPrestubMethodFrame)
+    DEFINE_VTABLE_GETTER_AND_CTOR_AND_DTOR(ComPrestubMethodFrame)
 };
 
 #endif // FEATURE_COMINTEROP
@@ -2531,7 +2535,7 @@ private:
     BOOL          m_MaybeInterior;
 
     // Keep as last entry in class
-    DEFINE_VTABLE_GETTER(GCFrame)
+    DEFINE_VTABLE_GETTER_AND_DTOR(GCFrame)
 };
 
 #ifdef FEATURE_INTERPRETER
@@ -2554,35 +2558,13 @@ public:
     MethodDesc* GetFunction();
 #endif
 
-    DEFINE_VTABLE_GETTER(InterpreterFrame)
+    DEFINE_VTABLE_GETTER_AND_DTOR(InterpreterFrame)
 
 };
 
 typedef VPTR(class InterpreterFrame) PTR_InterpreterFrame;
 #endif // FEATURE_INTERPRETER
 
-#ifdef FEATURE_REMOTING
-class GCSafeCollectionFrame : public Frame
-{
-    VPTR_VTABLE_CLASS(GCSafeCollectionFrame, Frame)
-    PTR_VOID m_pCollection;
-
-    public:
-        //--------------------------------------------------------------------
-        // This constructor pushes a new GCFrame on the frame chain.
-        //--------------------------------------------------------------------
-#ifndef DACCESS_COMPILE
-        GCSafeCollectionFrame() { }
-        GCSafeCollectionFrame(void *collection);
-#endif
-
-        virtual void GcScanRoots(promote_func *fn, ScanContext* sc);
-
-        VOID Pop();
-    // Keep as last entry in class
-    DEFINE_VTABLE_GETTER(GCSafeCollectionFrame)
-};
-#endif // FEATURE_REMOTING
 
 //-----------------------------------------------------------------------------
 
@@ -2622,7 +2604,7 @@ private:
     PTR_ByRefInfo m_brInfo;
 
     // Keep as last entry in class
-    DEFINE_VTABLE_GETTER_AND_CTOR(ProtectByRefsFrame)
+    DEFINE_VTABLE_GETTER_AND_CTOR_AND_DTOR(ProtectByRefsFrame)
 };
 
 
@@ -2682,7 +2664,7 @@ private:
     ValueClassInfo *m_pVCInfo;
 
     // Keep as last entry in class
-    DEFINE_VTABLE_GETTER(ProtectValueClassFrame)
+    DEFINE_VTABLE_GETTER_AND_DTOR(ProtectValueClassFrame)
 };
 
 
@@ -2725,7 +2707,7 @@ public:
     }
 
     // Keep as last entry in class
-    DEFINE_VTABLE_GETTER(DebuggerClassInitMarkFrame)
+    DEFINE_VTABLE_GETTER_AND_DTOR(DebuggerClassInitMarkFrame)
 };
 
 
@@ -2762,7 +2744,7 @@ public:
     }
 
     // Keep as last entry in class
-    DEFINE_VTABLE_GETTER(DebuggerSecurityCodeMarkFrame)
+    DEFINE_VTABLE_GETTER_AND_DTOR(DebuggerSecurityCodeMarkFrame)
 };
 
 //------------------------------------------------------------------------
@@ -2817,7 +2799,7 @@ public:
     }
 
     // Keep as last entry in class
-    DEFINE_VTABLE_GETTER(DebuggerExitFrame)
+    DEFINE_VTABLE_GETTER_AND_DTOR(DebuggerExitFrame)
 };
 
 //---------------------------------------------------------------------------------------
@@ -2857,7 +2839,7 @@ public:
     }
 
     // Keep as last entry in class
-    DEFINE_VTABLE_GETTER(DebuggerU2MCatchHandlerFrame)
+    DEFINE_VTABLE_GETTER_AND_DTOR(DebuggerU2MCatchHandlerFrame)
 };
 
 
@@ -2867,7 +2849,7 @@ typedef DPTR(class UMThunkMarshInfo) PTR_UMThunkMarshInfo;
 class UMEntryThunk;
 typedef DPTR(class UMEntryThunk) PTR_UMEntryThunk;
 
-#ifdef _TARGET_X86_
+#if defined(_TARGET_X86_)
 //------------------------------------------------------------------------
 // This frame guards an unmanaged->managed transition thru a UMThk
 //------------------------------------------------------------------------
@@ -2893,11 +2875,11 @@ public:
 protected:
 
     // Keep as last entry in class
-    DEFINE_VTABLE_GETTER_AND_CTOR(UMThkCallFrame)
+    DEFINE_VTABLE_GETTER_AND_CTOR_AND_DTOR(UMThkCallFrame)
 };
-#endif // _TARGET_X86_
+#endif // _TARGET_X86_ && !FEATURE_PAL
 
-#if defined(_TARGET_X86_)
+#if defined(_TARGET_X86_) && defined(FEATURE_COMINTEROP)
 //-------------------------------------------------------------------------
 // Exception handler for COM to managed frame
 //  and the layout of the exception registration record structure in the stack
@@ -2917,67 +2899,8 @@ struct ComToManagedExRecord
         return &m_frame;
     }
 };
-#endif // _TARGET_X86_
+#endif // _TARGET_X86_ && FEATURE_COMINTEROP
 
-#if defined(FEATURE_INCLUDE_ALL_INTERFACES) && defined(_TARGET_X86_)
-//-----------------------------------------------------------------------------
-// ReverseEnterRuntimeFrame
-//-----------------------------------------------------------------------------
-
-class ReverseEnterRuntimeFrame : public Frame
-{
-    VPTR_VTABLE_CLASS(ReverseEnterRuntimeFrame, Frame)
-
-public:
-    //------------------------------------------------------------------------
-    // Performs cleanup on an exception unwind
-    //------------------------------------------------------------------------
-#ifndef DACCESS_COMPILE
-    virtual void ExceptionUnwind()
-    {
-        WRAPPER_NO_CONTRACT;
-         GetThread()->ReverseLeaveRuntime();
-    }
-#endif
-
-    //---------------------------------------------------------------
-    // Expose key offsets and values for stub generation.
-    //---------------------------------------------------------------
-
-    static UINT32 GetNegSpaceSize()
-    {
-        LIMITED_METHOD_CONTRACT;
-        return sizeof(GSCookie);
-    }
-
-    // Keep as last entry in class
-    DEFINE_VTABLE_GETTER_AND_CTOR(ReverseEnterRuntimeFrame)
-};
-
-//-----------------------------------------------------------------------------
-// LeaveRuntimeFrame
-//-----------------------------------------------------------------------------
-
-class LeaveRuntimeFrame : public Frame
-{
-    VPTR_VTABLE_CLASS(LeaveRuntimeFrame, Frame)
-
-public:
-    //------------------------------------------------------------------------
-    // Performs cleanup on an exception unwind
-    //------------------------------------------------------------------------
-#ifndef DACCESS_COMPILE
-    virtual void ExceptionUnwind()
-    {
-        WRAPPER_NO_CONTRACT;
-         Thread::EnterRuntime();
-    }
-#endif
-
-    // Keep as last entry in class
-    DEFINE_VTABLE_GETTER_AND_CTOR(LeaveRuntimeFrame)
-};
-#endif
 
 //------------------------------------------------------------------------
 // This frame is pushed by any JIT'ted method that contains one or more
@@ -3006,6 +2929,7 @@ public:
         WRAPPER_NO_CONTRACT;
 
 #ifdef _WIN64
+        // See code:GenericPInvokeCalliHelper
         return ((m_Datum != NULL) && !(dac_cast<TADDR>(m_Datum) & 0x1));
 #else // _WIN64
         return ((dac_cast<TADDR>(m_Datum) & ~0xffff) != 0);
@@ -3150,7 +3074,7 @@ public:
     VOID Init();
 
     // Keep as last entry in class
-    DEFINE_VTABLE_GETTER_AND_CTOR(InlinedCallFrame)
+    DEFINE_VTABLE_GETTER_AND_CTOR_AND_DTOR(InlinedCallFrame)
 };
 
 //------------------------------------------------------------------------
@@ -3160,30 +3084,13 @@ public:
 class ContextTransitionFrame : public Frame
 {
 private:
-    PTR_Context m_pReturnContext;
-    PTR_Object  m_ReturnExecutionContext;
     PTR_Object  m_LastThrownObjectInParentContext;                                        
     ULONG_PTR   m_LockCount;            // Number of locks the thread takes
                                         // before the transition.
-#ifndef FEATURE_CORECLR
-    ULONG_PTR   m_CriticalRegionCount;
-#endif // !FEATURE_CORECLR
     VPTR_VTABLE_CLASS(ContextTransitionFrame, Frame)
 
 public:
     virtual void GcScanRoots(promote_func *fn, ScanContext* sc);
-
-    virtual PTR_Context* GetReturnContextAddr()
-    {
-        LIMITED_METHOD_DAC_CONTRACT;
-        return &m_pReturnContext;
-    }
-
-    virtual Object **GetReturnExecutionContextAddr()
-    {
-        LIMITED_METHOD_CONTRACT;
-        return (Object **) &m_ReturnExecutionContext;
-    }
 
     OBJECTREF GetLastThrownObjectInParentContext()
     {
@@ -3206,18 +3113,6 @@ public:
         return (DWORD) m_LockCount;
     }
 
-#ifndef FEATURE_CORECLR
-    void SetCriticalRegionCount(DWORD criticalRegionCount)
-    {
-        LIMITED_METHOD_CONTRACT;
-        m_CriticalRegionCount = criticalRegionCount;
-    }
-    DWORD GetCriticalRegionCount()
-    {
-        LIMITED_METHOD_CONTRACT;
-        return (DWORD) m_CriticalRegionCount;
-    }
-#endif // !FEATURE_CORECLR
 
     // Let debugger know that we're transitioning between AppDomains.
     ETransitionType GetTransitionType()
@@ -3228,20 +3123,15 @@ public:
 
 #ifndef DACCESS_COMPILE
     ContextTransitionFrame()
-    : m_pReturnContext(NULL)
-    , m_ReturnExecutionContext(NULL)
-    , m_LastThrownObjectInParentContext(NULL)
+    : m_LastThrownObjectInParentContext(NULL)
     , m_LockCount(0)
-#ifndef FEATURE_CORECLR
-    , m_CriticalRegionCount(0)
-#endif // !FEATURE_CORECLR
     {
         LIMITED_METHOD_CONTRACT;
     }
 #endif
 
     // Keep as last entry in class
-    DEFINE_VTABLE_GETTER(ContextTransitionFrame)
+    DEFINE_VTABLE_GETTER_AND_DTOR(ContextTransitionFrame)
 };
 
 // TODO [DAVBR]: For the full fix for VsWhidbey 450273, this
@@ -3310,6 +3200,7 @@ class TailCallFrame : public Frame
 #endif
 
 public:
+#ifndef	CROSSGEN_COMPILE
 #if !defined(_TARGET_X86_)
 
 #ifndef DACCESS_COMPILE
@@ -3359,7 +3250,7 @@ public:
     }
 
     virtual void UpdateRegDisplay(const PREGDISPLAY pRD);
-
+#endif // !CROSSGEN_COMPILE
 #ifdef _TARGET_AMD64_
     void SetGCLayout(TADDR pGCLayout)
     {
@@ -3378,7 +3269,7 @@ public:
 
 private:
     // Keep as last entry in class
-    DEFINE_VTABLE_GETTER_AND_CTOR(TailCallFrame)
+    DEFINE_VTABLE_GETTER_AND_CTOR_AND_DTOR(TailCallFrame)
 };
 
 //------------------------------------------------------------------------
@@ -3424,7 +3315,7 @@ public:
 
 private:
     // Keep as last entry in class
-    DEFINE_VTABLE_GETTER_AND_CTOR(ExceptionFilterFrame)
+    DEFINE_VTABLE_GETTER_AND_CTOR_AND_DTOR(ExceptionFilterFrame)
 };
 
 #ifdef _DEBUG
@@ -3453,7 +3344,7 @@ private:
     OBJECTREF *m_pObjRef;
 
     // Keep as last entry in class
-    DEFINE_VTABLE_GETTER(AssumeByrefFromJITStack)
+    DEFINE_VTABLE_GETTER_AND_DTOR(AssumeByrefFromJITStack)
 }; //AssumeByrefFromJITStack
 
 #endif //_DEBUG
@@ -3558,6 +3449,10 @@ public:
     FORCEINLINE FrameWithCookie(void* fCallFtnEntry, unsigned attribs, OBJECTREF * aGCPtr1, OBJECTREF * aGCPtr2) :
         m_frame(fCallFtnEntry, attribs, aGCPtr1, aGCPtr2) { WRAPPER_NO_CONTRACT; }
 
+    // HelperMethodFrame_3OBJ
+    FORCEINLINE FrameWithCookie(void* fCallFtnEntry, unsigned attribs, OBJECTREF * aGCPtr1, OBJECTREF * aGCPtr2, OBJECTREF * aGCPtr3) :
+        m_frame(fCallFtnEntry, attribs, aGCPtr1, aGCPtr2, aGCPtr3) { WRAPPER_NO_CONTRACT; }
+
     // HelperMethodFrame_PROTECTOBJ
     FORCEINLINE FrameWithCookie(void* fCallFtnEntry, unsigned attribs, OBJECTREF* pObjRefs, int numObjRefs) :
         m_frame(fCallFtnEntry, attribs, pObjRefs, numObjRefs) { WRAPPER_NO_CONTRACT; }
@@ -3625,93 +3520,6 @@ public:
     // address of FrameWithCookie, rather than that of FrameWithCookie::m_frame.
     GSCookie * GetGSCookiePtr() { LIMITED_METHOD_CONTRACT; return &m_gsCookie; }
 };
-
-
-// The frame doesn't represent a transition of any sort, it's simply placed on the stack to represent an assembly that will be found
-// and checked by stackwalking security demands. This can be used in scenarios where an assembly is implicitly controlling a
-// security sensitive operation without being explicitly represented on the stack. For example, an assembly decorating one of its
-// classes or methods with a custom attribute can implicitly cause the ctor or property setters for that attribute to be executed by
-// a third party if they happen to browse the attributes on the assembly.
-// Note: This frame is pushed from managed code, so be sure to keep the layout synchronized with that in
-// bcl\system\reflection\customattribute.cs.
-class SecurityContextFrame : public Frame
-{
-    VPTR_VTABLE_CLASS(SecurityContextFrame, Frame)
-
-    Assembly *m_pAssembly;
-
-public:
-    virtual Assembly *GetAssembly() { LIMITED_METHOD_CONTRACT; return m_pAssembly; }
-
-    void SetAssembly(Assembly *pAssembly) { LIMITED_METHOD_CONTRACT; m_pAssembly = pAssembly; }
-
-    // Keep as last entry in class
-    DEFINE_VTABLE_GETTER_AND_CTOR(SecurityContextFrame)
-};
-
-
-// This holder is defined for addressing a very specific issue:
-// Frames that use GCPROTECT_BEGIN/GCPROTECT_END can end up referencing corrupted object refs
-// when an exception is thrown until the point where the Frame is actually popped from the thread's Frame-chain.
-// Stack space allocated for OBJECTREFs in a try block may be reused in the catch block by other structures, 
-// corrupting our protected OBJECTREFs and the Frame containing them. While the Frame is still on the callstack
-// a GC may occur, detecting the corrupt OBJECTREF and taking down the process. The FrameWithCookieHolder 
-// forces the Frame to be popped out when exiting the current scope, therefore before the OBJECTREF is corrupted.
-//
-// This holder explicitly calls Thread::SetFrame, therefore potentially removing Frames from the thread's frame 
-// chain without properly calling their corresponding ExceptionUnwind() method. This is extremely dangerous to 
-// use unless it is backed by a call to UnwindAndContinueRethrowHelperInsideCatch() which does the same thing
-// (and has been vetted to be correct in doing so). Using this holder in any other circumstances may lead to bugs that 
-// are extremely difficult to track down.
-template <typename TYPE>
-class FrameWithCookieHolder 
-{
-    protected:
-		FrameWithCookie<TYPE>	m_frame;
-
-	public:
-		FORCEINLINE FrameWithCookieHolder()
-			: m_frame()
-		{
-		}
-
-		//	GCFrame 
-		FORCEINLINE	FrameWithCookieHolder(OBJECTREF *pObjRefs, UINT numObjRefs, BOOL maybeInterior)
-			: m_frame(pObjRefs, numObjRefs, maybeInterior)
-		{
-		}
-
-		FORCEINLINE ~FrameWithCookieHolder()
-		{
-#ifndef DACCESS_COMPILE
-
-			Thread* pThread = GetThread();
-			if (pThread)
-			{
-			    GCX_COOP();
-			    pThread->SetFrame(&m_frame);
-			    m_frame.Pop();
-			}
-
-#endif // #ifndef DACCESS_COMPILE
-		}
-
-};
-
-#ifndef DACCESS_COMPILE
-// Restrictions from FrameWithCookieHolder are also applying for GCPROTECT_HOLDER. 
-// Please read the FrameWithCookieHolder comments before using GCPROTECT_HOLDER.  
-#define	GCPROTECT_HOLDER(ObjRefStruct)									\
-                FrameWithCookieHolder<GCFrame>	__gcframe((OBJECTREF*)&(ObjRefStruct),  \
-                        sizeof(ObjRefStruct)/sizeof(OBJECTREF),         \
-                        FALSE);                                          
-
-#else // #ifndef DACCESS_COMPILE
-
-#define	GCPROTECT_HOLDER(ObjRefStruct)
-
-#endif // #ifndef DACCESS_COMPILE
-
 
 //------------------------------------------------------------------------
 // These macros GC-protect OBJECTREF pointers on the EE's behalf.
@@ -3835,7 +3643,7 @@ class FrameWithCookieHolder
 #endif // #ifndef DACCESS_COMPILE
 
 
-#define ASSERT_ADDRESS_IN_STACK(address) _ASSERTE (GetThread () && GetThread ()->IsAddressInStack (address));
+#define ASSERT_ADDRESS_IN_STACK(address) _ASSERTE (Thread::IsAddressInCurrentStack (address));
 
 #if defined (_DEBUG) && !defined (DACCESS_COMPILE)
 #define ASSUME_BYREF_FROM_JIT_STACK_BEGIN(__objRef)                                      \
@@ -3865,5 +3673,7 @@ class FrameWithCookieHolder
 #undef FRAMES_TURNED_FPO_ON
 #undef FPO_ON
 #endif
+
+#include "crossloaderallocatorhash.inl"
 
 #endif  //__frames_h__

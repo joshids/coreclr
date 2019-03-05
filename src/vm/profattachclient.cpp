@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 // 
 // ProfAttachClient.cpp
 // 
@@ -63,10 +62,6 @@ extern "C" HRESULT STDMETHODCALLTYPE AttachProfiler(
         GC_TRIGGERS;
         MODE_PREEMPTIVE;
         CAN_TAKE_LOCK;
-
-        // This is the entrypoint into the EE by a trigger process.  As such, this
-        // is profiling-specific and not considered mainline EE code.
-        SO_NOT_MAINLINE;
     }
     CONTRACTL_END;
 
@@ -227,7 +222,7 @@ HRESULT ProfilingAPIAttachClient::AttachProfiler(
         return CORPROF_E_PROFILEE_PROCESS_NOT_FOUND;
     }
 
-    // Adjust time out value according to env var COMPLUS_ProfAPI_AttachProfilerTimeoutInMs
+    // Adjust time out value according to env var COMPlus_ProfAPI_AttachProfilerTimeoutInMs
     // The default is 10 seconds as we want to avoid client (trigger process) time out too early 
     // due to wait operation for concurrent GC in the server (profilee side)
     DWORD dwMillisecondsMinFromEnv = CLRConfig::GetConfigValue(CLRConfig::EXTERNAL_ProfAPI_AttachProfilerMinTimeoutInMs);
@@ -674,8 +669,8 @@ HRESULT ProfilingAPIAttachClient::SignalAttachEvent(LPCWSTR wszEventName)
     }
 
     // Dealing directly with Windows event objects, not CLR event cookies, so
-    // using Win32 API directly.  Note that none of this code executes on rotor
-    // or if we're memory / sync-hosted, so the CLR wrapper is of no use to us anyway.
+    // using Win32 API directly.  Note that none of this code executes on Unix,
+    // so the CLR wrapper is of no use to us anyway.
 #pragma push_macro("SetEvent")
 #undef SetEvent
     if (!SetEvent(hAttachEvent))

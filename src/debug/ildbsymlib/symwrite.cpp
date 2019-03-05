@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 // ===========================================================================
 // File: symwrite.cpp
 //
@@ -79,11 +78,8 @@ COM_METHOD SymWriter::QueryInterface(REFIID riid, void **ppInterface)
 
     if (riid == IID_ISymUnmanagedWriter )
         *ppInterface = (ISymUnmanagedWriter*)this;
-    /* ROTORTODO: Pretend that we do not implement ISymUnmanagedWriter2 to prevent C# compiler from using it.
-       This is against COM rules since ISymUnmanagedWriter3 inherits from ISymUnmanagedWriter2.
     else if (riid == IID_ISymUnmanagedWriter2 )
         *ppInterface = (ISymUnmanagedWriter2*)this;
-    */
     else if (riid == IID_ISymUnmanagedWriter3 )
         *ppInterface = (ISymUnmanagedWriter3*)this;
     else if (riid == IID_IUnknown)
@@ -128,7 +124,7 @@ COM_METHOD SymWriter::Initialize
 {    
     HRESULT hr = S_OK;
     
-    // Incremental compile not implemented in Rotor
+    // Incremental compile not implemented
     _ASSERTE(fFullBuild);
     
     if (emitter == NULL)
@@ -286,9 +282,7 @@ HRESULT SymWriter::CreateDocument(const WCHAR *wcsUrl,                   // Docu
     pDocument->SetDocumentWriter(sdw);
 
     // stack check needed to call back into utilcode
-    BEGIN_SO_INTOLERANT_CODE_NO_THROW_CHECK_THREAD_FORCE_SO();
     hr = m_pStringPool->AddStringW(wcsUrl, (UINT32 *)&UrlEntry);
-    END_SO_INTOLERANT_CODE;
     IfFailGo(hr);
 
     pDocument->SetUrlEntry(UrlEntry);
@@ -743,11 +737,8 @@ COM_METHOD SymWriter::DefineLocalVariable(
     ULONG32 sigLen;
     sigLen = cSig;
 
-    // stack check needed to call back into utilcode
-    BEGIN_SO_INTOLERANT_CODE_NO_THROW_CHECK_THREAD_FORCE_SO();
     // Copy the name.
     hr = m_pStringPool->AddStringW(name, (UINT32 *)&NameEntry);
-    END_SO_INTOLERANT_CODE;
     IfFailGo(hr);
     var->SetName(NameEntry);
 
@@ -817,11 +808,8 @@ COM_METHOD SymWriter::DefineParameter(
     var->SetSequence(sequence);
 
 
-    // stack check needed to call back into utilcode
-    BEGIN_SO_INTOLERANT_CODE_NO_THROW_CHECK_THREAD_FORCE_SO();
     // Copy the name.
     hr = m_pStringPool->AddStringW(name, (UINT32 *)&NameEntry);
-    END_SO_INTOLERANT_CODE;
     IfFailGo(hr);
     var->SetName(NameEntry);
 
@@ -909,11 +897,8 @@ COM_METHOD SymWriter::DefineConstant(
     // the stringpool
     if (V_VT(&value) == VT_BSTR)
     {
-        // stack check needed to call back into utilcode
-        BEGIN_SO_INTOLERANT_CODE_NO_THROW_CHECK_THREAD_FORCE_SO();
         // Copy the bstrValue.
         hr = m_pStringPool->AddStringW(V_BSTR(&value), (UINT32 *)&ValueBstr);
-        END_SO_INTOLERANT_CODE;
         IfFailGo(hr);
         V_BSTR(&value) = NULL;
     }
@@ -923,11 +908,8 @@ COM_METHOD SymWriter::DefineConstant(
     con->SetValue(value, ValueBstr);
 
 
-    // stack check needed to call back into utilcode
-    BEGIN_SO_INTOLERANT_CODE_NO_THROW_CHECK_THREAD_FORCE_SO();
     // Copy the name.
     hr = m_pStringPool->AddStringW(name, (UINT32 *)&Name);
-    END_SO_INTOLERANT_CODE;
     IfFailGo(hr);
     con->SetName(Name);
 
@@ -1073,8 +1055,6 @@ COM_METHOD SymWriter::SetSymAttribute(
     BYTE data[])
 {
     // Setting attributes on the symbol isn't supported
-
-    // ROTORTODO: #156785 in PS
     return S_OK;
 }
 
@@ -1117,11 +1097,8 @@ COM_METHOD SymWriter::UsingNamespace(const WCHAR *fullName)
     SymUsingNamespace *use;
     IfNullGo( use = m_MethodInfo.m_usings.next());
 
-    // stack check needed to call back into utilcode
-    BEGIN_SO_INTOLERANT_CODE_NO_THROW_CHECK_THREAD_FORCE_SO();
     // Copy the name.
     hr = m_pStringPool->AddStringW(fullName, (UINT32 *)&Name);
-    END_SO_INTOLERANT_CODE;
     IfFailGo(hr);
     use->SetName(Name);
 

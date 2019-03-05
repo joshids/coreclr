@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //*****************************************************************************
 
 // 
@@ -63,6 +62,9 @@ public:
     virtual HRESULT STDMETHODCALLTYPE ContinueStatusChanged(
         DWORD dwThreadId,
         CORDB_CONTINUE_STATUS dwContinueStatus);
+
+    virtual HRESULT STDMETHODCALLTYPE VirtualUnwind(
+        DWORD threadId, ULONG32 contextSize, PBYTE context);
 
 private:
     DbgTransportTarget  * m_pProxy;
@@ -130,6 +132,7 @@ void ShimRemoteDataTarget::Dispose()
         m_pProxy->ReleaseTransport(m_pTransport);
     }
 
+    m_pTransport = NULL;
     m_hr = CORDBG_E_OBJECT_NEUTERED;
 }
 
@@ -151,7 +154,7 @@ void ShimRemoteDataTarget::Dispose()
 //
 
 HRESULT BuildPlatformSpecificDataTarget(MachineInfo machineInfo,
-                                        DWORD processId, 
+                                        const ProcessDescriptor * pProcessDescriptor,
                                         ShimDataTarget ** ppDataTarget)
 {
     HandleHolder hDummy;
@@ -161,7 +164,7 @@ HRESULT BuildPlatformSpecificDataTarget(MachineInfo machineInfo,
     DbgTransportTarget *   pProxy = g_pDbgTransportTarget;
     DbgTransportSession *  pTransport = NULL;
 
-    hr = pProxy->GetTransportForProcess(processId, &pTransport, &hDummy);
+    hr = pProxy->GetTransportForProcess(pProcessDescriptor, &pTransport, &hDummy);
     if (FAILED(hr))
     {
         goto Label_Exit;
@@ -173,7 +176,7 @@ HRESULT BuildPlatformSpecificDataTarget(MachineInfo machineInfo,
         goto Label_Exit;
     }
 
-    pRemoteDataTarget = new (nothrow) ShimRemoteDataTarget(processId, pProxy, pTransport);
+    pRemoteDataTarget = new (nothrow) ShimRemoteDataTarget(pProcessDescriptor->m_Pid, pProxy, pTransport);
     if (pRemoteDataTarget == NULL)
     {
         hr = E_OUTOFMEMORY;
@@ -330,4 +333,17 @@ ShimRemoteDataTarget::ContinueStatusChanged(
         return m_fpContinueStatusChanged(m_pContinueStatusChangedUserData, dwThreadId, dwContinueStatus);
     }
     return E_NOTIMPL;
+}
+
+//---------------------------------------------------------------------------------------
+//
+// Unwind the stack to the next frame.
+//
+// Return Value: 
+//     context filled in with the next frame
+//
+HRESULT STDMETHODCALLTYPE 
+ShimRemoteDataTarget::VirtualUnwind(DWORD threadId, ULONG32 contextSize, PBYTE context)
+{
+    return m_pTransport->VirtualUnwind(threadId, contextSize, context);
 }

@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //
 
 //
@@ -19,6 +18,8 @@
 #include "eventreporter.h"
 #include "finalizerthread.h"
 #include "threadsuspend.h"
+
+#include "typestring.h"
 
 #ifndef FEATURE_PAL
 #include "dwreport.h"
@@ -71,12 +72,10 @@ EEPolicy::EEPolicy ()
     m_ActionOnFailure[FAIL_NonCriticalResource] = eThrowException;
     m_ActionOnFailure[FAIL_OrphanedLock] = eNoAction;
     m_ActionOnFailure[FAIL_FatalRuntime] = eRudeExitProcess;
-#ifdef FEATURE_CORECLR
     // For CoreCLR, initialize the default action for AV processing to all
     // all kind of code to catch AV exception. If the host wants, they can
     // specify a different action for this.
     m_ActionOnFailure[FAIL_AccessViolation] = eNoAction;
-#endif // FEATURE_CORECLR    
     m_ActionOnFailure[FAIL_StackOverflow] = eRudeExitProcess;
     m_ActionOnFailure[FAIL_CodeContract] = eThrowException;
     m_unhandledExceptionPolicy = eRuntimeDeterminedPolicy;
@@ -179,22 +178,10 @@ BOOL EEPolicy::IsValidActionForFailure(EClrFailure failure, EPolicyAction action
         return action >= eUnloadAppDomain &&
             action < MaxPolicyAction;
     case FAIL_AccessViolation:
-#ifdef FEATURE_CORECLR
         // Allowed actions on failure are:
         // 
         // eNoAction or eRudeExitProcess.
         return ((action == eNoAction) || (action == eRudeExitProcess));
-#else // !FEATURE_CORECLR
-        // FAIL_AccessViolation is defined for the desktop so that
-        // if any more definitions are added after it, their value
-        // should remain constant irrespective of whether its the
-        // desktop CLR or CoreCLR.
-        //
-        // That said, currently, Desktop CLR does not support
-        // FAIL_AccessViolation. Thus, any calls which use
-        // this failure are not allowed.
-        return FALSE;
-#endif // FEATURE_CORECLR         
     case FAIL_StackOverflow:
         return action >= eRudeUnloadAppDomain &&
             action < MaxPolicyAction;
@@ -393,7 +380,6 @@ EPolicyAction EEPolicy::GetActionOnFailureNoHostNotification(EClrFailure failure
 {
     CONTRACTL 
     {
-        SO_TOLERANT;
         MODE_ANY;
         GC_NOTRIGGER;
         NOTHROW;
@@ -412,7 +398,6 @@ EPolicyAction EEPolicy::GetActionOnFailure(EClrFailure failure)
 {
     CONTRACTL 
     {
-        SO_TOLERANT;
         MODE_ANY;
         GC_NOTRIGGER;
         NOTHROW;
@@ -425,22 +410,6 @@ EPolicyAction EEPolicy::GetActionOnFailure(EClrFailure failure)
     }
 
     EPolicyAction finalAction = GetActionOnFailureNoHostNotification(failure);
-#ifdef FEATURE_INCLUDE_ALL_INTERFACES
-    IHostPolicyManager *pHostPolicyManager = CorHost2::GetHostPolicyManager();
-    if (pHostPolicyManager)
-    {
-#ifdef _DEBUG
-        Thread* pThread = GetThread();
-        if (pThread)
-        {
-            pThread->AddFiberInfo(Thread::ThreadTrackInfo_Escalation);
-        }
-#endif
-        BEGIN_SO_TOLERANT_CODE_CALLING_HOST(GetThread());
-        pHostPolicyManager->OnFailure(failure, finalAction);
-        END_SO_TOLERANT_CODE_CALLING_HOST;
-    }
-#endif // FEATURE_INCLUDE_ALL_INTERFACES
     return finalAction;
 }
 
@@ -452,26 +421,9 @@ void EEPolicy::NotifyHostOnTimeout(EClrOperation operation, EPolicyAction action
         THROWS;
         GC_NOTRIGGER;
         MODE_ANY;
-        SO_TOLERANT;
     }
     CONTRACTL_END;
 
-#ifdef FEATURE_INCLUDE_ALL_INTERFACES
-    IHostPolicyManager *pHostPolicyManager = CorHost2::GetHostPolicyManager();
-    if (pHostPolicyManager)
-    {
-#ifdef _DEBUG
-        Thread* pThread = GetThread();
-        if (pThread)
-        {
-            pThread->AddFiberInfo(Thread::ThreadTrackInfo_Escalation);
-        }
-#endif
-        BEGIN_SO_TOLERANT_CODE_CALLING_HOST(GetThread());
-        pHostPolicyManager->OnTimeout(operation, action);
-        END_SO_TOLERANT_CODE_CALLING_HOST;
-    }
-#endif // FEATURE_INCLUDE_ALL_INTERFACES
 }
 
 
@@ -482,32 +434,13 @@ void EEPolicy::NotifyHostOnDefaultAction(EClrOperation operation, EPolicyAction 
         NOTHROW;
         GC_NOTRIGGER;
         MODE_ANY;
-        SO_TOLERANT;
     }
     CONTRACTL_END;
 
-#ifdef FEATURE_INCLUDE_ALL_INTERFACES
-    IHostPolicyManager *pHostPolicyManager = CorHost2::GetHostPolicyManager();
-    if (pHostPolicyManager)
-    {
-#ifdef _DEBUG
-        Thread* pThread = GetThread();
-        if (pThread)
-        {
-            pThread->AddFiberInfo(Thread::ThreadTrackInfo_Escalation);
-        }
-#endif
-        BEGIN_SO_TOLERANT_CODE_CALLING_HOST(GetThread());
-        pHostPolicyManager->OnDefaultAction(operation, action);
-        END_SO_TOLERANT_CODE_CALLING_HOST;
-    }
-#endif // FEATURE_INCLUDE_ALL_INTERFACES
 }
 
 void SafeExitProcess(UINT exitCode, BOOL fAbort = FALSE, ShutdownCompleteAction sca = SCA_ExitProcessWhenShutdownComplete)
 {
-    // The process is shutting down.  No need to check SO contract.
-    SO_NOT_MAINLINE_FUNCTION;
     STRESS_LOG2(LF_SYNC, LL_INFO10, "SafeExitProcess: exitCode = %d, fAbort = %d\n", exitCode, fAbort);
     CONTRACTL
     {
@@ -531,11 +464,11 @@ void SafeExitProcess(UINT exitCode, BOOL fAbort = FALSE, ShutdownCompleteAction 
         if (CLRConfig::GetConfigValue(CLRConfig::UNSUPPORTED_BreakOnBadExit))
         {
             // Workaround for aspnet
-            WCHAR  wszFilename[_MAX_PATH];
+            PathString  wszFilename;
             bool bShouldAssert = true;
-            if (WszGetModuleFileName(NULL, wszFilename, _MAX_PATH))
+            if (WszGetModuleFileName(NULL, wszFilename))
             {
-                _wcslwr_s(wszFilename, COUNTOF(wszFilename));
+                wszFilename.LowerCase();
                 
                 if (wcsstr(wszFilename, W("aspnet_compiler"))) 
                 {
@@ -573,6 +506,14 @@ void SafeExitProcess(UINT exitCode, BOOL fAbort = FALSE, ShutdownCompleteAction 
         // disabled because if we fault in this code path we will trigger our
         // Watson code via EntryPointFilter which is THROWS (see Dev11 317016)
         CONTRACT_VIOLATION(ThrowsViolation);
+
+#ifdef FEATURE_PAL
+        if (fAbort)
+        {
+            TerminateProcess(GetCurrentProcess(), exitCode);
+        }
+#endif
+
         EEPolicy::ExitProcessViaShim(exitCode);
     }
 }
@@ -595,21 +536,6 @@ void EEPolicy::ExitProcessViaShim(UINT exitCode)
     // runtime in a process with many. We need to give the other runtimes a chance to exit
     // cleanly. If we can't make the call, or if the call fails for some reason, then we
     // simply exit the process here, which is rude to the others, but the best we can do.
-#if !defined(FEATURE_CORECLR)
-    {
-        ReleaseHolder<ICLRRuntimeHostInternal> pRuntimeHostInternal;
-
-        HRESULT hr = g_pCLRRuntime->GetInterface(CLSID_CLRRuntimeHostInternal,
-            IID_ICLRRuntimeHostInternal,
-            &pRuntimeHostInternal);
-
-        if (SUCCEEDED(hr))
-        {
-            pRuntimeHostInternal->ShutdownAllRuntimesThenExit(exitCode);
-            LOG((LF_EH, LL_INFO10, "ExitProcessViaShim: shim returned... exiting now.\n"));
-        }
-    }
-#endif // !FEATURE_CORECLR
 
     ExitProcess(exitCode);
 }
@@ -722,7 +648,6 @@ EPolicyAction EEPolicy::DetermineResourceConstraintAction(Thread *pThread)
     {
         NOTHROW;
         GC_NOTRIGGER;
-        SO_TOLERANT;
         MODE_ANY;
     }
     CONTRACTL_END;
@@ -750,47 +675,6 @@ EPolicyAction EEPolicy::DetermineResourceConstraintAction(Thread *pThread)
     return action;
 }
 
-
-void EEPolicy::PerformADUnloadAction(EPolicyAction action, BOOL haveStack, BOOL forStackOverflow)
-{
-    STATIC_CONTRACT_THROWS;
-    STATIC_CONTRACT_GC_TRIGGERS;
-    STATIC_CONTRACT_MODE_COOPERATIVE;
-    
-    STRESS_LOG0(LF_EH, LL_INFO100, "In EEPolicy::PerformADUnloadAction\n");       
-
-    Thread *pThread = GetThread();
-
-    AppDomain *pDomain = GetAppDomain();
-
-    if (!IsFinalizerThread())
-    {
-        int count = 0;
-        Frame *pFrame = pThread->GetFirstTransitionInto(GetAppDomain(), &count);
-        {
-            pThread->SetUnloadBoundaryFrame(pFrame);
-        }
-    }
-
-    pDomain->EnableADUnloadWorker(action==eUnloadAppDomain? ADU_Safe : ADU_Rude);
-    // Can't perform a join when we are handling a true SO.  We need to enable the unload woker but let the thread continue running
-    // through EH processing so that we can recover the stack and reset the guard page. 
-    if (haveStack)
-    {
-        pThread->SetAbortRequest(action==eUnloadAppDomain? EEPolicy::TA_V1Compatible : EEPolicy::TA_Rude);
-        if (forStackOverflow)
-        {
-            OBJECTREF exceptObj = CLRException::GetPreallocatedRudeThreadAbortException();
-            pThread->SetAbortInitiated();
-            RaiseTheExceptionInternalOnly(exceptObj, FALSE, TRUE);
-        }
-
-        OBJECTREF exceptObj = CLRException::GetPreallocatedThreadAbortException();
-        pThread->SetAbortInitiated();
-        RaiseTheExceptionInternalOnly(exceptObj, FALSE, FALSE);
-    }
-}
-
 void EEPolicy::PerformResourceConstraintAction(Thread *pThread, EPolicyAction action, UINT exitCode, BOOL haveStack)
     {
     WRAPPER_NO_CONTRACT;
@@ -807,13 +691,6 @@ void EEPolicy::PerformResourceConstraintAction(Thread *pThread, EPolicyAction ac
         break;
     case eRudeAbortThread:
         pThread->UserAbort(Thread::TAR_Thread, TA_Rude, GetEEPolicy()->GetTimeout(OPR_ThreadAbort), Thread::UAC_Normal);
-        break;
-    case eUnloadAppDomain:
-    case eRudeUnloadAppDomain:
-            {
-                GCX_ASSERT_COOP();
-        PerformADUnloadAction(action,haveStack);
-            }
         break;
     case eExitProcess:
     case eFastExitProcess:
@@ -851,60 +728,6 @@ void EEPolicy::HandleOutOfMemory()
     PerformResourceConstraintAction(pThread, action, HOST_E_EXITPROCESS_OUTOFMEMORY, TRUE);
 }
 
-#ifdef FEATURE_STACK_PROBE
-//---------------------------------------------------------------------------------------
-//
-// IsSOTolerant - Is the current thread in SO Tolerant region?
-//
-// Arguments:
-//    pLimitFrame: the limit of search for frames
-//
-// Return Value:
-//    TRUE if in SO tolerant region.
-//    FALSE if in SO intolerant region.
-// 
-// Note:
-//    We walk our frame chain to decide.  If HelperMethodFrame is seen first, we are in tolerant
-//    region.  If EnterSOIntolerantCodeFrame is seen first, we are in intolerant region.
-//
-BOOL Thread::IsSOTolerant(void * pLimitFrame)
-{
-    LIMITED_METHOD_CONTRACT;
-
-    Frame *pFrame = GetFrame();
-    void* pSOIntolerantMarker = ClrFlsGetValue(TlsIdx_SOIntolerantTransitionHandler);
-    if (pSOIntolerantMarker == FRAME_TOP)
-    {
-        // We have not set a marker for intolerant transition yet.
-        return TRUE;
-    }
-    while (pFrame != FRAME_TOP && pFrame < pLimitFrame)
-    {
-        Frame::ETransitionType type = pFrame->GetTransitionType();
-        if (pFrame > pSOIntolerantMarker)
-        {
-            return FALSE;
-        }
-        else if (type == Frame::TT_M2U || type == Frame::TT_InternalCall ||
-            // We can not call HelperMethodFrame::GetFunction on SO since the call
-            // may need to call into host.  This is why we check for TT_InternalCall first.
-            pFrame->GetFunction() != NULL)
-        {
-            return TRUE;
-        }
-        pFrame = pFrame->Next();
-    }
-
-    if (pFrame == FRAME_TOP)
-        // We walked to the end of chain, but the thread has one IntolerantMarker on stack decided from
-        // the check above while loop.
-        return FALSE;
-    else
-        return TRUE;
-}
-
-#endif
-
 //---------------------------------------------------------------------------------------
 //
 // EEPolicy::HandleStackOverflow - Handle stack overflow according to policy
@@ -929,8 +752,7 @@ BOOL Thread::IsSOTolerant(void * pLimitFrame)
 // 3. If stack overflows in SO intolerant region, the process is killed as soon as the exception is seen by our vector handler, or
 //    our managed exception handler.
 //
-// If SO Probing code is disabled (by FEATURE_STACK_PROBE not defined) then the process
-// is terminated if there is StackOverflow as all clr code will be considered SO Intolerant.
+// The process is terminated if there is StackOverflow as all clr code is considered SO Intolerant.
 void EEPolicy::HandleStackOverflow(StackOverflowDetector detector, void * pLimitFrame)
 {
     WRAPPER_NO_CONTRACT;
@@ -950,130 +772,14 @@ void EEPolicy::HandleStackOverflow(StackOverflowDetector detector, void * pLimit
         return;
     }
 
-#ifdef FEATURE_STACK_PROBE
-
-    // We only process SO once at
-    // 1. VectoredExceptionHandler if SO in mscorwks
-    // 2. managed exception handler
-    // 3. SO_Tolerant transition handler
-    if (pThread->HasThreadStateNC(Thread::TSNC_SOWorkNeeded) &&
-        detector != SOD_UnmanagedFrameHandler)
-    {
-        return;
-    }
-#endif
-
-#ifdef FEATURE_STACK_PROBE
-    BOOL fInSoTolerant = pThread->IsSOTolerant(pLimitFrame);
-#else
-    BOOL fInSoTolerant = false;
-#endif
-
     EXCEPTION_POINTERS exceptionInfo;
     GetCurrentExceptionPointers(&exceptionInfo);
 
     _ASSERTE(exceptionInfo.ExceptionRecord);
 
-#ifdef FEATURE_STACK_PROBE
-    DWORD exceptionCode = exceptionInfo.ExceptionRecord->ExceptionCode;
+    ProcessSOEventForHost(&exceptionInfo, false /* fInSoTolerant */);
 
-    AppDomain *pCurrentDomain = ::GetAppDomain();
-    BOOL fInDefaultDomain = (pCurrentDomain == SystemDomain::System()->DefaultDomain());
-    BOOL fInCLR = IsIPInModule(g_pMSCorEE, (PCODE)GetIP(exceptionInfo.ContextRecord));
-
-    if (exceptionCode == EXCEPTION_SOFTSO)
-    {
-        // Our probe detects a thread does not have enough stack.  But we have not trashed the process
-        // state yet.
-        fInSoTolerant = TRUE;
-    }
-    else
-    {
-        _ASSERTE (exceptionCode == STATUS_STACK_OVERFLOW);
-
-    switch (detector)
-    {
-    case SOD_ManagedFrameHandler:
-            if (!pThread->PreemptiveGCDisabled() && !fInCLR && fInSoTolerant
-            &&
-            // Before we call managed code, we probe inside ReverseEnterRuntime for BACKOUT_CODE_STACK_LIMIT pages
-            // If we hit hard so here, we are still in our stub
-            (!CLRTaskHosted() || (UINT_PTR)pThread->m_pFrame - pThread->GetLastAllowableStackAddress() >= 
-             ADJUST_PROBE(BACKOUT_CODE_STACK_LIMIT) * OS_PAGE_SIZE)
-            )
-        {
-            // Managed exception handler detects SO, but the thread is in preemptive GC mode,
-            // and the IP is outside CLR.  This means we are inside a PINVOKE call.
-            fInSoTolerant = FALSE;
-        }
-            break;
-
-        case SOD_UnmanagedFrameHandler:
-        break;
-
-    case SOD_SOIntolerantTransitor:
-            fInSoTolerant = FALSE;
-        break;
-
-    case SOD_SOTolerantTransitor:
-        if (!fInCLR)
-        {
-            // If SO happens outside of CLR, and it is not detected by managed frame handler,
-            // it is fatal
-            fInSoTolerant = FALSE;
-        }
-        break;
-
-    default:
-        _ASSERTE(!"should not get here");
-    }
-
-        if (fInDefaultDomain)
-        {
-            // StackOverflow in default domain is fatal
-            fInSoTolerant = FALSE;
-        }
-    }
-
-#endif // FEATURE_STACK_PROBE
-
-    ProcessSOEventForHost(&exceptionInfo, fInSoTolerant);
-
-#ifdef FEATURE_STACK_PROBE
-    if (!CLRHosted() || GetEEPolicy()->GetActionOnFailure(FAIL_StackOverflow) != eRudeUnloadAppDomain)
-    {
-        // For security reason, it is not safe to continue execution if stack overflow happens
-        // unless a host tells us to do something different.
-        EEPolicy::HandleFatalStackOverflow(&exceptionInfo);
-    }
-#endif
-
-    if (!fInSoTolerant)
-    {
-        EEPolicy::HandleFatalStackOverflow(&exceptionInfo);
-    }
-#ifdef FEATURE_STACK_PROBE
-    else
-    {
-        // EnableADUnloadWorker is SO_Intolerant.
-        // But here we know that if we have only one page, we will only update states of the Domain.
-        CONTRACT_VIOLATION(SOToleranceViolation);
-
-        // Mark the current domain requested for rude unload
-        if (!fInDefaultDomain)
-        {
-        pCurrentDomain->EnableADUnloadWorker(ADU_Rude, FALSE);
-        }
-
-        pThread->PrepareThreadForSOWork();
-
-        pThread->MarkThreadForAbort(
-            (Thread::ThreadAbortRequester)(Thread::TAR_Thread|Thread::TAR_StackOverflow),
-            EEPolicy::TA_Rude);
-
-        pThread->SetSOWorkNeeded();
-    }
-#endif
+    EEPolicy::HandleFatalStackOverflow(&exceptionInfo);
 }
 
 
@@ -1090,79 +796,6 @@ static EXCEPTION_RECORD g_SOExceptionRecord = {
                {} };                  // ExceptionInformation
                
 EXCEPTION_POINTERS g_SOExceptionPointers = {&g_SOExceptionRecord, NULL};
-
-#ifdef FEATURE_STACK_PROBE
-// This function may be called on a thread before debugger is notified of the thread, like in 
-// ManagedThreadBase_DispatchMiddle.  Currently we can not notify managed debugger, because 
-// RS requires that notification is sent first.
-void EEPolicy::HandleSoftStackOverflow(BOOL fSkipDebugger)
-{
-    WRAPPER_NO_CONTRACT;
-
-    // If we trigger a SO while handling the soft stack overflow,
-    // we'll rip the process
-    BEGIN_SO_INTOLERANT_CODE_NOPROBE;
-    
-    AppDomain *pCurrentDomain = ::GetAppDomain();
-
-    if (GetEEPolicy()->GetActionOnFailure(FAIL_StackOverflow) != eRudeUnloadAppDomain ||
-        pCurrentDomain == SystemDomain::System()->DefaultDomain())
-    {
-        // We may not be able to build a context on stack
-        ProcessSOEventForHost(NULL, FALSE);
-
-        
-        EEPolicy::HandleFatalStackOverflow(&g_SOExceptionPointers, fSkipDebugger);
-    }
-    //else if (pCurrentDomain == SystemDomain::System()->DefaultDomain())
-    //{
-        // We hit soft SO in Default domain, but default domain can not be unloaded.
-        // Soft SO can happen in default domain, eg. GetResourceString, or EnsureGrantSetSerialized.
-        // So the caller is going to throw a managed exception.
-    //    RaiseException(EXCEPTION_SOFTSO, 0, 0, NULL);
-    //}
-    else
-    {
-        Thread* pThread = GetThread();
-        
-        if (pThread && pThread->PreemptiveGCDisabled())
-        {
-            // Mark the current domain requested for rude unload
-            GCX_ASSERT_COOP();
-            EEPolicy::PerformADUnloadAction(eRudeUnloadAppDomain, TRUE, TRUE);
-        }
-
-        // We are leaving VM boundary, either entering managed code, or entering
-        // non-VM unmanaged code.
-        // We should not throw internal C++ exception.  Instead we throw an exception
-        // with EXCEPTION_SOFTSO code.
-        RaiseException(EXCEPTION_SOFTSO, 0, 0, NULL);
-    }
-
-    END_SO_INTOLERANT_CODE_NOPROBE;
-    
-}
-
-void EEPolicy::HandleStackOverflowAfterCatch()
-{
-    CONTRACTL
-    {
-        NOTHROW;
-        GC_NOTRIGGER;
-        SO_TOLERANT;
-        MODE_ANY;
-    }
-    CONTRACTL_END;
-
-#ifdef STACK_GUARDS_DEBUG
-    BaseStackGuard::RestoreCurrentGuard(FALSE);
-#endif
-    Thread *pThread = GetThread();
-    pThread->RestoreGuardPage();
-    pThread->FinishSOWork();
-}
-#endif
-
 
 //---------------------------------------------------------------------------------------
 // HandleExitProcess is used to shutdown the runtime, based on policy previously set,
@@ -1181,17 +814,144 @@ void EEPolicy::HandleExitProcess(ShutdownCompleteAction sca)
     HandleExitProcessHelper(action, 0, sca);
 }
 
+StackWalkAction LogCallstackForLogCallback(
+    CrawlFrame       *pCF,      //
+    VOID*             pData     // Caller's private data
+)
+{
+    CONTRACTL
+    {
+        THROWS;
+        GC_TRIGGERS;
+        MODE_ANY;
+    }
+    CONTRACTL_END;
+
+    SmallStackSString *pWordAt = ((SmallStackSString*)pData);
+
+    MethodDesc *pMD = pCF->GetFunction();
+    _ASSERTE(pMD != NULL);
+
+    StackSString str;
+    str = *pWordAt;
+
+    TypeString::AppendMethodInternal(str, pMD, TypeString::FormatNamespace|TypeString::FormatFullInst|TypeString::FormatSignature); 
+    PrintToStdErrW(str.GetUnicode());
+    PrintToStdErrA("\n");
+
+    return SWA_CONTINUE;
+}
+
+//---------------------------------------------------------------------------------------
+//
+// A worker to save managed stack trace.
+//
+// Arguments:
+//    None
+//
+// Return Value:
+//    None
+//
+inline void LogCallstackForLogWorker()
+{
+    Thread* pThread = GetThread();
+    _ASSERTE (pThread);
+
+    SmallStackSString WordAt;
+
+    if (!WordAt.LoadResource(CCompRC::Optional, IDS_ER_WORDAT))
+    {
+        WordAt.Set(W("   at"));
+    }
+    else
+    {
+        WordAt.Insert(WordAt.Begin(), W("   "));
+    }
+    WordAt += W(" ");
+
+    pThread->StackWalkFrames(&LogCallstackForLogCallback, &WordAt, QUICKUNWIND | FUNCTIONSONLY);
+}
+
+//---------------------------------------------------------------------------------------
+//
+// Print information on fatal error to stderr.
+//
+// Arguments:
+//    exitCode - code of the fatal error
+//    pszMessage - error message (can be NULL)
+//    errorSource - details on the source of the error
+//    argExceptionString - exception details
+//
+// Return Value:
+//    None
+//
+void LogInfoForFatalError(UINT exitCode, LPCWSTR pszMessage, LPCWSTR errorSource, LPCWSTR argExceptionString)
+{
+    WRAPPER_NO_CONTRACT;
+
+    Thread *pThread = GetThread();
+    EX_TRY
+    {
+        if ((exitCode == (UINT)COR_E_FAILFAST) && (errorSource == NULL))
+        {
+            PrintToStdErrA("FailFast:\n");
+        }
+
+        if (errorSource != NULL)
+        {
+            PrintToStdErrW(errorSource);
+            PrintToStdErrA("\n");
+        }
+
+        if (pszMessage != NULL)
+        {
+            PrintToStdErrW(pszMessage);
+        }
+        else
+        {
+            // If no message was passed in, generate it from the exitCode
+            SString exitCodeMessage;
+            GetHRMsg(exitCode, exitCodeMessage);
+            PrintToStdErrW((LPCWSTR)exitCodeMessage);
+        }
+
+        PrintToStdErrA("\n");
+
+        if (pThread && errorSource == NULL)
+        {
+            LogCallstackForLogWorker();
+
+            if (argExceptionString != NULL) {
+                PrintToStdErrA("\n");
+                PrintToStdErrA("Exception details:");
+                PrintToStdErrA("\n");
+                PrintToStdErrW(argExceptionString);
+                PrintToStdErrA("\n");
+            }
+        }
+    }
+    EX_CATCH
+    {
+    }
+    EX_END_CATCH(SwallowAllExceptions)
+}
+
+//This starts FALSE and then converts to true if HandleFatalError has ever been called by a GC thread
+BOOL g_fFatalErrorOccuredOnGCThread = FALSE;
 //
 // Log an error to the event log if possible, then throw up a dialog box.
 //
 
-void EEPolicy::LogFatalError(UINT exitCode, UINT_PTR address, LPCWSTR pszMessage, PEXCEPTION_POINTERS pExceptionInfo)
+void EEPolicy::LogFatalError(UINT exitCode, UINT_PTR address, LPCWSTR pszMessage, PEXCEPTION_POINTERS pExceptionInfo, LPCWSTR errorSource, LPCWSTR argExceptionString)
 {
     STATIC_CONTRACT_NOTHROW;
     STATIC_CONTRACT_GC_TRIGGERS;
     STATIC_CONTRACT_MODE_ANY;
 
     _ASSERTE(pExceptionInfo != NULL);
+
+    // Log exception to StdErr
+    LogInfoForFatalError(exitCode, pszMessage, errorSource, argExceptionString);
 
     if(ETW_EVENT_ENABLED(MICROSOFT_WINDOWS_DOTNETRUNTIME_PRIVATE_PROVIDER_Context, FailFast))
     {
@@ -1221,13 +981,18 @@ void EEPolicy::LogFatalError(UINT exitCode, UINT_PTR address, LPCWSTR pszMessage
             else if (exitCode == (UINT)COR_E_CODECONTRACTFAILED)
                 failureType = EventReporter::ERT_CodeContractFailed;
             EventReporter reporter(failureType);
-
+            StackSString s(argExceptionString);
 
             if ((exitCode == (UINT)COR_E_FAILFAST) || (exitCode == (UINT)COR_E_CODECONTRACTFAILED) || (exitCode == (UINT)CLR_E_GC_OOM))
             {
                 if (pszMessage)
                 {
                     reporter.AddDescription((WCHAR*)pszMessage);
+                }
+
+                if (argExceptionString)
+                {
+                    reporter.AddFailFastStackTrace(s);
                 }
 
                 if (exitCode != (UINT)CLR_E_GC_OOM)
@@ -1303,7 +1068,7 @@ void EEPolicy::LogFatalError(UINT exitCode, UINT_PTR address, LPCWSTR pszMessage
         //Give a managed debugger a chance if this fatal error is on a managed thread.
         Thread *pThread = GetThread();
 
-        if (pThread)
+        if (pThread && !g_fFatalErrorOccuredOnGCThread)
         {
             GCX_COOP();
 
@@ -1326,7 +1091,6 @@ void EEPolicy::LogFatalError(UINT exitCode, UINT_PTR address, LPCWSTR pszMessage
             // (in SystemDomain::Init) finished.  See Dev10 Bug 677432 for the detail.
             if (ohException != NULL)
             {
-#ifdef FEATURE_WINDOWSPHONE
                 // for fail-fast, if there's a LTO available then use that as the inner exception object
                 // for the FEEE we'll be reporting.  this can help the Watson back-end to generate better
                 // buckets for apps that call Environment.FailFast() and supply an exception object.
@@ -1337,7 +1101,6 @@ void EEPolicy::LogFatalError(UINT exitCode, UINT_PTR address, LPCWSTR pszMessage
                     EXCEPTIONREF curEx = (EXCEPTIONREF)ObjectFromHandle(ohException);
                     curEx->SetInnerException(lto);
                 }
-#endif // FEATURE_WINDOWSPHONE
                 pThread->SetLastThrownObject(ObjectFromHandle(ohException), TRUE);
             }
 
@@ -1363,14 +1126,14 @@ void DisplayStackOverflowException()
     LIMITED_METHOD_CONTRACT;
     PrintToStdErrA("\n");
 
-    PrintToStdErrA("Process is terminated due to StackOverflowException.\n");
+    PrintToStdErrA("Process is terminating due to StackOverflowException.\n");
 }
 
 void DECLSPEC_NORETURN EEPolicy::HandleFatalStackOverflow(EXCEPTION_POINTERS *pExceptionInfo, BOOL fSkipDebugger)
 {
     // This is fatal error.  We do not care about SO mode any more.
     // All of the code from here on out is robust to any failures in any API's that are called.
-    CONTRACT_VIOLATION(GCViolation | ModeViolation | SOToleranceViolation | FaultNotFatal | TakesLockViolation);
+    CONTRACT_VIOLATION(GCViolation | ModeViolation | FaultNotFatal | TakesLockViolation);
 
     WRAPPER_NO_CONTRACT;
 
@@ -1428,7 +1191,7 @@ void DECLSPEC_NORETURN EEPolicy::HandleFatalStackOverflow(EXCEPTION_POINTERS *pE
         }
 
 #ifndef FEATURE_PAL        
-        if (RunningOnWin7() && IsWatsonEnabled() && (g_pDebugInterface != NULL))
+        if (IsWatsonEnabled() && (g_pDebugInterface != NULL))
         {
             _ASSERTE(pExceptionInfo != NULL);
 
@@ -1447,7 +1210,10 @@ void DECLSPEC_NORETURN EEPolicy::HandleFatalStackOverflow(EXCEPTION_POINTERS *pE
     UNREACHABLE();
 }
 
-void DECLSPEC_NORETURN EEPolicy::HandleFatalError(UINT exitCode, UINT_PTR address, LPCWSTR pszMessage /* = NULL */, PEXCEPTION_POINTERS pExceptionInfo /* = NULL */)
+
+
+
+void DECLSPEC_NORETURN EEPolicy::HandleFatalError(UINT exitCode, UINT_PTR address, LPCWSTR pszMessage /* = NULL */, PEXCEPTION_POINTERS pExceptionInfo /* = NULL */, LPCWSTR errorSource /* = NULL */, LPCWSTR argExceptionString /* = NULL */)
 {
     WRAPPER_NO_CONTRACT;
 
@@ -1480,7 +1246,15 @@ void DECLSPEC_NORETURN EEPolicy::HandleFatalError(UINT exitCode, UINT_PTR addres
     {
         // This is fatal error.  We do not care about SO mode any more.
         // All of the code from here on out is robust to any failures in any API's that are called.
-        CONTRACT_VIOLATION(GCViolation | ModeViolation | SOToleranceViolation | FaultNotFatal | TakesLockViolation);
+        CONTRACT_VIOLATION(GCViolation | ModeViolation | FaultNotFatal | TakesLockViolation);
+
+
+        // Setting g_fFatalErrorOccuredOnGCThread allows code to avoid attempting to make GC mode transitions which could
+        // block indefinately if the fatal error occured during the GC.
+        if (IsGCSpecialThread() && GCHeapUtilities::IsGCInProgress())
+        {
+            g_fFatalErrorOccuredOnGCThread = TRUE;
+        }
 
         // ThreadStore lock needs to be released before continuing with the FatalError handling should 
         // because debugger is going to take CrstDebuggerMutex, whose lock level is higher than that of 
@@ -1497,11 +1271,11 @@ void DECLSPEC_NORETURN EEPolicy::HandleFatalError(UINT exitCode, UINT_PTR addres
         switch (GetEEPolicy()->GetActionOnFailure(FAIL_FatalRuntime))
         {
         case eRudeExitProcess:
-            LogFatalError(exitCode, address, pszMessage, pExceptionInfo);
+            LogFatalError(exitCode, address, pszMessage, pExceptionInfo, errorSource, argExceptionString);
 	        SafeExitProcess(exitCode, TRUE);
             break;
         case eDisableRuntime:
-            LogFatalError(exitCode, address, pszMessage, pExceptionInfo);
+            LogFatalError(exitCode, address, pszMessage, pExceptionInfo, errorSource, argExceptionString);
             DisableRuntime(SCA_ExitProcessWhenShutdownComplete);
             break;
         default:
@@ -1551,20 +1325,6 @@ void EEPolicy::HandleCodeContractFailure(LPCWSTR pMessage, LPCWSTR pCondition, L
     case eRudeAbortThread:
         pThread->UserAbort(Thread::TAR_Thread, TA_Rude, GetEEPolicy()->GetTimeout(OPR_ThreadAbort), Thread::UAC_Normal);
         break;
-    case eUnloadAppDomain:
-        // Register an appdomain unload, which starts on a separate thread.
-        IfFailThrow(AppDomain::UnloadById(pCurrentDomain->GetId(), FALSE));
-        // Don't continue execution on this thread.
-        pThread->UserAbort(Thread::TAR_Thread, TA_Safe, GetEEPolicy()->GetTimeout(OPR_ThreadAbort), Thread::UAC_Normal);
-        break;
-    case eRudeUnloadAppDomain:
-        pCurrentDomain->SetRudeUnload();
-        // Register an appdomain unload, which starts on a separate thread.
-        IfFailThrow(AppDomain::UnloadById(pCurrentDomain->GetId(), FALSE));
-        // Don't continue execution on this thread.
-        pThread->UserAbort(Thread::TAR_Thread, TA_Rude, GetEEPolicy()->GetTimeout(OPR_ThreadAbort), Thread::UAC_Normal);
-        break;
-
     case eExitProcess:  // Merged w/ default case
     default:
         _ASSERTE(action == eExitProcess);

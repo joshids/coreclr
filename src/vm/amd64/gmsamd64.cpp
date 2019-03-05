@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 /**************************************************************/
 /*                       gmsAMD64.cpp                         */
@@ -10,16 +9,9 @@
 #include "common.h"
 #include "gmscpu.h"
 
-#if defined(DACCESS_COMPILE)
-static BOOL DacReadAllAdapter(SIZE_T address, SIZE_T *value)
-{
-    HRESULT hr = DacReadAll((TADDR)address, (PVOID)value, sizeof(*value), false);
-    return SUCCEEDED(hr);
-}
-#endif //DACCESS_COMPILE
-
 void LazyMachState::unwindLazyState(LazyMachState* baseState,
                                     MachState* unwoundState,
+                                    DWORD threadId,
                                     int funCallDepth /* = 1 */,
                                     HostCallPreference hostCallPreference /* = (HostCallPreference)(-1) */)
 {
@@ -27,7 +19,6 @@ void LazyMachState::unwindLazyState(LazyMachState* baseState,
     {
         NOTHROW;
         GC_NOTRIGGER;
-        SO_TOLERANT;
         SUPPORTS_DAC;
     }
     CONTRACTL_END;
@@ -64,21 +55,18 @@ void LazyMachState::unwindLazyState(LazyMachState* baseState,
 #else // !FEATURE_PAL
         
 #if defined(DACCESS_COMPILE)
-        DWORD pid;
-        HRESULT hr = DacGetPid(&pid);
-        if (SUCCEEDED(hr))
-        {
-            if (!PAL_VirtualUnwindOutOfProc(&ctx, &nonVolRegPtrs, pid, DacReadAllAdapter))
-            {
-                DacError(E_FAIL);   
-            }
-        } 
-        else 
+        HRESULT hr = DacVirtualUnwind(threadId, &ctx, &nonVolRegPtrs);
+        if (FAILED(hr))
         {
             DacError(hr);
         }
 #else
-        PAL_VirtualUnwind(&ctx, &nonVolRegPtrs);
+        BOOL success = PAL_VirtualUnwind(&ctx, &nonVolRegPtrs);
+        if (!success)
+        {
+            _ASSERTE(!"unwindLazyState: Unwinding failed");
+            EEPOLICY_HANDLE_FATAL_ERROR(COR_E_EXECUTIONENGINE);
+        }
 #endif  // DACCESS_COMPILE    
 
         pvControlPc = GetIP(&ctx);
@@ -137,6 +125,11 @@ void LazyMachState::unwindLazyState(LazyMachState* baseState,
 
     // For DAC, we have to update the registers directly, since we don't have context pointers.
 #define CALLEE_SAVED_REGISTER(regname) unwoundState->m_Capture.regname = ctx.regname;
+    ENUM_CALLEE_SAVED_REGISTERS();
+#undef CALLEE_SAVED_REGISTER
+
+    // Since we don't have context pointers in this case, just assing them to NULL.
+#define CALLEE_SAVED_REGISTER(regname) unwoundState->m_Ptrs.p##regname = NULL;
     ENUM_CALLEE_SAVED_REGISTERS();
 #undef CALLEE_SAVED_REGISTER
 

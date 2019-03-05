@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 // STUBLINK.H
 // 
@@ -114,9 +113,7 @@ struct StubUnwindInfoHeapSegment
 #endif
 };
 
-#ifndef BINDER
 VOID UnregisterUnwindInfoInLoaderHeap (UnlockedLoaderHeap *pHeap);
-#endif //!BINDER
 
 #endif // STUBLINKER_GENERATES_UNWIND_INFO
 
@@ -284,7 +281,6 @@ public:
         //
         // Throws exception on failure.
         //---------------------------------------------------------------
-        Stub *Link(DWORD flags = 0) { WRAPPER_NO_CONTRACT; return Link(NULL, flags); }
         Stub *Link(LoaderHeap *heap, DWORD flags = 0);
 
         //---------------------------------------------------------------
@@ -352,7 +348,7 @@ protected:
         {
             if (m_nUnwindSlots == 0) return 0;
 
-            return sizeof(RUNTIME_FUNCTION) + offsetof(UNWIND_INFO, UnwindCode) + m_nUnwindSlots * sizeof(UNWIND_CODE);
+            return sizeof(T_RUNTIME_FUNCTION) + offsetof(UNWIND_INFO, UnwindCode) + m_nUnwindSlots * sizeof(UNWIND_CODE);
         }
 #endif // _TARGET_AMD64_
 
@@ -362,7 +358,7 @@ protected:
         // epilog.
 private:
         // Reserve fixed size block that's big enough to fit any unwind info we can have
-        static const int c_nUnwindInfoSize = sizeof(RUNTIME_FUNCTION) + sizeof(DWORD) + MAX_UNWIND_CODE_WORDS *4;
+        static const int c_nUnwindInfoSize = sizeof(T_RUNTIME_FUNCTION) + sizeof(DWORD) + MAX_UNWIND_CODE_WORDS *4;
 
         //
         // Returns total UnwindInfoSize, including RUNTIME_FUNCTION entry
@@ -380,7 +376,7 @@ private:
 
 private:
         // Reserve fixed size block that's big enough to fit any unwind info we can have
-        static const int c_nUnwindInfoSize = sizeof(RUNTIME_FUNCTION) + sizeof(DWORD) + MAX_UNWIND_CODE_WORDS *4;
+        static const int c_nUnwindInfoSize = sizeof(T_RUNTIME_FUNCTION) + sizeof(DWORD) + MAX_UNWIND_CODE_WORDS *4;
         UINT UnwindInfoSize(UINT codeSize)
         {
             if (!m_fProlog) return 0;
@@ -414,11 +410,11 @@ private:
 
         // Writes out the code element into memory following the
         // stub object.
-        bool EmitStub(Stub* pStub, int globalsize);
+        bool EmitStub(Stub* pStub, int globalsize, LoaderHeap* pHeap);
 
         CodeRun *GetLastCodeRunIfAny();
 
-        bool EmitUnwindInfo(Stub* pStub, int globalsize);
+        bool EmitUnwindInfo(Stub* pStub, int globalsize, LoaderHeap* pHeap);
 
 #if defined(_TARGET_AMD64_) && defined(STUBLINKER_GENERATES_UNWIND_INFO)
         UNWIND_CODE *AllocUnwindInfo (UCHAR Op, UCHAR nExtraSlots = 0);
@@ -586,7 +582,6 @@ class Stub
                 NOTHROW;
                 GC_NOTRIGGER;
                 FORBID_FAULT;
-                SO_TOLERANT;
             }
             CONTRACTL_END
 

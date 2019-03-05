@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //
 // winrthelpers.inl
 //
@@ -158,8 +157,8 @@ GetBindableWinRTName(
     sNamespaceAndType.AppendUTF8(szNameSpace);
     sNamespaceAndType.Append(W("."));
     sNamespaceAndType.AppendUTF8(szTypeName);
-    
-    pIAssemblyName->SetProperty(ASM_NAME_NAME, sNamespaceAndType.GetUnicode(), (lstrlenW(sNamespaceAndType.GetUnicode()) + 1) * sizeof(WCHAR));
-    
+
+    pIAssemblyName->SetProperty(ASM_NAME_NAME, sNamespaceAndType.GetUnicode(), (sNamespaceAndType.GetCount() + 1) * sizeof(WCHAR));
+
     return hr;
 }

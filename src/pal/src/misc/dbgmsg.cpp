@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 /*++
 
@@ -30,7 +29,7 @@ Abstract:
 #include "pal/cruntime.h"
 #include "pal/critsect.h"
 #include "pal/file.h"
-#include "pal/misc.h"
+#include "pal/environ.h"
 
 /* standard headers */
 
@@ -51,11 +50,7 @@ using namespace CorUnix;
 /* append mode file I/O is safer */
 #define _PAL_APPEND_DBG_OUTPUT_
 
-#if defined(_PAL_APPEND_DBG_OUTPUT_)
 static const char FOPEN_FLAGS[] = "at";
-#else
-static const char FOPEN_FLAGS[] = "wt";
-#endif
 
 /* number of ENTRY nesting levels to indicate with a '.' */
 #define MAX_NESTING 50
@@ -84,6 +79,7 @@ static const char *dbg_channel_names[]=
     "LOADER",
     "HANDLE",
     "SHMEM",
+    "PROCESS",
     "THREAD",
     "EXCEPT",
     "CRT",
@@ -105,7 +101,11 @@ static const char *dbg_channel_names[]=
 #ifdef FEATURE_PAL_SXS
   , "SXS"
 #endif // FEATURE_PAL_SXS
+  , "DCI_NUMA"
 };
+
+// Verify the number of elements in dbg_channel_names
+static_assert_no_msg(_countof(dbg_channel_names) == DCI_LAST);
 
 static const char *dbg_level_names[]=
 {
@@ -150,7 +150,7 @@ Function :
 BOOL DBG_init_channels(void)
 {
     INT i;
-    LPCSTR env_string;
+    LPSTR env_string;
     LPSTR env_workstring;
     LPSTR env_pcache;
     LPSTR entry_ptr;
@@ -168,21 +168,9 @@ BOOL DBG_init_channels(void)
 
     /* parse PAL_DBG_CHANNELS environment variable */
 
-    if (!(env_string = MiscGetenv(ENV_CHANNELS))) 
-    {
-        env_pcache = env_workstring = NULL;
-    }
-    else
-    {
-        env_pcache = env_workstring = PAL__strdup(env_string);
+    env_string = EnvironGetenv(ENV_CHANNELS);
+    env_pcache = env_workstring = env_string;
 
-        if (env_workstring == NULL)
-        {
-            /* Not enough memory */
-            DeleteCriticalSection(&fprintf_crit_section);
-            return FALSE;
-        }
-    }
     while(env_workstring)
     {
         entry_ptr=env_workstring;
@@ -316,7 +304,7 @@ BOOL DBG_init_channels(void)
     PAL_free(env_pcache);
 
     /* select output file */
-    env_string=MiscGetenv(ENV_FILE);
+    env_string = EnvironGetenv(ENV_FILE);
     if(env_string && *env_string!='\0')
     {
         if(!strcmp(env_string, "stderr"))
@@ -346,8 +334,13 @@ BOOL DBG_init_channels(void)
         output_file = stderr; /* output to stderr by default */
     }
 
+    if(env_string)
+    {
+        PAL_free(env_string);
+    }
+
     /* see if we need to disable assertions */
-    env_string = MiscGetenv(ENV_ASSERTS);
+    env_string = EnvironGetenv(ENV_ASSERTS);
     if(env_string && 0 == strcmp(env_string,"1"))
     {
         g_Dbg_asserts_enabled = FALSE;
@@ -357,11 +350,17 @@ BOOL DBG_init_channels(void)
         g_Dbg_asserts_enabled = TRUE;
     }
 
+    if(env_string)
+    {
+        PAL_free(env_string);
+    }
+
     /* select ENTRY level limitation */
-    env_string = MiscGetenv(ENV_ENTRY_LEVELS);    
+    env_string = EnvironGetenv(ENV_ENTRY_LEVELS);
     if(env_string)
     {
         max_entry_level = atoi(env_string);
+        PAL_free(env_string);
     }
     else
     {
@@ -447,10 +446,9 @@ static const void *DBG_get_module_id()
 #define MODULE_FORMAT
 #endif // FEATURE_PAL_SXS
 
-
 /*++
 Function :
-    DBG_printf_gcc
+    DBG_printf
 
     Internal function for debug channels; don't use.
     This function outputs a complete debug message, including the function name.
@@ -459,21 +457,22 @@ Parameters :
     DBG_CHANNEL_ID channel : debug channel to use
     DBG_LEVEL_ID level : debug message level
     BOOL bHeader : whether or not to output message header (thread id, etc)
-    LPSTR function : current function
-    LPSTR file : current file
+    LPCSTR function : current function
+    LPCSTR file : current file
     INT line : line number
-    LPSTR format, ... : standard printf parameter list.
+    LPCSTR format, ... : standard printf parameter list.
 
 Return Value :
     always 1.
 
 Notes :
-    This version is for gnu compilers that support variable-argument macros
-    and the __FUNCTION__ pseudo-macro.
+    This version is for compilers that support the C99 flavor of
+    variable-argument macros but not the gnu flavor, and do not support the
+    __FUNCTION__ pseudo-macro.
 
 --*/
-int DBG_printf_gcc(DBG_CHANNEL_ID channel, DBG_LEVEL_ID level, BOOL bHeader,
-                   LPCSTR function, LPCSTR file, INT line, LPCSTR format, ...)
+int DBG_printf(DBG_CHANNEL_ID channel, DBG_LEVEL_ID level, BOOL bHeader,
+               LPCSTR function, LPCSTR file, INT line, LPCSTR format, ...)
 {
     CHAR *buffer = (CHAR*)alloca(DBG_BUFFER_SIZE);
     CHAR indent[MAX_NESTING+1];
@@ -482,7 +481,6 @@ int DBG_printf_gcc(DBG_CHANNEL_ID channel, DBG_LEVEL_ID level, BOOL bHeader,
     va_list args;
     void *thread_id;
     int old_errno = 0;
-    CPalThread *pthrCurrent = InternalGetCurrentThread();
 
     old_errno = errno;
 
@@ -500,7 +498,7 @@ int DBG_printf_gcc(DBG_CHANNEL_ID channel, DBG_LEVEL_ID level, BOOL bHeader,
         /* also print file name for ASSERTs, to match Win32 behavior */
         if( DLI_ENTRY == level || DLI_ASSERT == level || DLI_EXIT == level)
         {
-            output_size=snprintf(buffer, DBG_BUFFER_SIZE, 
+            output_size=snprintf(buffer, DBG_BUFFER_SIZE,
                                  "{%p" MODULE_FORMAT "} %-5s [%-7s] at %s.%d: ",
                                  thread_id, MODULE_ID
                                  dbg_level_names[level], dbg_channel_names[channel], file, line);
@@ -512,10 +510,10 @@ int DBG_printf_gcc(DBG_CHANNEL_ID channel, DBG_LEVEL_ID level, BOOL bHeader,
                                  thread_id, MODULE_ID
                                  dbg_level_names[level], dbg_channel_names[channel], function, line);
         }
-        
+
         if(output_size + 1 > DBG_BUFFER_SIZE)
         {
-            fprintf(stderr, "ERROR : buffer overflow in DBG_printf_gcc");
+            fprintf(stderr, "ERROR : buffer overflow in DBG_printf");
             return 1;
         }
         
@@ -529,148 +527,37 @@ int DBG_printf_gcc(DBG_CHANNEL_ID channel, DBG_LEVEL_ID level, BOOL bHeader,
 
     va_start(args, format);
 
-    output_size+=Silent_PAL_vsnprintf(buffer_ptr, DBG_BUFFER_SIZE-output_size,
-                                      format, args);
+    output_size+=_vsnprintf_s(buffer_ptr, DBG_BUFFER_SIZE-output_size, _TRUNCATE,
+                              format, args);
     va_end(args);
 
     if( output_size > DBG_BUFFER_SIZE )
     {
-        fprintf(stderr, "ERROR : buffer overflow in DBG_printf_gcc");
+        fprintf(stderr, "ERROR : buffer overflow in DBG_printf");
     }
 
     /* Use a Critical section before calling printf code to
        avoid holding a libc lock while another thread is calling
        SuspendThread on this one. */
 
-    InternalEnterCriticalSection(pthrCurrent, &fprintf_crit_section);
+    InternalEnterCriticalSection(NULL, &fprintf_crit_section);
     fprintf( output_file, "%s%s", indent, buffer );
-    InternalLeaveCriticalSection(pthrCurrent, &fprintf_crit_section);
+    InternalLeaveCriticalSection(NULL, &fprintf_crit_section);
 
     /* flush the output to file */
-    /* Can call InternalFflush since InternalFflush does not have ENTRY/LOGEXIT 
-    macros. If that changes, then this will need to be switched back to calling the 
-    cruntime fflush with some other protection from suspension. */    
-    if (InternalFflush(pthrCurrent, output_file) != 0)
+    if ( fflush(output_file) != 0 )
     {
-        fprintf(stderr, "ERROR : fflush() failed errno:%d (%s)\n", 
+        fprintf(stderr, "ERROR : fflush() failed errno:%d (%s)\n",
                 errno, strerror(errno));
     }
 
     // Some systems support displaying a GUI dialog. We attempt this only for asserts.
-    if (level == DLI_ASSERT)
+    if ( level == DLI_ASSERT )
         PAL_DisplayDialog("PAL ASSERT", buffer);
 
     if ( old_errno != errno )
     {
-        fprintf( stderr,"ERROR: errno changed by DBG_printf_gcc\n" );
-        errno = old_errno;
-    }
-
-    return 1;
-}
-
-/*++
-Function :
-    DBG_printf_c99
-
-    Internal function for debug channels; don't use.
-    This function outputs a complete debug message, without function name.
-
-Parameters :
-    DBG_CHANNEL_ID channel : debug channel to use
-    DBG_LEVEL_ID level : debug message level
-    BOOL bHeader : whether or not to output message header (thread id, etc)
-    LPSTR file : current file
-    INT line : line number
-    LPSTR format, ... : standard printf parameter list.
-
-Return Value :
-    always 1.
-
-Notes :
-    This version is for compilers that support the C99 flavor of
-    variable-argument macros but not the gnu flavor, and do not support the
-    __FUNCTION__ pseudo-macro.
-
---*/
-int DBG_printf_c99(DBG_CHANNEL_ID channel, DBG_LEVEL_ID level, BOOL bHeader,
-                   LPSTR file, INT line, LPSTR format, ...)
-{
-    CHAR *buffer = (CHAR*)alloca(DBG_BUFFER_SIZE);
-    CHAR indent[MAX_NESTING+1];
-    LPSTR buffer_ptr;
-    INT output_size;
-    va_list args;
-    static INT call_count=0;
-    void *thread_id;
-    int old_errno = 0;
-    CPalThread *pthrCurrent = InternalGetCurrentThread();
-
-    old_errno = errno;
-
-    if(!DBG_get_indent(level, format, indent))
-    {
-        return 1;
-    }
-
-    thread_id=  (void *)THREADSilentGetCurrentThreadId();
-
-    if(bHeader)
-    {
-        output_size=snprintf(buffer, DBG_BUFFER_SIZE, 
-                             "{%p" MODULE_FORMAT "} %-5s [%-7s] at %s.%d: ", thread_id, MODULE_ID
-                             dbg_level_names[level], dbg_channel_names[channel], 
-                             file, line);
-
-        if(output_size + 1 > DBG_BUFFER_SIZE)
-        {
-            fprintf(stderr, "ERROR : buffer overflow in DBG_printf_gcc");
-            return 1;
-        }
-        
-        buffer_ptr=buffer+output_size;
-    }
-    else
-    {
-        output_size = 0;
-        buffer_ptr = buffer;
-    }
-
-    va_start(args, format);
-    output_size+=Silent_PAL_vsnprintf(buffer_ptr, DBG_BUFFER_SIZE-output_size, 
-                                      format, args);
-    va_end(args);
-
-    if(output_size>DBG_BUFFER_SIZE)
-        fprintf(stderr, "ERROR : buffer overflow in DBG_printf_c99");
-
-    /* Use a Critical section before calling printf code to
-       avoid holding a libc lock while another thread is calling
-       SuspendThread on this one. */
-
-    InternalEnterCriticalSection(pthrCurrent, &fprintf_crit_section);
-    fprintf( output_file, "%s", buffer );
-    InternalLeaveCriticalSection(pthrCurrent, &fprintf_crit_section);
-
-    /* flush the output to file every once in a while */
-    call_count++;
-    if(call_count>5)
-    {
-        call_count=0;
-        /* Can call InternalFflush since InternalFflush does not have
-        ENTRY/LOGEXIT macros. If that changes, then this will need
-        to be switched back to calling the cruntime fflush with some 
-        other protection from suspension. */
-        if (InternalFflush(pthrCurrent, output_file) != 0)
-        {
-            fprintf(stderr, "ERROR : fflush() failed errno:%d (%s)\n", 
-                   errno, strerror(errno));
-        }
-    }
-    
-    if ( old_errno != errno )
-    {
-        fprintf( stderr, "ERROR: DBG_printf_c99 changed the errno.\n" );
+        fprintf( stderr,"ERROR: errno changed by DBG_printf\n" );
         errno = old_errno;
     }
 
@@ -826,15 +713,32 @@ bool DBG_ShouldCheckStackAlignment()
     
     if (caMode == CheckAlignment_Uninitialized)
     {
-        const char * checkAlignmentSettings = getenv(PAL_CHECK_ALIGNMENT_MODE);
+        char* checkAlignmentSettings;
+        bool shouldFreeCheckAlignmentSettings = false;
+        if (palEnvironment == nullptr)
+        {
+            // This function might be called before the PAL environment is initialized.
+            // In this case, use the system getenv instead.
+            checkAlignmentSettings = ::getenv(PAL_CHECK_ALIGNMENT_MODE);
+        }
+        else
+        {
+            checkAlignmentSettings = EnvironGetenv(PAL_CHECK_ALIGNMENT_MODE);
+            shouldFreeCheckAlignmentSettings = true;
+        }
+
         caMode = checkAlignmentSettings ?
             (CheckAlignmentMode)atoi(checkAlignmentSettings) : CheckAlignment_Default;
+
+        if (checkAlignmentSettings && shouldFreeCheckAlignmentSettings)
+        {
+            free(checkAlignmentSettings);
+        }
     }
     
     return caMode == CheckAlignment_On;
 }
 #endif // _DEBUG && __APPLE__
-    
 
 #ifdef __APPLE__
 #include "CoreFoundation/CFUserNotification.h"
@@ -867,10 +771,12 @@ void PAL_DisplayDialog(const char *szTitle, const char *szText)
     
     if (dispDialog == DisplayDialog_Uninitialized)
     {
-        const char * displayDialog = getenv(PAL_DISPLAY_DIALOG);
+        char* displayDialog = EnvironGetenv(PAL_DISPLAY_DIALOG);
         if (displayDialog)
         {
             int i = atoi(displayDialog);
+            free(displayDialog);
+
             switch (i)
             {
             case 0:
@@ -949,7 +855,7 @@ void PAL_DisplayDialogFormatted(const char *szTitle, const char *szTextFormat, .
 
     const int cchBuffer = 4096;
     char *szBuffer = (char*)alloca(cchBuffer);
-    PAL__vsnprintf(szBuffer, cchBuffer, szTextFormat, args);
+    _vsnprintf_s(szBuffer, cchBuffer, _TRUNCATE, szTextFormat, args);
     PAL_DisplayDialog(szTitle, szBuffer);
 
     va_end(args);

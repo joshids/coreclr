@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //*****************************************************************************
 // CustAttr_Emit.cpp
 // 
@@ -1164,7 +1163,7 @@ HRESULT RegMeta::_HandleKnownCustomAttribute(    // S_OK or error.
                 dwFlags |= pmSupportsLastError;
         }
             
-        // If an entrypoint name was specified, use it, otherrwise grab the name from the member.
+        // If an entrypoint name was specified, use it, otherwise grab the name from the member.
         LPCWSTR wzEntry;
         if (qNamedArgs[DI_EntryPoint].val.type.tag)
         {

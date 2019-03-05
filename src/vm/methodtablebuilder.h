@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 // ==++==
 //
@@ -44,7 +43,6 @@ public:
     static const UINT16 INVALID_SLOT_INDEX = static_cast<UINT16>(-1);
     static const UINT16 MAX_SLOT_INDEX = static_cast<UINT16>(-1) - 10;
 
-#ifndef BINDER
     // Information gathered by the class loader relating to generics
     // Fields in this structure are initialized very early in class loading
     // See code:ClassLoader.CreateTypeHandleForTypeDefThrowing
@@ -81,19 +79,6 @@ public:
 #endif //_DEBUG
     };  // struct bmtGenericsInfo
 
-
-    // information for Thread and Context Static. Filled by InitializedFieldDesc and used when
-    // setting up a MethodTable
-    struct bmtContextStaticInfo
-    {
-#ifdef FEATURE_REMOTING        
-        // size of context statics
-        DWORD dwContextStaticsSize;
-#endif
-    
-        inline bmtContextStaticInfo() { LIMITED_METHOD_CONTRACT; memset((void *)this, NULL, sizeof(*this)); }
-    };
-
     MethodTableBuilder(
         MethodTable *       pHalfBakedMT,
         EEClass *           pHalfBakedClass,
@@ -106,7 +91,6 @@ public:
     {
         LIMITED_METHOD_CONTRACT;
         SetBMTData(
-            NULL,
             NULL,
             NULL,
             NULL,
@@ -221,31 +205,21 @@ private:
     void SetIsComClassInterface() { WRAPPER_NO_CONTRACT; GetHalfBakedClass()->SetIsComClassInterface(); } 
 #endif // FEATURE_COMINTEROP
     BOOL IsEnum() { WRAPPER_NO_CONTRACT; return bmtProp->fIsEnum; } 
-    BOOL ContainsStackPtr() { WRAPPER_NO_CONTRACT; return GetHalfBakedClass()->ContainsStackPtr(); } 
     BOOL HasNonPublicFields() { WRAPPER_NO_CONTRACT; return GetHalfBakedClass()->HasNonPublicFields(); }
     BOOL IsValueClass() { WRAPPER_NO_CONTRACT; return bmtProp->fIsValueClass; } 
     BOOL IsUnsafeValueClass() { WRAPPER_NO_CONTRACT; return GetHalfBakedClass()->IsUnsafeValueClass(); }
     BOOL IsAbstract() { WRAPPER_NO_CONTRACT; return GetHalfBakedClass()->IsAbstract(); } 
     BOOL HasLayout() { WRAPPER_NO_CONTRACT; return GetHalfBakedClass()->HasLayout(); } 
     BOOL IsDelegate() { WRAPPER_NO_CONTRACT; return GetHalfBakedClass()->IsDelegate(); } 
-#ifdef FEATURE_REMOTING
-    BOOL IsMarshaledByRef() { WRAPPER_NO_CONTRACT; return bmtProp->fMarshaledByRef; }
-    BOOL IsContextful() { WRAPPER_NO_CONTRACT; return bmtProp->fIsContextful; } 
-#endif
     BOOL IsNested() { WRAPPER_NO_CONTRACT; return GetHalfBakedClass()->IsNested(); } 
     BOOL HasFieldsWhichMustBeInited() { WRAPPER_NO_CONTRACT; return GetHalfBakedClass()->HasFieldsWhichMustBeInited(); } 
-    BOOL HasRemotingProxyAttribute() { WRAPPER_NO_CONTRACT; return GetHalfBakedClass()->HasRemotingProxyAttribute(); } 
     BOOL IsBlittable() { WRAPPER_NO_CONTRACT; return GetHalfBakedClass()->IsBlittable(); } 
     PTR_MethodDescChunk GetChunks() { WRAPPER_NO_CONTRACT; return GetHalfBakedClass()->GetChunks(); } 
     BOOL HasExplicitFieldOffsetLayout() { WRAPPER_NO_CONTRACT; return GetHalfBakedClass()->HasExplicitFieldOffsetLayout(); } 
     BOOL IsManagedSequential() { WRAPPER_NO_CONTRACT; return GetHalfBakedClass()->IsManagedSequential(); } 
     BOOL HasExplicitSize() { WRAPPER_NO_CONTRACT; return GetHalfBakedClass()->HasExplicitSize(); } 
-    BOOL RequiresLinktimeCheck() { WRAPPER_NO_CONTRACT; return GetHalfBakedClass()->RequiresLinktimeCheck(); } 
-    BOOL RequiresLinktimeCheckHostProtectionOnly() { WRAPPER_NO_CONTRACT; return GetHalfBakedClass()->RequiresLinkTimeCheckHostProtectionOnly(); }     
-    
-    SecurityProperties* GetSecurityProperties() { WRAPPER_NO_CONTRACT; return GetHalfBakedClass()->GetSecurityProperties(); } 
+
 #ifdef _DEBUG
-    BOOL IsAppDomainAgilityDone() { WRAPPER_NO_CONTRACT; return GetHalfBakedClass()->IsAppDomainAgilityDone(); } 
     LPCUTF8 GetDebugClassName() { WRAPPER_NO_CONTRACT; return GetHalfBakedClass()->GetDebugClassName(); } 
 #endif // _DEBUG
     Assembly *GetAssembly() { WRAPPER_NO_CONTRACT; return GetModule()->GetAssembly(); }
@@ -272,7 +246,6 @@ private:
     void SetNumBoxedRegularStatics(WORD x) { WRAPPER_NO_CONTRACT; GetHalfBakedClass()->SetNumBoxedRegularStatics(x); } 
     void SetNumBoxedThreadStatics(WORD x) { WRAPPER_NO_CONTRACT; GetHalfBakedClass()->SetNumBoxedThreadStatics(x); } 
     void SetAlign8Candidate() { WRAPPER_NO_CONTRACT; GetHalfBakedClass()->SetAlign8Candidate(); } 
-    void SetHasRemotingProxyAttribute() { WRAPPER_NO_CONTRACT; GetHalfBakedClass()->SetHasRemotingProxyAttribute(); } 
     void SetHasOverLayedFields() { WRAPPER_NO_CONTRACT; GetHalfBakedClass()->SetHasOverLayedFields(); } 
     void SetNonGCRegularStaticFieldBytes(DWORD x) { WRAPPER_NO_CONTRACT; GetHalfBakedClass()->SetNonGCRegularStaticFieldBytes(x); } 
     void SetNonGCThreadStaticFieldBytes(DWORD x) { WRAPPER_NO_CONTRACT; GetHalfBakedClass()->SetNonGCThreadStaticFieldBytes(x); } 
@@ -1331,15 +1304,10 @@ private:
         bool fIsEnum;
         bool fNoSanityChecks;
         bool fSparse;                           // Set to true if a sparse interface is being used.
-#ifdef FEATURE_REMOTING        
-        bool fMarshaledByRef;
-        bool fIsContextful;
-#endif
 
-#ifdef FEATURE_COMINTEROP
         // Com Interop, ComWrapper classes extend from ComObject
         bool fIsComObjectType;                  // whether this class is an instance of ComObject class
-
+#ifdef FEATURE_COMINTEROP
         bool fIsMngStandardItf;                 // Set to true if the interface is a manages standard interface.
         bool fComEventItfType;                  // Set to true if the class is a special COM event interface.
         bool fIsRedirectedInterface;            // Set to true if the class is an interface redirected for WinRT
@@ -1352,6 +1320,9 @@ private:
 
         bool fDynamicStatics;                   // Set to true if the statics will be allocated in the dynamic
         bool fGenericsStatics;                  // Set to true if the there are per-instantiation statics
+
+        bool fIsIntrinsicType;                  // Set to true if the type has an [Intrinsic] attribute on it
+        bool fIsHardwareIntrinsic;              // Set to true if the class is a hardware intrinsic
 
         DWORD dwNonGCRegularStaticFieldBytes;
         DWORD dwNonGCThreadStaticFieldBytes;
@@ -1897,8 +1868,8 @@ private:
         // Counts instance fields
         DWORD dwNumInstanceFields;
 
-        // Counts both regular statics and thread statics. Currently RVA and
-        // context statics get lumped in with "regular statics".
+        // Counts both regular statics and thread statics. Currently RVA
+        // get lumped in with "regular statics".
         DWORD dwNumStaticFields;
         DWORD dwNumStaticObjRefFields;
         DWORD dwNumStaticBoxedFields;
@@ -2027,44 +1998,6 @@ private:
         //-----------------------------------------------------------------------------------------
         FieldDesc **ppFieldDescList;        // FieldDesc pointer (or NULL if field not preserved) for each field
 
-#ifdef FEATURE_REMOTING
-        //-----------------------------------------------------------------------------------------
-        // Tracking info for VTS (Version Tolerant Serialization)
-        MethodDesc *pOnSerializingMethod;
-        MethodDesc *pOnSerializedMethod;
-        MethodDesc *pOnDeserializingMethod;
-        MethodDesc *pOnDeserializedMethod;
-        bool *prfNotSerializedFields;
-        bool *prfOptionallySerializedFields;
-        bool fNeedsRemotingVtsInfo;
-
-        //-----------------------------------------------------------------------------------------
-        inline void SetFieldNotSerialized(DWORD dwIndex, DWORD dwNumInstanceFields)
-        {
-            WRAPPER_NO_CONTRACT;
-            if (prfNotSerializedFields == NULL)
-            {
-                DWORD cbSize = sizeof(bool) * dwNumInstanceFields;
-                prfNotSerializedFields = new (&GetThread()->m_MarshalAlloc) bool[dwNumInstanceFields];
-                ZeroMemory(prfNotSerializedFields, cbSize);
-            }
-            prfNotSerializedFields[dwIndex] = true;
-            fNeedsRemotingVtsInfo = true;
-        }
-
-        //-----------------------------------------------------------------------------------------
-        inline void SetFieldOptionallySerialized(DWORD dwIndex, DWORD dwNumInstanceFields)
-        {
-            WRAPPER_NO_CONTRACT;
-            if (prfOptionallySerializedFields == NULL)
-            {
-                prfOptionallySerializedFields = new (&GetThread()->m_MarshalAlloc) bool[dwNumInstanceFields];                
-                ZeroMemory(prfOptionallySerializedFields, sizeof(bool) * dwNumInstanceFields);
-            }
-            prfOptionallySerializedFields[dwIndex] = true;
-            fNeedsRemotingVtsInfo = true;
-        }
-#endif // FEATURE_REMOTING
 
         //-----------------------------------------------------------------------------------------
         inline bmtMethAndFieldDescs() { LIMITED_METHOD_CONTRACT; memset((void *)this, NULL, sizeof(*this)); }
@@ -2084,6 +2017,7 @@ private:
         DWORD NumGCPointerSeries;
         DWORD NumInstanceFieldBytes;
 
+        bool  fIsByRefLikeType;
         bool  fHasFixedAddressValueTypes;
         bool  fHasSelfReferencingStaticValueTypeField_WithRVA;
 
@@ -2152,16 +2086,20 @@ private:
         {
             bmtMethodHandle declMethod;
             bmtMDMethod *   pImplMethod;
+            mdToken         declToken;
 
             Entry(bmtMDMethod *   pImplMethodIn,
-                  bmtMethodHandle declMethodIn)
+                  bmtMethodHandle declMethodIn,
+                  mdToken declToken)
               : declMethod(declMethodIn),
-                pImplMethod(pImplMethodIn)
+                pImplMethod(pImplMethodIn),
+                declToken(declToken)
               {}
 
             Entry()
               : declMethod(),
-                pImplMethod(NULL)
+                pImplMethod(NULL),
+                declToken()
               {}
         };
 
@@ -2195,6 +2133,7 @@ private:
         AddMethodImpl(
             bmtMDMethod * pImplMethod,
             bmtMethodHandle declMethod,
+            mdToken declToken,
             StackingAllocator * pStackingAllocator);
 
         //-----------------------------------------------------------------------------------------
@@ -2203,6 +2142,13 @@ private:
         GetDeclarationMethod(
             DWORD i)
             { LIMITED_METHOD_CONTRACT; _ASSERTE(i < pIndex); return rgEntries[i].declMethod; }
+
+        //-----------------------------------------------------------------------------------------
+        // Get the decl method for a particular methodimpl entry.
+        mdToken
+        GetDeclarationToken(
+            DWORD i)
+            { LIMITED_METHOD_CONTRACT; _ASSERTE(i < pIndex); return rgEntries[i].declToken; }
 
         //-----------------------------------------------------------------------------------------
         // Get the impl method for a particular methodimpl entry.
@@ -2268,7 +2214,6 @@ private:
     bmtMethodImplInfo *bmtMethodImpl;
     const bmtGenericsInfo *bmtGenerics;
     bmtEnumFieldInfo *bmtEnumFields;
-    bmtContextStaticInfo *bmtCSInfo;
 
     void SetBMTData(
         LoaderAllocator *bmtAllocator,
@@ -2285,8 +2230,7 @@ private:
         bmtGCSeriesInfo *bmtGCSeries,
         bmtMethodImplInfo *bmtMethodImpl,
         const bmtGenericsInfo *bmtGenerics,
-        bmtEnumFieldInfo *bmtEnumFields,
-        bmtContextStaticInfo *bmtCSInfo);
+        bmtEnumFieldInfo *bmtEnumFields);
 
     // --------------------------------------------------------------------------------------------
     // Returns the parent bmtRTType pointer. Can be null if no parent exists.
@@ -2641,7 +2585,6 @@ private:
         MethodTable***,
         bmtMethAndFieldDescs*,
         bmtFieldPlacement*,
-        bmtContextStaticInfo*,
         unsigned * totalDeclaredSize);
 
     // --------------------------------------------------------------------------------------------
@@ -2686,18 +2629,6 @@ private:
     // Convert code:MethodTableBuilder::METHOD_TYPE to code:MethodClassification
     static DWORD
     GetMethodClassification(METHOD_TYPE type);
-
-    // --------------------------------------------------------------------------------------------
-    // Will determine if a method requires or inherits any security settings and will set the
-    // appropriate flags on the MethodDesc.
-    VOID
-    SetSecurityFlagsOnMethod(
-        bmtRTMethod *       pParentMethod,
-        MethodDesc*         pNewMD,
-        mdToken             tokMethod,
-        DWORD               dwMemberAttrs,
-        bmtInternalInfo*    bmtInternal,
-        bmtMetaDataInfo*    bmtMetaData);
 
     // --------------------------------------------------------------------------------------------
     // Essentially, this is a helper method that combines calls to InitMethodDesc and 
@@ -2801,37 +2732,48 @@ private:
         bmtMDMethod *       pImplMethod,
         DWORD               cSlots,
         DWORD *             rgSlots,
-        MethodDesc **       rgDeclMD);
+        mdToken *           rgTokens,
+        RelativePointer<MethodDesc *> *       rgDeclMD);
 
     // --------------------------------------------------------------------------------------------
     // Places a methodImpl pair where the decl is declared by the type being built.
     VOID
-    PlaceLocalDeclaration(
+    PlaceLocalDeclarationOnClass(
         bmtMDMethod *    pDecl,
         bmtMDMethod *    pImpl,
         DWORD*           slots,
-        MethodDesc**     replaced,
-        DWORD*           pSlotIndex);
+        RelativePointer<MethodDesc *> *     replaced,
+        DWORD*           pSlotIndex,
+        DWORD            dwMaxSlotSize);
 
     // --------------------------------------------------------------------------------------------
     // Places a methodImpl pair where the decl is declared by a parent type.
     VOID
-    PlaceParentDeclaration(
+    PlaceParentDeclarationOnClass(
         bmtRTMethod *     pDecl,
         bmtMDMethod *     pImpl,
         DWORD*            slots,
-        MethodDesc**      replaced,
-        DWORD*            pSlotIndex);
+        RelativePointer<MethodDesc *> *      replaced,
+        DWORD*            pSlotIndex,
+        DWORD             dwMaxSlotSize);
 
     // --------------------------------------------------------------------------------------------
-    // Places a methodImpl pair where the decl is declared by an interface.
+    // Places a methodImpl pair on a class where the decl is declared by an interface.
     VOID
-    PlaceInterfaceDeclaration(
+    PlaceInterfaceDeclarationOnClass(
         bmtRTMethod *     pDecl,
-        bmtMDMethod *     pImpl,
+        bmtMDMethod *     pImpl);
+
+    // --------------------------------------------------------------------------------------------
+    // Places a methodImpl pair on an interface where the decl is declared by an interface.
+    VOID
+    PlaceInterfaceDeclarationOnInterface(
+        bmtMethodHandle   hDecl, 
+        bmtMDMethod *     pImpl, 
         DWORD*            slots,
-        MethodDesc**      replaced,
-        DWORD*            pSlotIndex);
+        RelativePointer<MethodDesc *> *      replaced,
+        DWORD*            pSlotIndex,
+        DWORD             dwMaxSlotSize);
 
     // --------------------------------------------------------------------------------------------
     // This will validate that all interface methods that were matched during
@@ -2872,11 +2814,6 @@ private:
     NeedsNativeCodeSlot(bmtMDMethod * pMDMethod);
 
     // --------------------------------------------------------------------------------------------
-    // MethodTableBuilder version of code:MethodDesc::MayBeRemotingIntercepted. Used for MethodDesc layout.
-    BOOL
-    MayBeRemotingIntercepted(bmtMDMethod * pMDMethod);
-
-    // --------------------------------------------------------------------------------------------
     // Used to allocate and initialize the dictionary used with generic types.
     VOID
     AllocAndInitDictionary();
@@ -2899,9 +2836,6 @@ private:
         LPCUTF8             szAttrName,
         MethodDesc        **ppMethodDesc);
 
-#ifdef FEATURE_REMOTING // affects only remoting-related info
-    VOID ScanTypeForVtsInfo();
-#endif // FEATURE_REMOTING
 
     VOID
     CheckForSystemTypes();
@@ -2916,22 +2850,7 @@ private:
     VOID HandleGCForValueClasses(
         MethodTable **);
 
-    // These methods deal with inheritance security. They're executed
-    // after the type has been constructed, but before it is published.
-    VOID VerifyMethodInheritanceSecurityHelper(
-        MethodDesc *pParentMD,
-        MethodDesc *pChildMD);
-
-    VOID VerifyClassInheritanceSecurityHelper(
-        MethodTable *pParentMT,
-        MethodTable *pChildMT);
-
-    VOID ConvertLinkDemandToInheritanceDemand(MethodDesc *pMDLinkDemand);
-
-    VOID VerifyInheritanceSecurity();
-
-    VOID VerifyEquivalenceSecurity();
-
+    BOOL HasDefaultInterfaceImplementation(bmtRTType *pIntfType, MethodDesc *pIntfMD);
     VOID VerifyVirtualMethodsImplemented(MethodTable::MethodData * hMTData);
 
     VOID CheckForTypeEquivalence(
@@ -2949,8 +2868,6 @@ private:
 #endif // FEATURE_COMINTEROP
 
     VOID CheckForSpecialTypes();
-
-    VOID SetContextfulOrByRef();
 
 #ifdef FEATURE_READYTORUN
 
@@ -2979,6 +2896,15 @@ private:
     VOID    CheckForHFA(MethodTable ** pByValueClassCache);
 
     VOID    CheckForNativeHFA();
+
+#ifdef UNIX_AMD64_ABI
+    // checks whether the struct is enregisterable.
+    void SystemVAmd64CheckForPassStructInRegister();
+    void SystemVAmd64CheckForPassNativeStructInRegister();
+    // Store the eightbyte classification into the EEClass
+    void StoreEightByteClassification(SystemVStructRegisterPassingHelper* helper);
+
+#endif // UNIX_AMD64_ABI
 
     // this accesses the field size which is temporarily stored in m_pMTOfEnclosingClass
     // during class loading. Don't use any other time
@@ -3009,8 +2935,6 @@ private:
         DWORD dwR8Fields,
         DWORD dwTotalFields);
 
-#endif // !BINDER
-
     MethodTable * AllocateNewMT(Module *pLoaderModule,
                                 DWORD dwVtableSlots, 
                                 DWORD dwVirtuals,
@@ -3019,21 +2943,12 @@ private:
                                 DWORD dwNumDicts, 
                                 DWORD dwNumTypeSlots, 
                                 MethodTable *pMTParent,
-#ifndef BINDER
                                 ClassLoader *pClassLoader,
                                 LoaderAllocator *pAllocator, 
-#else // BINDER
-                                MdilModule *declaringModule,
-                                MdilModule *containingModule,
-                                BOOL fHasDispatchMap,
-#endif // BINDER
                                 BOOL isIFace, 
                                 BOOL fDynamicStatics,
                                 BOOL fHasGenericsStaticsInfo,
-                                BOOL fNeedsRCWPerTypeData,
-                                BOOL fNeedsRemotableMethodInfo,
-                                BOOL fNeedsRemotingVtsInfo,
-                                BOOL fHasContextStatics
+                                BOOL fNeedsRCWPerTypeData
 #ifdef FEATURE_COMINTEROP
                                 , BOOL bHasDynamicInterfaceMap
 #endif
@@ -3045,8 +2960,6 @@ private:
 
 };  // class MethodTableBuilder
 
-#ifndef BINDER
 #include "methodtablebuilder.inl"
-#endif // !BINDER
 
 #endif // !METHODTABLEBUILDER_H

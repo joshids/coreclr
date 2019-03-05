@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 
 #include "common.h"
@@ -84,7 +83,6 @@ LPVOID GetCurrentCtxCookie()
         NOTHROW;
         GC_NOTRIGGER;
         MODE_ANY;
-        SO_TOLERANT;
         POSTCONDITION(CheckPointer(RETVAL, NULL_OK));
     }
     CONTRACT_END;
@@ -114,7 +112,6 @@ HRESULT GetCurrentThreadTypeNT5(THDTYPE* pType)
         NOTHROW;
         GC_TRIGGERS;
         MODE_ANY;
-        SO_TOLERANT;
         PRECONDITION(CheckPointer(pType));
     }
     CONTRACTL_END;

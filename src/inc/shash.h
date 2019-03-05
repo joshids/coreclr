@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 
 #ifndef _SHASH_H_
@@ -118,8 +117,8 @@ class DefaultSHashTraits
 
     static const bool s_supports_remove = true;
 
-    static const ELEMENT Null() { return (const ELEMENT) 0; }
-    static const ELEMENT Deleted() { return (const ELEMENT) -1; }
+    static ELEMENT Null() { return (const ELEMENT) 0; }
+    static ELEMENT Deleted() { return (const ELEMENT) -1; }
     static bool IsNull(const ELEMENT &e) { return e == (const ELEMENT) 0; }
     static bool IsDeleted(const ELEMENT &e) { return e == (const ELEMENT) -1; }
 
@@ -327,6 +326,7 @@ class SHash : public TRAITS
         PTR_element_t m_table;
         count_t m_tableSize;
         count_t m_index;
+
 
         Index(const SHash *hash, BOOL begin)
         : m_table(hash->m_table),
@@ -612,7 +612,7 @@ public:
     typedef typename PARENT::count_t count_t;
 
     static const bool s_supports_remove = false;
-    static const element_t Deleted() { UNREACHABLE(); }
+    static element_t Deleted() { UNREACHABLE(); }
     static bool IsDeleted(const element_t &e) { LIMITED_METHOD_DAC_CONTRACT; return false; }
 };
 

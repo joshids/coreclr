@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //
 
 // 
@@ -98,17 +97,25 @@ ArmSingleStepper::ArmSingleStepper()
 
 ArmSingleStepper::~ArmSingleStepper()
 {
-#if !defined(DACCESS_COMPILE) && !defined(FEATURE_PAL)
+#if !defined(DACCESS_COMPILE)
+#ifdef FEATURE_PAL
+    SystemDomain::GetGlobalLoaderAllocator()->GetExecutableHeap()->BackoutMem(m_rgCode, kMaxCodeBuffer * sizeof(WORD));
+#else
     DeleteExecutable(m_rgCode);
+#endif
 #endif
 }
 
 void ArmSingleStepper::Init()
 {
-#if !defined(DACCESS_COMPILE) && !defined(FEATURE_PAL)
+#if !defined(DACCESS_COMPILE)
     if (m_rgCode == NULL)
     {
+#ifdef FEATURE_PAL
+        m_rgCode = (WORD *)(void *)SystemDomain::GetGlobalLoaderAllocator()->GetExecutableHeap()->AllocMem(S_SIZE_T(kMaxCodeBuffer * sizeof(WORD)));
+#else
         m_rgCode = new (executable) WORD[kMaxCodeBuffer];
+#endif
     }
 #endif
 }

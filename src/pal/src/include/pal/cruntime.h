@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 /*++
 
@@ -96,24 +95,6 @@ typedef enum
     SCANF_TYPE_BRACKETS = 6,
     SCANF_TYPE_SPACE    = 7
 }SCANF_TYPES;
-
-/*******************************************************************************
-Function:
-  Internal_AddPaddingA
-
-Parameters:
-  Out
-    - buffer to place padding and given string (In)
-  Count
-    - maximum chars to be copied so as not to overrun given buffer
-  In
-    - string to place into (Out) accompanied with padding
-  Padding
-    - number of padding chars to add
-  Flags
-    - padding style flags (PRINTF_FORMAT_FLAGS)
-*******************************************************************************/
-BOOL Internal_AddPaddingA(LPSTR *Out, INT Count, LPSTR In, INT Padding, INT Flags);
 
 /*******************************************************************************
 Function:

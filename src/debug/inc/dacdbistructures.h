@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //*****************************************************************************
 // File: DacDbiStructures.h
 // 
@@ -329,7 +328,7 @@ public:
     // number of fixed arguments plus number of varargs
     ULONG32                                     m_allArgsCount;   
 
-    // indicates whether an attempt has been made toinitialize the var data already
+    // indicates whether an attempt has been made to initialize the var data already
     bool                                        m_fInitialized;   
 }; // class NativeVarData
 
@@ -574,7 +573,6 @@ public:
     bool            m_fFldIsStatic;           // true if static field, false if instance field
     bool            m_fFldIsRVA;              // true if static relative to module address
     bool            m_fFldIsTLS;              // true if thread-specific static
-    bool            m_fFldIsContextStatic;    // true if context-specific static
     bool            m_fFldIsPrimitive;        // Only true if this is a value type masquerading as a primitive.
     bool            m_fFldIsCollectibleStatic; // true if this is a static field on a collectible type
 

@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 // 
 
@@ -13,6 +12,7 @@
 
 inline const SString &PEImageLayout::GetPath()
 {
+    LIMITED_METHOD_CONTRACT;
     return m_pOwner?m_pOwner->GetPath():SString::Empty();
 }
 
@@ -106,7 +106,6 @@ inline BOOL PEImageLayout::CompareBase(UPTR base, UPTR mapping)
     {
         PRECONDITION(CheckPointer((PEImageLayout *)mapping));
         PRECONDITION(CheckPointer((PEImageLayout *)(base<<1),NULL_OK));
-        SO_TOLERANT;
         NOTHROW;
         GC_NOTRIGGER;
         MODE_ANY;

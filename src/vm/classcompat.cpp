@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 // ===========================================================================
 // File: CLASSCOMPAT.CPP
 
@@ -26,26 +25,20 @@
 #include "threads.h"
 #include "stublink.h"
 #include "dllimport.h"
-#include "verifier.hpp"
 #include "jitinterface.h"
 #include "eeconfig.h"
 #include "log.h"
 #include "fieldmarshaler.h"
 #include "cgensys.h"
-#include "gc.h"
-#include "security.h"
+#include "gcheaputilities.h"
 #include "dbginterface.h"
 #include "comdelegate.h"
 #include "sigformat.h"
-#ifdef FEATURE_REMOTING
-#include "remoting.h"
-#endif
 #include "eeprofinterfaces.h"
 #include "dllimportcallback.h"
 #include "listlock.h"
 #include "methodimpl.h"
 #include "guidfromname.h"
-#include "stackprobe.h"
 #include "encee.h"
 #include "encee.h"
 #include "comsynchronizable.h"
@@ -59,7 +52,6 @@
 #include "clrtocomcall.h"
 #include "runtimecallablewrapper.h"
 
-#include "listlock.inl"
 #include "generics.h"
 #include "contractimpl.h"
 
@@ -239,7 +231,6 @@ InteropMethodTableData *MethodTableBuilder::BuildInteropVTable(AllocMemTracker *
     CheckPointHolder cph(pThread->m_MarshalAlloc.GetCheckpoint()); //hold checkpoint for autorelease
 
     HRESULT hr = S_OK;
-    BaseDomain *bmtDomain = pThisMT->GetDomain();
     Module *pModule = pThisMT->GetModule();
     mdToken cl = pThisMT->GetCl();
     MethodTable *pParentMethodTable = pThisMT->GetParentMethodTable();
@@ -280,7 +271,6 @@ InteropMethodTableData *MethodTableBuilder::BuildInteropVTable(AllocMemTracker *
     }
     
     SetBMTData(
-        bmtDomain,
         &bmtError,
         &bmtProp,
         &bmtVT,
@@ -295,7 +285,6 @@ InteropMethodTableData *MethodTableBuilder::BuildInteropVTable(AllocMemTracker *
     if (pThisMT->IsEnum()) SetEnum();
     if (pThisMT->HasLayout()) SetHasLayout();
     if (pThisMT->IsDelegate()) SetIsDelegate();
-    if (pThisMT->IsContextful()) SetContextful();
 #ifdef FEATURE_COMINTEROP
     if(pThisMT->GetClass()->IsComClassInterface()) SetIsComClassInterface();
 #endif
@@ -344,7 +333,7 @@ InteropMethodTableData *MethodTableBuilder::BuildInteropVTable(AllocMemTracker *
 
     // resolve unresolved interfaces, determine an upper bound on the size of the interface map,
     // and determine the size of the largest interface (in # slots)
-    BuildInteropVTable_ResolveInterfaces(bmtDomain, pBuildingInterfaceList, &bmtType, &bmtInterface, &bmtVT, &bmtParent, bmtError);
+    BuildInteropVTable_ResolveInterfaces(pBuildingInterfaceList, &bmtType, &bmtInterface, &bmtVT, &bmtParent, bmtError);
 
     // Enumerate this class's members
     EnumerateMethodImpls();
@@ -395,7 +384,7 @@ InteropMethodTableData *MethodTableBuilder::BuildInteropVTable(AllocMemTracker *
     }
 
     // Determine vtable placement for each member in this class
-    BuildInteropVTable_PlaceMembers(bmtDomain,&bmtType, wNumInterfaces, pBuildingInterfaceList, &bmtMethod,
+    BuildInteropVTable_PlaceMembers(&bmtType, wNumInterfaces, pBuildingInterfaceList, &bmtMethod,
                                     &bmtError, &bmtProp, &bmtParent, &bmtInterface, &bmtMethodImpl, &bmtVT);
 
     // First copy what we can leverage from the parent's interface map.
@@ -458,7 +447,6 @@ InteropMethodTableData *MethodTableBuilder::BuildInteropVTable(AllocMemTracker *
             &bmtParent);
 
         BuildInteropVTable_PlaceMethodImpls(
-            bmtDomain,
             &bmtType,
             &bmtMethodImpl,
             &bmtError,
@@ -691,7 +679,6 @@ VOID MethodTableBuilder::BuildInteropVTable_InterfaceList(
 #pragma warning(disable:21000) // Suppress PREFast warning about overly large function
 #endif
 VOID MethodTableBuilder::BuildInteropVTable_PlaceMembers(
-    BaseDomain *bmtDomain,
     bmtTypeInfo* bmtType,
                            DWORD numDeclaredInterfaces,
                            BuildingInterfaceInfo_t *pBuildingInterfaceList, 
@@ -970,7 +957,6 @@ VOID MethodTableBuilder::BuildInteropVTable_PlaceMembers(
                 if(tokMember == bmtMethodImpl->rgMethodImplTokens[m].methodBody)
                 {
                     MethodDesc* desc = NULL;
-                    BOOL fIsMethod;
                     mdToken mdDecl = bmtMethodImpl->rgMethodImplTokens[m].methodDecl;
                     Substitution *pDeclSubst = &bmtMethodImpl->pMethodDeclSubsts[m];
 
@@ -1048,7 +1034,6 @@ VOID MethodTableBuilder::BuildInteropVTable_PlaceMembers(
 // Resolve unresolved interfaces, determine an upper bound on the size of the interface map,
 // and determine the size of the largest interface (in # slots)
 VOID MethodTableBuilder::BuildInteropVTable_ResolveInterfaces(
-                                BaseDomain *bmtDomain, 
                                 BuildingInterfaceInfo_t *pBuildingInterfaceList, 
                                 bmtTypeInfo* bmtType, 
                                 bmtInterfaceInfo* bmtInterface, 
@@ -1061,7 +1046,6 @@ VOID MethodTableBuilder::BuildInteropVTable_ResolveInterfaces(
     {
         STANDARD_VM_CHECK;
         PRECONDITION(CheckPointer(this));
-        PRECONDITION(CheckPointer(bmtDomain));
         PRECONDITION(CheckPointer(bmtInterface));
         PRECONDITION(CheckPointer(bmtVT));
         PRECONDITION(CheckPointer(bmtParent));
@@ -1313,11 +1297,6 @@ VOID MethodTableBuilder::BuildInteropVTable_PlaceVtableMethods(
         // The interface we are attempting to place
         MethodTable *pInterface = pCurItfInfo->m_pMethodTable;
 
-        _ASSERTE(!(pCurItfInfo->IsDeclaredOnClass() &&
-           !pInterface->IsExternallyVisible() &&
-                 pInterface->GetAssembly() != bmtType->pModule->GetAssembly() &&
-           !Security::CanSkipVerification(GetAssembly()->GetDomainAssembly())));
-
         // Did we place this interface already due to the parent class's interface placement?
         if (pCurItfInfo->GetInteropStartSlot() != MethodTable::NO_SLOT)
         {
@@ -1559,7 +1538,6 @@ VOID MethodTableBuilder::BuildInteropVTable_PlaceVtableMethods(
 // We should have collected all the method impls. Cycle through them creating the method impl
 // structure that holds the information about which slots are overridden.
 VOID MethodTableBuilder::BuildInteropVTable_PlaceMethodImpls(
-        BaseDomain *bmtDomain,
         bmtTypeInfo* bmtType,
         bmtMethodImplInfo* bmtMethodImpl,
         bmtErrorInfo* bmtError, 
@@ -2427,12 +2405,6 @@ VOID    MethodTableBuilder::EnumerateClassMethods()
 
         WORD numGenericMethodArgs = (WORD) hEnumTyPars.EnumGetCount();
 
-        // We do not want to support context-bound objects with generic methods.
-        if (IsContextful() && numGenericMethodArgs > 0)
-        {
-            BuildMethodTableThrowException(IDS_CLASSLOAD_CONTEXT_BOUND_GENERIC_METHOD);
-        }
-
         if (numGenericMethodArgs != 0)
         {
             for (unsigned methIdx = 0; methIdx < numGenericMethodArgs; methIdx++)
@@ -2625,7 +2597,14 @@ VOID    MethodTableBuilder::EnumerateClassMethods()
         }
 
         // Some interface checks.
-        if (IsInterface())
+        // We only need them if default interface method support is disabled or if this is fragile crossgen
+#if !defined(FEATURE_DEFAULT_INTERFACES) || defined(FEATURE_NATIVE_IMAGE_GENERATION)
+        if (fIsClassInterface
+#if defined(FEATURE_DEFAULT_INTERFACES)
+            // Only fragile crossgen wasn't upgraded to deal with default interface methods.
+            && !IsReadyToRunCompilation()
+#endif
+            )
         {
             if (IsMdVirtual(dwMemberAttrs))
             {
@@ -2636,13 +2615,14 @@ VOID    MethodTableBuilder::EnumerateClassMethods()
             }
             else
             {
-                // Instance field/method
+                // Instance method
                 if (!IsMdStatic(dwMemberAttrs))
                 {
                     BuildMethodTableThrowException(BFA_NONVIRT_INST_INT_METHOD);
                 }
             }
         }
+#endif // !defined(FEATURE_DEFAULT_INTERFACES) || defined(FEATURE_NATIVE_IMAGE_GENERATION)
 
         // No synchronized methods in ValueTypes
         if(fIsClassValueType && IsMiSynchronized(dwImplFlags))
@@ -2809,48 +2789,25 @@ VOID    MethodTableBuilder::EnumerateClassMethods()
                 // If the interface is a standard managed interface then allocate space for an FCall method desc.
                 Classification = mcFCall;
             }
-            else
+            else if (IsMdAbstract(dwMemberAttrs))
             {
                 // If COM interop is supported then all other interface MDs may be
                 // accessed via COM interop <TODO> mcComInterop MDs are BIG -
                 // this is very often a waste of space </TODO>
+                // @DIM_TODO - What if default interface method is called through COM interop?
                 Classification = mcComInterop;
             }
-#else // !FEATURE_COMINTEROP
-            // This codepath is used by remoting
-            Classification = mcIL;
+            else
 #endif // !FEATURE_COMINTEROP
+            {
+                // This codepath is used by remoting and default interface methods
+                Classification = mcIL;
+            }
         }
         else
         {
             Classification = mcIL;
         }
-
-
-#ifdef _DEBUG
-        // We don't allow stack based declarative security on ecalls, fcalls and
-        // other special purpose methods implemented by the EE (the interceptor
-        // we use doesn't play well with non-jitted stubs).
-        if ((Classification == mcFCall || Classification == mcEEImpl) &&
-            (IsMdHasSecurity(dwMemberAttrs) || IsTdHasSecurity(GetAttrClass())))
-        {
-            DWORD dwSecFlags;
-            DWORD dwNullDeclFlags;
-
-            if (IsTdHasSecurity(GetAttrClass()) &&
-                SUCCEEDED(Security::GetDeclarationFlags(pMDInternalImport, GetCl(), &dwSecFlags, &dwNullDeclFlags)))
-            {
-                CONSISTENCY_CHECK_MSG(!(dwSecFlags & ~dwNullDeclFlags & DECLSEC_RUNTIME_ACTIONS),
-                                      "Cannot add stack based declarative security to a class containing an ecall/fcall/special method.");
-            }
-            if (IsMdHasSecurity(dwMemberAttrs) &&
-                SUCCEEDED(Security::GetDeclarationFlags(pMDInternalImport, tok, &dwSecFlags, &dwNullDeclFlags)))
-            {
-                CONSISTENCY_CHECK_MSG(!(dwSecFlags & ~dwNullDeclFlags & DECLSEC_RUNTIME_ACTIONS),
-                                      "Cannot add stack based declarative security to an ecall/fcall/special method.");
-            }
-        }
-#endif // _DEBUG
 
         // Generic methods should always be mcInstantiated
         if (!((numGenericMethodArgs == 0) || ((Classification & mdcClassification) == mcInstantiated)))
@@ -2995,7 +2952,6 @@ VOID    MethodTableBuilder::AllocateMethodWorkingMemory()
     {
         STANDARD_VM_CHECK;
         PRECONDITION(CheckPointer(this));
-        PRECONDITION(CheckPointer(bmtDomain));
         PRECONDITION(CheckPointer(bmtMethod));
         PRECONDITION(CheckPointer(bmtVT));
         PRECONDITION(CheckPointer(bmtInterface));
@@ -3602,7 +3558,6 @@ MethodNameHash *MethodTableBuilder::CreateMethodChainHash(MethodTable *pMT)
 
 //*******************************************************************************
 void MethodTableBuilder::SetBMTData(
-    BaseDomain *bmtDomain,
     bmtErrorInfo *bmtError,
     bmtProperties *bmtProp,
     bmtVtable *bmtVT,
@@ -3613,7 +3568,6 @@ void MethodTableBuilder::SetBMTData(
     bmtMethodImplInfo *bmtMethodImpl)
 {
     LIMITED_METHOD_CONTRACT;
-    this->bmtDomain = bmtDomain;
     this->bmtError = bmtError;
     this->bmtProp = bmtProp;
     this->bmtVT = bmtVT;
@@ -3628,7 +3582,6 @@ void MethodTableBuilder::SetBMTData(
 void MethodTableBuilder::NullBMTData()
 {
     LIMITED_METHOD_CONTRACT;
-    this->bmtDomain = NULL;
     this->bmtError = NULL;
     this->bmtProp = NULL;
     this->bmtVT = NULL;

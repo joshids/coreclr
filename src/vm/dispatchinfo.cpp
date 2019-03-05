@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //
 // File: DispatchInfo.cpp
 // 
@@ -23,14 +22,12 @@
 #include "comcallablewrapper.h"
 #include "threads.h"
 #include "excep.h"
-#include "objecthandle.h"
 #include "comutilnative.h"
 #include "eeconfig.h"
 #include "interoputil.h"
 #include "olevariant.h"
 #include "commtmemberinfomap.h" 
 #include "dispparammarshaler.h"
-#include "security.h"
 #include "reflectioninvocation.h"
 #include "dbginterface.h"
 
@@ -139,10 +136,6 @@ DispatchMemberInfo::~DispatchMemberInfo()
 
     if (m_pParamInOnly)
         delete [] m_pParamInOnly;
-
-    // Destroy the member info object.
-    if (m_hndMemberInfo)
-        DestroyHandle(m_hndMemberInfo);
 
     // Clear the name of the member.
     m_strName.Clear();
@@ -310,14 +303,14 @@ PTRARRAYREF DispatchMemberInfo::GetParameters()
     {
         case Method:
         {
-            pGetParamsMD = DispatchInfo::GetMethodInfoMD(METHOD__METHOD__GET_PARAMETERS, ObjectFromHandle(m_hndMemberInfo)->GetTypeHandle());
+            pGetParamsMD = DispatchInfo::GetMethodInfoMD(METHOD__METHOD__GET_PARAMETERS, GetMemberInfoObject()->GetTypeHandle());
             _ASSERTE(pGetParamsMD && "Unable to find method MemberBase::GetParameters");
             break;
         }
 
         case Property:
         {
-            pGetParamsMD = DispatchInfo::GetPropertyInfoMD(METHOD__PROPERTY__GET_INDEX_PARAMETERS, ObjectFromHandle(m_hndMemberInfo)->GetTypeHandle());
+            pGetParamsMD = DispatchInfo::GetPropertyInfoMD(METHOD__PROPERTY__GET_INDEX_PARAMETERS, GetMemberInfoObject()->GetTypeHandle());
             _ASSERTE(pGetParamsMD && "Unable to find method PropertyInfo::GetIndexParameters");
             break;
         }
@@ -326,14 +319,17 @@ PTRARRAYREF DispatchMemberInfo::GetParameters()
     // If the member has parameters then retrieve the array of parameters.
     if (pGetParamsMD != NULL)
     {
-        MethodDescCallSite getParams(pGetParamsMD, m_hndMemberInfo);
+        OBJECTREF memberInfoObject = GetMemberInfoObject();
+        GCPROTECT_BEGIN(memberInfoObject)
+        MethodDescCallSite getParams(pGetParamsMD, &memberInfoObject);
 
         ARG_SLOT GetParamsArgs[] =
         { 
-            ObjToArgSlot(ObjectFromHandle(m_hndMemberInfo))
+            ObjToArgSlot(memberInfoObject)
         };
         
         ParamArray = (PTRARRAYREF) getParams.Call_RetOBJECTREF(GetParamsArgs);
+        GCPROTECT_END();
     }
 
     return ParamArray;
@@ -568,7 +564,7 @@ void DispatchMemberInfo::DetermineMemberType()
     }
     CONTRACTL_END;
 
-    OBJECTREF MemberInfoObj = ObjectFromHandle(m_hndMemberInfo);
+    OBJECTREF MemberInfoObj = GetMemberInfoObject();
 
     // Check to see if the member info is of a type we have already seen.
     TypeHandle pMemberInfoClass   = MemberInfoObj->GetTypeHandle();
@@ -620,7 +616,7 @@ void DispatchMemberInfo::DetermineParamCount()
 
     MethodDesc *pGetParamsMD = NULL;
 
-    OBJECTREF MemberInfoObj = ObjectFromHandle(m_hndMemberInfo);
+    OBJECTREF MemberInfoObj = GetMemberInfoObject();
     GCPROTECT_BEGIN(MemberInfoObj);
     {
         // Retrieve the method to use to retrieve the array of parameters.
@@ -628,14 +624,14 @@ void DispatchMemberInfo::DetermineParamCount()
         {
             case Method:
             {
-                pGetParamsMD = DispatchInfo::GetMethodInfoMD(METHOD__METHOD__GET_PARAMETERS, ObjectFromHandle(m_hndMemberInfo)->GetTypeHandle());
+                pGetParamsMD = DispatchInfo::GetMethodInfoMD(METHOD__METHOD__GET_PARAMETERS, GetMemberInfoObject()->GetTypeHandle());
                 _ASSERTE(pGetParamsMD && "Unable to find method MemberBase::GetParameters");
                 break;
             }
 
             case Property:
             {
-                pGetParamsMD = DispatchInfo::GetPropertyInfoMD(METHOD__PROPERTY__GET_INDEX_PARAMETERS, ObjectFromHandle(m_hndMemberInfo)->GetTypeHandle());
+                pGetParamsMD = DispatchInfo::GetPropertyInfoMD(METHOD__PROPERTY__GET_INDEX_PARAMETERS, GetMemberInfoObject()->GetTypeHandle());
                 _ASSERTE(pGetParamsMD && "Unable to find method PropertyInfo::GetIndexParameters");
                 break;
             }
@@ -648,7 +644,7 @@ void DispatchMemberInfo::DetermineParamCount()
             
             ARG_SLOT GetParamsArgs[] =
             {
-                ObjToArgSlot(ObjectFromHandle(m_hndMemberInfo))
+                ObjToArgSlot(GetMemberInfoObject())
             };
             
             PTRARRAYREF ParamArray = (PTRARRAYREF) getParams.Call_RetOBJECTREF(GetParamsArgs);
@@ -679,7 +675,7 @@ void DispatchMemberInfo::DetermineCultureAwareness()
     MethodTable * pLcIdConvAttrClass = MscorlibBinder::GetClass(CLASS__LCID_CONVERSION_TYPE);
 
     // Check to see if the attribute is set.
-    OBJECTREF MemberInfoObj = ObjectFromHandle(m_hndMemberInfo);
+    OBJECTREF MemberInfoObj = GetMemberInfoObject();
     GCPROTECT_BEGIN(MemberInfoObj);
     {
         // Retrieve the method to use to determine if the DispIdAttribute custom attribute is set.
@@ -735,7 +731,7 @@ void DispatchMemberInfo::SetUpParamMarshalerInfo()
     BOOL bSetUpReturnValueOnly = FALSE;
     OBJECTREF SetterObj = NULL;
     OBJECTREF GetterObj = NULL;
-    OBJECTREF MemberInfoObj = ObjectFromHandle(m_hndMemberInfo);   
+    OBJECTREF MemberInfoObj = GetMemberInfoObject();
 
     GCPROTECT_BEGIN(SetterObj);
     GCPROTECT_BEGIN(GetterObj);
@@ -1027,6 +1023,18 @@ void DispatchMemberInfo::SetUpDispParamAttributes(int iParam, MarshalInfo* Info)
     m_pParamInOnly[iParam] = ( Info->IsIn() && !Info->IsOut() );
 }
 
+#ifndef DACCESS_COMPILE
+OBJECTREF DispatchMemberInfo::GetMemberInfoObject()
+{
+    return m_pDispInfo->GetLoaderAllocator()->GetHandleValue(m_hndMemberInfo);
+}
+
+void DispatchMemberInfo::ClearMemberInfoObject()
+{
+    m_pDispInfo->GetLoaderAllocator()->SetHandleValue(m_hndMemberInfo, NULL);
+}
+#endif // DACCESS_COMPILE
+
 
 //--------------------------------------------------------------------------------
 // The DispatchInfo class implementation.
@@ -1128,7 +1136,7 @@ DispatchMemberInfo* DispatchInfo::FindMember(SString& strName, BOOL bCaseSensiti
     DispatchMemberInfo *pCurrMemberInfo = m_pFirstMemberInfo;
     while (pCurrMemberInfo)
     {
-        if (ObjectFromHandle(pCurrMemberInfo->m_hndMemberInfo) != NULL)
+        if (pCurrMemberInfo->GetMemberInfoObject() != NULL)
         {
             // Compare the 2 strings.
             if (bCaseSensitive ? 
@@ -1165,7 +1173,7 @@ DispatchMemberInfo* DispatchInfo::CreateDispatchMemberInfoInstance(DISPID DispID
     CONTRACT_END;
 
     DispatchMemberInfo* pInfo = new DispatchMemberInfo(this, DispID, strMemberName, MemberInfoObj);
-    pInfo->SetHandle(MemberInfoObj->GetMethodTable()->GetDomain()->CreateHandle(MemberInfoObj));
+    pInfo->SetHandle(GetLoaderAllocator()->AllocateHandle(MemberInfoObj));
     
     RETURN pInfo;
 }
@@ -1556,8 +1564,8 @@ void DispatchInfo::InvokeMemberWorker(DispatchMemberInfo*   pDispMemberInfo,
         {
             // If the method is culture aware, then set the specified culture on the thread.
             GetCultureInfoForLCID(lcid, &pObjs->CultureInfo);
-            pObjs->OldCultureInfo = pThread->GetCulture(FALSE);
-            pThread->SetCultureId(lcid, FALSE);
+            pObjs->OldCultureInfo = Thread::GetCulture(FALSE);
+            Thread::SetCulture(&pObjs->CultureInfo, FALSE);
         }
 
         // If the method has custom marshalers then we will need to call
@@ -1587,53 +1595,9 @@ void DispatchInfo::InvokeMemberWorker(DispatchMemberInfo*   pDispMemberInfo,
         }
 
         // Retrieve the member info object and the type of the member.
-        pObjs->MemberInfo = ObjectFromHandle(pDispMemberInfo->m_hndMemberInfo);
+        pObjs->MemberInfo = pDispMemberInfo->GetMemberInfoObject();
         MemberType = pDispMemberInfo->GetMemberType();
     
-        // Determine whether the member has a link time security check. If so we
-        // need to emulate this (since the caller is obviously not jitted in this
-        // case). Only methods and properties can have a link time check.
-        MethodDesc *pMDforSecurity = NULL;
-
-        if (MemberType == Method)
-        {
-            MethodDescCallSite getMethodHandle(METHOD__METHOD_BASE__GET_METHODDESC, &pObjs->MemberInfo);
-            ARG_SLOT arg = ObjToArgSlot(pObjs->MemberInfo);
-            pMDforSecurity = (MethodDesc*) getMethodHandle.Call_RetLPVOID(&arg);
-        }
-        else if (MemberType == Property)
-        {
-            MethodDescCallSite getSetter(METHOD__PROPERTY__GET_SETTER, &pObjs->MemberInfo);
-            ARG_SLOT args[] =
-            {
-                ObjToArgSlot(pObjs->MemberInfo),
-                BoolToArgSlot(false)
-            };
-            OBJECTREF method = getSetter.Call_RetOBJECTREF(args);
-            if (method == NULL)
-            {
-                MethodDescCallSite getGetter(METHOD__PROPERTY__GET_GETTER, &pObjs->MemberInfo);
-                ARG_SLOT args1[] =
-                {
-                    ObjToArgSlot(pObjs->MemberInfo),
-                    BoolToArgSlot(false)
-                };
-                method = getGetter.Call_RetOBJECTREF(args1);
-            }
-
-            if (method != NULL)
-            {
-                GCPROTECT_BEGIN(method)
-                MethodDescCallSite getMethodHandle(METHOD__METHOD_BASE__GET_METHODDESC, &method);
-                ARG_SLOT arg = ObjToArgSlot(method);
-                pMDforSecurity = (MethodDesc*) getMethodHandle.Call_RetLPVOID(&arg);
-                GCPROTECT_END();
-            }
-        }
-
-        if (pMDforSecurity)
-            Security::CheckLinkDemandAgainstAppDomain(pMDforSecurity);
-
         switch (MemberType)
         {
             case Field:
@@ -2015,7 +1979,6 @@ HRESULT DispatchInfo::InvokeMember(SimpleComCallWrapper *pSimpleWrap, DISPID id,
     DISPID *pSrcArgNames = NULL;
     VARIANT *pSrcArgs = NULL;
     ULONG_PTR ulActCtxCookie = 0;
-    Thread *pThread = GetThread();
 
     //
     // Validate the arguments.
@@ -2103,7 +2066,7 @@ HRESULT DispatchInfo::InvokeMember(SimpleComCallWrapper *pSimpleWrap, DISPID id,
     //
     
     DispatchMemberInfo *pDispMemberInfo = FindMember(id);
-    if (!pDispMemberInfo || !(*((Object **)pDispMemberInfo->m_hndMemberInfo)))
+    if (!pDispMemberInfo || !pDispMemberInfo->GetMemberInfoObject())
     {
         pDispMemberInfo = NULL;
     }
@@ -2328,32 +2291,11 @@ HRESULT DispatchInfo::InvokeMember(SimpleComCallWrapper *pSimpleWrap, DISPID id,
 
         // If the culture was changed then restore it to the old culture.
         if (Objs.OldCultureInfo != NULL)
-            pThread->SetCulture(&Objs.OldCultureInfo, FALSE);
+            Thread::SetCulture(&Objs.OldCultureInfo, FALSE);
     }
     GCPROTECT_END();
     GCPROTECT_END();
     return hr;
-}
-
-void DispatchInfo::DestroyMemberInfoHandles()
-{
-    CONTRACTL
-    {
-        NOTHROW;
-        GC_NOTRIGGER;
-        MODE_ANY;
-    }
-    CONTRACTL_END;
-    
-    DispatchMemberInfo* pCurrMember = m_pFirstMemberInfo;
-    while (pCurrMember)
-    {
-        // Destroy the handle
-        DestroyHandle(pCurrMember->m_hndMemberInfo);
-        pCurrMember->m_hndMemberInfo = NULL;
-        // Process the next member.
-        pCurrMember = pCurrMember->m_pNext;
-    }
 }
 
 // Parameter marshaling helpers.
@@ -2364,7 +2306,6 @@ void DispatchInfo::MarshalParamNativeToManaged(DispatchMemberInfo *pMemberInfo, 
         THROWS;
         GC_TRIGGERS;
         MODE_COOPERATIVE;
-        SO_INTOLERANT;
     }
     CONTRACTL_END;
     
@@ -2417,7 +2358,6 @@ void DispatchInfo::MarshalReturnValueManagedToNative(DispatchMemberInfo *pMember
         THROWS;
         GC_TRIGGERS;
         MODE_COOPERATIVE;
-        SO_INTOLERANT;
     }
     CONTRACTL_END;
     
@@ -2749,7 +2689,7 @@ MethodDesc* DispatchInfo::GetCustomAttrProviderMD(TypeHandle hndCustomAttrProvid
     CONTRACT_END;
 
     MethodTable *pMT = hndCustomAttrProvider.AsMethodTable();
-    MethodDesc *pMD = pMT->GetMethodDescForInterfaceMethod(MscorlibBinder::GetMethod(METHOD__ICUSTOM_ATTR_PROVIDER__GET_CUSTOM_ATTRIBUTES));
+    MethodDesc *pMD = pMT->GetMethodDescForInterfaceMethod(MscorlibBinder::GetMethod(METHOD__ICUSTOM_ATTR_PROVIDER__GET_CUSTOM_ATTRIBUTES), TRUE /* throwOnConflict */);
 
     // Return the specified method desc.
     RETURN pMD;
@@ -2840,7 +2780,7 @@ BOOL DispatchInfo::SynchWithManagedView()
                     while (pCurrMemberInfo)
                     {
                         // We can simply compare the OBJECTREF's.
-                        if (CurrMemberInfoObj == ObjectFromHandle(pCurrMemberInfo->m_hndMemberInfo))
+                        if (CurrMemberInfoObj == pCurrMemberInfo->GetMemberInfoObject())
                         {
                             // We have found a match.
                             bMatch = TRUE;
@@ -3075,7 +3015,6 @@ MethodDesc* DispatchInfo::GetInvokeMemberMD()
         THROWS;
         GC_TRIGGERS;
         MODE_ANY;
-        SO_INTOLERANT;
         POSTCONDITION(CheckPointer(RETVAL));
     }
     CONTRACT_END;
@@ -3092,7 +3031,6 @@ OBJECTREF DispatchInfo::GetReflectionObject()
         THROWS;
         GC_TRIGGERS;
         MODE_COOPERATIVE;
-        SO_INTOLERANT;
     }
     CONTRACTL_END;
     
@@ -3225,7 +3163,8 @@ BOOL DispatchInfo::IsVariantByrefStaticArray(VARIANT *pOle)
 
     if (V_VT(pOle) & VT_BYREF && V_VT(pOle) & VT_ARRAY)
     {
-        if ((*V_ARRAYREF(pOle))->fFeatures & FADF_STATIC)
+        SAFEARRAY *pSafeArray = *V_ARRAYREF(pOle);
+        if (pSafeArray && (pSafeArray->fFeatures & FADF_STATIC))
             return TRUE;
     }
 
@@ -3239,7 +3178,6 @@ DISPID DispatchInfo::GenerateDispID()
         NOTHROW;
         GC_NOTRIGGER;
         MODE_ANY;
-        SO_INTOLERANT;
     }
     CONTRACTL_END;
     
@@ -3361,10 +3299,9 @@ DispatchMemberInfo* DispatchExInfo::CreateDispatchMemberInfoInstance(DISPID Disp
 
     DispatchMemberInfo* pInfo = new DispatchMemberInfo(this, DispID, strMemberName, MemberInfoObj);
 
-    AppDomainFromIDHolder pDomain(m_pSimpleWrapperOwner->GetDomainID(), FALSE);
-    pDomain.ThrowIfUnloaded();
+    AppDomain* pDomain = SystemDomain::GetAppDomainFromId(m_pSimpleWrapperOwner->GetDomainID(), ADV_CURRENTAD);
     
-    pInfo->SetHandle(pDomain->CreateHandle(MemberInfoObj));
+    pInfo->SetHandle(GetLoaderAllocator()->AllocateHandle(MemberInfoObj));
     
     RETURN pInfo;
 }
@@ -3399,7 +3336,7 @@ DispatchMemberInfo* DispatchExInfo::GetFirstMember()
     }
 
     // Now we need to make sure we skip any members that are deleted.
-    while ((*ppNextMemberInfo) && !ObjectFromHandle((*ppNextMemberInfo)->m_hndMemberInfo))
+    while ((*ppNextMemberInfo) && !(*ppNextMemberInfo)->GetMemberInfoObject())
         ppNextMemberInfo = &((*ppNextMemberInfo)->m_pNext);
 
     RETURN *ppNextMemberInfo;
@@ -3439,7 +3376,7 @@ DispatchMemberInfo* DispatchExInfo::GetNextMember(DISPID CurrMemberDispID)
     }
 
     // Now we need to make sure we skip any members that are deleted.
-    while ((*ppNextMemberInfo) && !ObjectFromHandle((*ppNextMemberInfo)->m_hndMemberInfo))
+    while ((*ppNextMemberInfo) && !(*ppNextMemberInfo)->GetMemberInfoObject())
         ppNextMemberInfo = &((*ppNextMemberInfo)->m_pNext);
 
     RETURN *ppNextMemberInfo;
@@ -3548,7 +3485,7 @@ void DispatchExInfo::DeleteMember(DISPID DispID)
         CrstHolder ch(&m_lock);
 
         // If the member does not exist, it is static or has been deleted then we have nothing more to do.
-        if (pDispMemberInfo && (ObjectFromHandle(pDispMemberInfo->m_hndMemberInfo) != NULL))
+        if (pDispMemberInfo && (pDispMemberInfo->GetMemberInfoObject() != NULL))
         {
             OBJECTREF TargetObj = GetReflectionObject();
             GCPROTECT_BEGIN(TargetObj);
@@ -3557,7 +3494,7 @@ void DispatchExInfo::DeleteMember(DISPID DispID)
             MethodDesc *pMD = GetIExpandoMD(METHOD__IEXPANDO__REMOVE_MEMBER);
             MethodDescCallSite removeMember(pMD, &TargetObj);
 
-            OBJECTREF MemberInfoObj = ObjectFromHandle(pDispMemberInfo->m_hndMemberInfo);
+            OBJECTREF MemberInfoObj = pDispMemberInfo->GetMemberInfoObject();
 
             // Prepare the arguments that will be passed to RemoveMember.
             ARG_SLOT Args[] =
@@ -3570,7 +3507,7 @@ void DispatchExInfo::DeleteMember(DISPID DispID)
             removeMember.Call(Args);
 
             // Set the handle to point to NULL to indicate the member has been removed.
-            StoreObjectInHandle(pDispMemberInfo->m_hndMemberInfo, NULL);
+            pDispMemberInfo->ClearMemberInfoObject();
 
             GCPROTECT_END();
         }
@@ -3589,7 +3526,7 @@ MethodDesc* DispatchExInfo::GetIReflectMD(BinderMethodID Method)
     CONTRACT_END;
 
     MethodTable *pMT = m_pSimpleWrapperOwner->GetMethodTable();
-    MethodDesc *pMD = pMT->GetMethodDescForInterfaceMethod(MscorlibBinder::GetMethod(Method));
+    MethodDesc *pMD = pMT->GetMethodDescForInterfaceMethod(MscorlibBinder::GetMethod(Method), TRUE /* throwOnConflict */);
 
     // Return the specified method desc.
     RETURN pMD;
@@ -3609,7 +3546,7 @@ MethodDesc* DispatchExInfo::GetIExpandoMD(BinderMethodID Method)
     CONTRACT_END;
 
     MethodTable *pMT = m_pSimpleWrapperOwner->GetMethodTable();
-    MethodDesc *pMD = pMT->GetMethodDescForInterfaceMethod(MscorlibBinder::GetMethod(Method));
+    MethodDesc *pMD = pMT->GetMethodDescForInterfaceMethod(MscorlibBinder::GetMethod(Method), TRUE /* throwOnConflict */);
 
     // Return the specified method desc.
     RETURN pMD;
@@ -3728,7 +3665,6 @@ MethodDesc* DispatchExInfo::GetInvokeMemberMD()
         THROWS;
         GC_TRIGGERS;
         MODE_ANY;
-        SO_INTOLERANT;
         POSTCONDITION(CheckPointer(RETVAL));
     }
     CONTRACT_END;
@@ -3755,8 +3691,7 @@ OBJECTREF DispatchExInfo::GetReflectionObject()
     // we get the exposed class object and not the actual objectred contained in the
     // wrapper.
 
-    if (m_pMT == g_pRuntimeTypeClass ||
-        MscorlibBinder::IsClass(m_pMT, CLASS__CLASS_INTROSPECTION_ONLY))
+    if (m_pMT == g_pRuntimeTypeClass)
         return m_pMT->GetManagedClassObject();
     else
         return m_pSimpleWrapperOwner->GetObjectRef();

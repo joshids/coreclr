@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 // ===========================================================================
 // File: pch.h
 //
@@ -20,7 +19,6 @@
 #include "corsym.h"
 #include "palclr.h"
 #include "cor.h"
-#include "genericstackprobe.h"
 
 // I'm not sure why this code uses these macros for memory management (they should at least be
 // in-line functions).  DELETE is a symbol defined in WinNt.h as an access-type.  We're probably

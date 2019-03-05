@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 // ===========================================================================
 // File: symread.cpp
 //
@@ -2325,7 +2324,7 @@ HRESULT
 SymScope::GetNamespaces(
     ULONG32 cNameSpaces,    // [optional] number of entries pNameSpaces
     ULONG32 *pcNameSpaces,  // [optional, out] Maximum number of Namespace
-    ISymUnmanagedNamespace *pNameSpaces[] // [optinal] array to store namespaces into
+    ISymUnmanagedNamespace *pNameSpaces[] // [optional] array to store namespaces into
     )
 {
     HRESULT hr = NOERROR;

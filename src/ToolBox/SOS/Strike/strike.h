@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 // ==++==
 // 
@@ -70,12 +69,23 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <string.h>
 
 
 #ifndef PAL_STDCPP_COMPAT
 #include <malloc.h>
 #endif
+
+#ifdef FEATURE_PAL
+#ifndef alloca
+#define alloca  __builtin_alloca
+#endif
+#ifndef _alloca
+#define _alloca __builtin_alloca
+#endif
+#endif // FEATURE_PAL
+
 #include <stddef.h>
 
 #ifndef FEATURE_PAL
@@ -89,6 +99,12 @@
 // exts.h includes dbgeng.h which has a bunch of IIDs we need instantiated.
 #define INITGUID
 #include "guiddef.h"
+
+#ifdef FEATURE_PAL
+#define SOS_PTR(x) (size_t)(x)
+#else // FEATURE_PAL
+#define SOS_PTR(x) (unsigned __int64)(x)
+#endif // FEATURE_PAL else
 
 #include "exts.h"
 
@@ -111,12 +127,6 @@
 #define plug_skew           SIZEOF_OBJHEADER
 #define min_obj_size        (sizeof(BYTE*)+plug_skew+sizeof(size_t))
 
-#ifdef FEATURE_PAL
-#define SOS_PTR(x) (size_t)(x)
-#else // FEATURE_PAL
-#define SOS_PTR(x) (unsigned __int64)(x)
-#endif // FEATURE_PAL else
-
 extern BOOL CallStatus;
 
 
@@ -128,4 +138,3 @@ HRESULT SetNGENCompilerFlags(DWORD flags);
 
 
 #endif // __strike_h__
-

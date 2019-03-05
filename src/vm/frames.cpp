@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 // FRAMES.CPP
 
 
@@ -14,20 +13,15 @@
 #include "method.hpp"
 #include "class.h"
 #include "excep.h"
-#include "security.h"
 #include "stublink.h"
 #include "fieldmarshaler.h"
-#include "objecthandle.h"
 #include "siginfo.hpp"
-#include "gc.h"
+#include "gcheaputilities.h"
 #include "dllimportcallback.h"
 #include "stackwalk.h"
 #include "dbginterface.h"
 #include "gms.h"
 #include "eeconfig.h"
-#ifdef FEATURE_REMOTING
-#include "remoting.h"
-#endif
 #include "ecall.h"
 #include "clsload.hpp"
 #include "cgensys.h"
@@ -45,11 +39,9 @@
 #include "interpreter.h"
 #endif // FEATURE_INTERPRETER
 
-#if CHECK_APP_DOMAIN_LEAKS
-#define CHECK_APP_DOMAIN    GC_CALL_CHECK_APP_DOMAIN
-#else
+#include "argdestination.h"
+
 #define CHECK_APP_DOMAIN    0
-#endif
 
 //-----------------------------------------------------------------------
 #if _DEBUG
@@ -397,7 +389,6 @@ VOID Frame::Push()
         NOTHROW;
         GC_NOTRIGGER;
         MODE_COOPERATIVE;
-        SO_TOLERANT;
     }
     CONTRACTL_END;
 
@@ -411,7 +402,6 @@ VOID Frame::Push(Thread *pThread)
         NOTHROW;
         GC_NOTRIGGER;
         MODE_COOPERATIVE;
-        SO_TOLERANT;
     }
     CONTRACTL_END;
 
@@ -419,13 +409,13 @@ VOID Frame::Push(Thread *pThread)
     
     m_Next = pThread->GetFrame();
 
-    // PAGE_SIZE is used to relax the assert for cases where two Frames are
+    // GetOsPageSize() is used to relax the assert for cases where two Frames are
     // declared in the same source function. We cannot predict the order
     // in which the C compiler will lay them out in the stack frame.
-    // So PAGE_SIZE is a guess of the maximum stack frame size of any method
+    // So GetOsPageSize() is a guess of the maximum stack frame size of any method
     // with multiple Frames in mscorwks.dll
     _ASSERTE(((m_Next == FRAME_TOP) ||
-              (PBYTE(m_Next) + (2 * PAGE_SIZE)) > PBYTE(this)) &&
+              (PBYTE(m_Next) + (2 * GetOsPageSize())) > PBYTE(this)) &&
              "Pushing a frame out of order ?");
     
     _ASSERTE(// If AssertOnFailFast is set, the test expects to do stack overrun 
@@ -447,7 +437,6 @@ VOID Frame::Pop()
         NOTHROW;
         GC_NOTRIGGER;
         MODE_COOPERATIVE;
-        SO_TOLERANT;
     }
     CONTRACTL_END;
 
@@ -461,7 +450,6 @@ VOID Frame::Pop(Thread *pThread)
         NOTHROW;
         GC_NOTRIGGER;
         MODE_COOPERATIVE;
-        SO_TOLERANT;
     }
     CONTRACTL_END;
 
@@ -477,20 +465,29 @@ VOID Frame::Pop(Thread *pThread)
              (*m_Next->GetGSCookiePtr() == GetProcessGSCookie()));
 
     pThread->SetFrame(m_Next);
+    m_Next = NULL;
 }
 
-#ifdef FEATURE_PAL     
-Frame::~Frame()        
+#if defined(FEATURE_PAL) && !defined(DACCESS_COMPILE) && !defined(CROSSGEN_COMPILE)
+void Frame::PopIfChained()
 {      
-    // When the frame is destroyed, make sure it is no longer in the       
-    // frame chain managed by the Thread.      
-    Thread* pThread = GetThread();     
-    if (pThread != NULL && pThread->GetFrame() == this)        
-    {      
-        Pop(pThread);      
-    }      
+    CONTRACTL
+    {
+        NOTHROW;
+        GC_NOTRIGGER;
+        MODE_COOPERATIVE;
+    }
+    CONTRACTL_END;
+
+    if (m_Next != NULL)
+    {
+        GCX_COOP();
+        // When the frame is destroyed, make sure it is no longer in the
+        // frame chain managed by the Thread.
+        Pop();
+    }
 }      
-#endif // FEATURE_PAL
+#endif // FEATURE_PAL && !DACCESS_COMPILE && !CROSSGEN_COMPILE
 
 //-----------------------------------------------------------------------
 #endif // #ifndef DACCESS_COMPILE
@@ -566,13 +563,19 @@ BOOL PrestubMethodFrame::TraceFrame(Thread *thread, BOOL fromPatch,
 
     //
     // We want to set a frame patch, unless we're already at the
-    // frame patch, in which case we'll trace stable entrypoint which 
-    // should be set by now.
+    // frame patch, in which case we'll trace the method entrypoint.
     //
 
     if (fromPatch)
     {
-        trace->InitForStub(GetFunction()->GetStableEntryPoint());
+        // In between the time where the Prestub read the method entry point from the slot and the time it reached
+        // ThePrestubPatchLabel, GetMethodEntryPoint() could have been updated due to code versioning. This will result in the
+        // debugger getting some version of the code or the prestub, but not necessarily the exact code pointer that winds up
+        // getting executed. The debugger has code that handles this ambiguity by placing a breakpoint at the start of all
+        // native code versions, even if they aren't the one that was reported by this trace, see
+        // DebuggerController::PatchTrace() under case TRACE_MANAGED. This alleviates the StubManager from having to prevent the
+        // race that occurs here.
+        trace->InitForStub(GetFunction()->GetMethodEntryPoint());
     }
     else
     {
@@ -610,7 +613,6 @@ MethodDesc* StubDispatchFrame::GetFunction()
     CONTRACTL {
         NOTHROW;
         GC_NOTRIGGER;
-        SO_TOLERANT;
     } CONTRACTL_END;
 
     MethodDesc * pMD = m_pMD;
@@ -731,25 +733,11 @@ BOOL StubDispatchFrame::TraceFrame(Thread *thread, BOOL fromPatch,
 {
     WRAPPER_NO_CONTRACT;
 
-    //
-    // We want to set a frame patch, unless we're already at the
-    // frame patch, in which case we'll trace stable entrypoint which 
-    // should be set by now.
-    //
+    // StubDispatchFixupWorker and VSD_ResolveWorker never directly call managed code. Returning false instructs the debugger to
+    // step out of the call that erected this frame and continuing trying to trace execution from there.
+    LOG((LF_CORDB, LL_INFO1000, "StubDispatchFrame::TraceFrame: return FALSE\n"));
 
-    if (fromPatch)
-    {
-        trace->InitForStub(GetFunction()->GetStableEntryPoint());
-    }
-    else
-    {
-        trace->InitForStub(GetPreStubEntryPoint());
-    }
-
-    LOG((LF_CORDB, LL_INFO10000,
-         "StubDispatchFrame::TraceFrame: ip=" FMT_ADDR "\n", DBG_ADDR(trace->GetAddress()) ));
-    
-    return TRUE;
+    return FALSE;
 }
 
 Frame::Interception StubDispatchFrame::GetInterception()
@@ -910,7 +898,6 @@ GCFrame::GCFrame(OBJECTREF *pObjRefs, UINT numObjRefs, BOOL maybeInterior)
         NOTHROW;
         GC_NOTRIGGER;
         MODE_COOPERATIVE;
-        SO_TOLERANT;
     }
     CONTRACTL_END;
 
@@ -924,7 +911,6 @@ GCFrame::GCFrame(Thread *pThread, OBJECTREF *pObjRefs, UINT numObjRefs, BOOL may
         NOTHROW;
         GC_NOTRIGGER;
         MODE_COOPERATIVE;
-        SO_TOLERANT;
     }
     CONTRACTL_END;
 
@@ -938,7 +924,6 @@ void GCFrame::Init(Thread *pThread, OBJECTREF *pObjRefs, UINT numObjRefs, BOOL m
         NOTHROW;
         GC_NOTRIGGER;
         MODE_COOPERATIVE;
-        SO_TOLERANT;
     }
     CONTRACTL_END;
 
@@ -1002,34 +987,6 @@ void GCFrame::GcScanRoots(promote_func *fn, ScanContext* sc)
     }
 }
 
-#ifdef FEATURE_REMOTING
-#include "objectclone.h"
-void GCSafeCollectionFrame::GcScanRoots(promote_func *fn, ScanContext* sc)
-{
-    WRAPPER_NO_CONTRACT;
-    
-    PTR_GCSafeCollection collection = dac_cast<PTR_GCSafeCollection>(m_pCollection);
-    collection->ReportGCRefs(fn, sc);
-}
-
-#ifndef DACCESS_COMPILE
-GCSafeCollectionFrame::GCSafeCollectionFrame(void *collection)
-{
-    WRAPPER_NO_CONTRACT;
-    
-    _ASSERTE(collection != NULL);
-    m_pCollection = collection;
-
-    Frame::Push();
-}
-
-VOID GCSafeCollectionFrame::Pop()
-{
-    LIMITED_METHOD_CONTRACT;
-    Frame::Pop();
-}
-#endif // !DACCESS_COMPILE
-#endif // FEATURE_REMOTING
 
 #ifndef DACCESS_COMPILE
 //--------------------------------------------------------------------
@@ -1120,6 +1077,56 @@ BOOL IsProtectedByGCFrame(OBJECTREF *ppObjectRef)
 #endif // _DEBUG
 
 #endif //!DACCESS_COMPILE
+
+#ifdef FEATURE_HIJACK
+
+void HijackFrame::GcScanRoots(promote_func *fn, ScanContext* sc)
+{
+    LIMITED_METHOD_CONTRACT;
+
+    ReturnKind returnKind = m_Thread->GetHijackReturnKind();
+    _ASSERTE(IsValidReturnKind(returnKind));
+
+    int regNo = 0;
+    bool moreRegisters = false;
+
+    do 
+    {
+        ReturnKind r = ExtractRegReturnKind(returnKind, regNo, moreRegisters);
+        PTR_PTR_Object objPtr = dac_cast<PTR_PTR_Object>(&m_Args->ReturnValue[regNo]);
+
+        switch (r)
+        {
+#ifdef _TARGET_X86_
+        case RT_Float: // Fall through
+#endif
+        case RT_Scalar:
+            // nothing to report
+            break;
+
+        case RT_Object:
+            LOG((LF_GC, INFO3, "Hijack Frame Promoting Object" FMT_ADDR "to",
+                DBG_ADDR(OBJECTREF_TO_UNCHECKED_OBJECTREF(*objPtr))));
+            (*fn)(objPtr, sc, CHECK_APP_DOMAIN);
+            LOG((LF_GC, INFO3, FMT_ADDR "\n", DBG_ADDR(OBJECTREF_TO_UNCHECKED_OBJECTREF(*objPtr))));
+            break;
+
+        case RT_ByRef:
+            LOG((LF_GC, INFO3, "Hijack Frame Carefully Promoting pointer" FMT_ADDR "to",
+                DBG_ADDR(OBJECTREF_TO_UNCHECKED_OBJECTREF(*objPtr))));
+            PromoteCarefully(fn, objPtr, sc, GC_CALL_INTERIOR | GC_CALL_CHECK_APP_DOMAIN);
+            LOG((LF_GC, INFO3, FMT_ADDR "\n", DBG_ADDR(OBJECTREF_TO_UNCHECKED_OBJECTREF(*objPtr))));
+            break;
+
+        default:
+            _ASSERTE(!"Impossible two bit encoding"); 
+        }
+        
+        regNo++;
+    } while (moreRegisters);
+}
+
+#endif // FEATURE_HIJACK
 
 void ProtectByRefsFrame::GcScanRoots(promote_func *fn, ScanContext *sc)
 {
@@ -1214,7 +1221,16 @@ void TransitionFrame::PromoteCallerStack(promote_func* fn, ScanContext* sc)
     //If not "vararg" calling convention, assume "default" calling convention
     if (!MetaSig::IsVarArg(pFunction->GetModule(), callSignature))
     {
-        MetaSig msig(pFunction);
+        SigTypeContext typeContext(pFunction);
+        PCCOR_SIGNATURE pSig;
+        DWORD cbSigSize;
+        pFunction->GetSig(&pSig, &cbSigSize);
+
+        MetaSig msig(pSig, cbSigSize, pFunction->GetModule(), &typeContext);
+
+        if (pFunction->RequiresInstArg() && !SuppressParamTypeArg())
+            msig.SetHasParamTypeArg();
+
         PromoteCallerStackHelper (fn, sc, pFunction, &msig);
     }
     else
@@ -1274,7 +1290,8 @@ void TransitionFrame::PromoteCallerStackHelper(promote_func* fn, ScanContext* sc
     int argOffset;
     while ((argOffset = argit.GetNextOffset()) != TransitionBlock::InvalidOffset)
     {
-        pmsig->GcScanRoots(dac_cast<PTR_VOID>(pTransitionBlock + argOffset), fn, sc);
+        ArgDestination argDest(dac_cast<PTR_VOID>(pTransitionBlock), argOffset, argit.GetArgLocDescForStructInRegs());
+        pmsig->GcScanRoots(&argDest, fn, sc);
     }
 }
 
@@ -1313,7 +1330,7 @@ void TransitionFrame::PromoteCallerStackUsingGCRefMap(promote_func* fn, ScanCont
             (TransitionBlock::GetOffsetOfArgumentRegisters() + ARGUMENTREGISTERS_SIZE - (pos + 1) * sizeof(TADDR)) :
             (TransitionBlock::GetOffsetOfArgs() + (pos - NUM_ARGUMENT_REGISTERS) * sizeof(TADDR));
 #else
-        ofs = TransitionBlock::GetOffsetOfArgumentRegisters() + pos * sizeof(TADDR);
+        ofs = TransitionBlock::GetOffsetOfFirstGCRefMapSlot() + pos * sizeof(TADDR);
 #endif
 
         PTR_TADDR ppObj = dac_cast<PTR_TADDR>(pTransitionBlock + ofs);
@@ -1447,7 +1464,7 @@ struct IsObjRefProtectedScanContext : public ScanContext
     }
 };
 
-void IsObjRefProtected (Object** ppObj, ScanContext* sc, DWORD)
+void IsObjRefProtected (Object** ppObj, ScanContext* sc, uint32_t)
 {
     LIMITED_METHOD_CONTRACT;
     IsObjRefProtectedScanContext * orefProtectedSc = (IsObjRefProtectedScanContext *)sc;
@@ -1459,6 +1476,8 @@ BOOL TransitionFrame::Protects(OBJECTREF * ppORef)
 {
     WRAPPER_NO_CONTRACT;
     IsObjRefProtectedScanContext sc (ppORef);
+    // Set the stack limit for the scan to the SP of the managed frame above the transition frame
+    sc.stack_limit = GetSP();
     GcScanRoots (IsObjRefProtected, &sc);
     return sc.oref_protected;
 }
@@ -1473,76 +1492,6 @@ BOOL TransitionFrame::Protects(OBJECTREF * ppORef)
 
 //
 //+----------------------------------------------------------------------------
-#ifdef FEATURE_REMOTING
-
-#ifndef DACCESS_COMPILE
-TPMethodFrame::TPMethodFrame(TransitionBlock * pTransitionBlock)
-    : FramedMethodFrame(pTransitionBlock, NULL)
-{
-    LIMITED_METHOD_CONTRACT;
-}
-#endif // #ifndef DACCESS_COMPILE
-
-void TPMethodFrame::GcScanRoots(promote_func *fn, ScanContext* sc)
-{
-    WRAPPER_NO_CONTRACT;
-
-    // Delegate to FramedMethodFrame
-    FramedMethodFrame::GcScanRoots(fn, sc);
-    FramedMethodFrame::PromoteCallerStack(fn, sc);
-
-    MetaSig::RETURNTYPE returnType = GetFunction()->ReturnsObject();
-
-    // Promote the returned object
-    if(returnType == MetaSig::RETOBJ)
-    {
-        (*fn)(GetReturnObjectPtr(), sc, CHECK_APP_DOMAIN);
-    }
-    else if (returnType == MetaSig::RETBYREF)
-    {
-        PromoteCarefully(fn, GetReturnObjectPtr(), sc, GC_CALL_INTERIOR|CHECK_APP_DOMAIN);
-    }
-
-    return;
-}
-
-//+----------------------------------------------------------------------------
-//
-//  Method:     TPMethodFrame::TraceFrame    public
-//
-//  Synopsis:   Return where the frame will execute next - the result is filled
-//              into the given "trace" structure.  The frame is responsible for
-//              detecting where it is in its execution lifetime.
-//
-//
-
-//
-//+----------------------------------------------------------------------------
-BOOL TPMethodFrame::TraceFrame(Thread *thread, BOOL fromPatch, 
-                               TraceDestination *trace, REGDISPLAY *regs)
-{
-    WRAPPER_NO_CONTRACT;
-
-    // We want to set a frame patch, unless we're already at the
-    // frame patch, in which case we'll trace stable entrypoint which 
-    // should be set by now.
-
-    if (fromPatch)
-    {
-        trace->InitForStub(GetFunction()->GetStableEntryPoint());
-    }
-    else
-    {
-#ifdef DACCESS_COMPILE
-        DacNotImpl();
-#else
-        trace->InitForStub(GetEEFuncEntryPoint(TransparentProxyStubPatchLabel));
-#endif
-    }
-    return TRUE;
-
-}
-#endif // FEATURE_REMOTING
 
 #ifdef FEATURE_COMINTEROP
 
@@ -1645,7 +1594,6 @@ void HelperMethodFrame::Push()
         if (m_Attribs & FRAME_ATTR_NO_THREAD_ABORT) NOTHROW; else THROWS;
         GC_TRIGGERS;
         MODE_COOPERATIVE;
-        SO_TOLERANT;
     } CONTRACTL_END;
 
     //
@@ -1665,7 +1613,7 @@ void HelperMethodFrame::Push()
     // Push the frame
     Frame::Push(pThread);
 
-    if (!pThread->HasThreadStateOpportunistic((Thread::ThreadState)(Thread::TS_YieldRequested | Thread::TS_AbortRequested)))
+    if (!pThread->HasThreadStateOpportunistic(Thread::TS_AbortRequested))
         return;
 
     // Outline the slow path for better perf
@@ -1678,7 +1626,6 @@ void HelperMethodFrame::Pop()
         if (m_Attribs & FRAME_ATTR_NO_THREAD_ABORT) NOTHROW; else THROWS;
         GC_TRIGGERS;
         MODE_COOPERATIVE;
-        SO_TOLERANT;
     } CONTRACTL_END;
 
     Thread * pThread = m_pThread;
@@ -1703,7 +1650,6 @@ NOINLINE void HelperMethodFrame::PushSlowHelper()
         if (m_Attribs & FRAME_ATTR_NO_THREAD_ABORT) NOTHROW; else THROWS;
         GC_TRIGGERS;
         MODE_COOPERATIVE;
-        SO_TOLERANT;
     } CONTRACTL_END;
 
     if (!(m_Attribs & FRAME_ATTR_NO_THREAD_ABORT))
@@ -1714,11 +1660,6 @@ NOINLINE void HelperMethodFrame::PushSlowHelper()
         }
 
     }
-
-    if (m_pThread->IsYieldRequested())
-    {
-        __SwitchToThread(0, CALLER_LIMITS_SPINNING);
-    }
 }
 
 NOINLINE void HelperMethodFrame::PopSlowHelper()
@@ -1727,7 +1668,6 @@ NOINLINE void HelperMethodFrame::PopSlowHelper()
         THROWS;
         GC_TRIGGERS;
         MODE_COOPERATIVE;
-        SO_TOLERANT;
     } CONTRACTL_END;
 
     m_pThread->HandleThreadAbort();
@@ -1785,7 +1725,6 @@ BOOL HelperMethodFrame::InsureInit(bool initialInit,
     CONTRACTL {
         NOTHROW;
         GC_NOTRIGGER;
-        SO_TOLERANT;
         if ((hostCallPreference == AllowHostCalls) && !m_MachState.isValid()) { HOST_CALLS; } else { HOST_NOCALLS; }
         SUPPORTS_DAC;
     } CONTRACTL_END;
@@ -1816,6 +1755,7 @@ BOOL HelperMethodFrame::InsureInit(bool initialInit,
     // Work with a copy so that we only write the values once.
     // this avoids race conditions.
     LazyMachState* lazy = &m_MachState;
+    DWORD threadId = m_pThread->GetOSThreadId();
     MachState unwound;
     
     if (!initialInit &&
@@ -1825,6 +1765,7 @@ BOOL HelperMethodFrame::InsureInit(bool initialInit,
         LazyMachState::unwindLazyState(
             lazy, 
             &unwound, 
+            threadId,
             0,
             hostCallPreference);
 
@@ -1852,12 +1793,12 @@ BOOL HelperMethodFrame::InsureInit(bool initialInit,
              (m_Attribs & Frame::FRAME_ATTR_CAPTURE_DEPTH_2) != 0)
     {
         // explictly told depth
-        LazyMachState::unwindLazyState(lazy, &unwound, 2);
+        LazyMachState::unwindLazyState(lazy, &unwound, threadId, 2);
     }
     else
     {
         // True FCall 
-        LazyMachState::unwindLazyState(lazy, &unwound, 1);
+        LazyMachState::unwindLazyState(lazy, &unwound, threadId, 1);
     }
 
     _ASSERTE(unwound.isValid());
@@ -1940,8 +1881,8 @@ BOOL MulticastFrame::TraceFrame(Thread *thread, BOOL fromPatch,
 
 #if defined(_TARGET_X86_)
     // At this point the counter hasn't been incremented yet.
-    delegateCount = *regs->pEdi + 1;
-    pbDel = *(BYTE **)( (size_t)*(regs->pEsi) + GetOffsetOfTransitionBlock() + ArgIterator::GetThisOffset());
+    delegateCount = *regs->GetEdiLocation() + 1;
+    pbDel = *(BYTE **)( (size_t)*regs->GetEsiLocation() + GetOffsetOfTransitionBlock() + ArgIterator::GetThisOffset());
 #elif defined(_TARGET_AMD64_)
     // At this point the counter hasn't been incremented yet.
     delegateCount = (int)regs->pCurrentContext->Rdi + 1;
@@ -1998,87 +1939,6 @@ VOID InlinedCallFrame::Init()
     m_pCallerReturnAddress = NULL;
 }
 
-#if defined(_WIN64) && !defined(FEATURE_PAL)
-
-EXTERN_C void PInvokeStubForHostInner(DWORD dwStackSize, LPVOID pStackFrame, LPVOID pTarget);
-
-// C++ piece of one static stub for host on 64-bit. This is called by PInvokeStubForHost (PInvokeStubs.asm).
-void __stdcall PInvokeStubForHostWorker(DWORD dwStackSize, LPVOID pStackFrame, LPVOID pThis)
-{
-    CONTRACTL
-    {
-        THROWS;
-        GC_TRIGGERS;
-        ENTRY_POINT;
-    }
-    CONTRACTL_END;
-
-    InlinedCallFrame *pFrame = (InlinedCallFrame *)GetThread()->GetFrame();
-    _ASSERTE(InlinedCallFrame::FrameHasActiveCall(pFrame));
-
-    LPVOID pTarget = NULL;
-    MethodDesc *pMD = pFrame->GetFunction();
-
-    if (pMD == NULL)
-    {
-        // This is a CALLI and m_Datum is a mangled target
-        pTarget = (LPVOID)((UINT_PTR)pFrame->m_Datum >> 1);
-    }
-    else if (pMD->IsNDirect())
-    {
-        pTarget = ((NDirectMethodDesc *)pMD)->ndirect.m_pNativeNDirectTarget;
-        if (pMD->IsQCall())
-        {
-#ifdef FEATURE_STACK_PROBE
-            // We need just the stack probe for QCalls
-            RetailStackProbe(ADJUST_PROBE(DEFAULT_ENTRY_PROBE_AMOUNT));
-#endif
-            PInvokeStubForHostInner(dwStackSize, pStackFrame, pTarget);
-            return;
-        }
-    }
-#ifdef FEATURE_COMINTEROP
-    else if (pMD->IsComPlusCall() || pMD->IsEEImpl())
-    {
-        LPVOID *lpVtbl = *(LPVOID **)pThis;
-        ComPlusCallInfo *pComPlusCallInfo = ComPlusCallInfo::FromMethodDesc(pMD);
-        pTarget = lpVtbl[pComPlusCallInfo->m_cachedComSlot];
-    }
-#endif // FEATURE_COMINTEROP
-    else
-    {
-        UNREACHABLE_MSG("Unexpected MethodDesc kind encountered in PInvokeStubForHostWorker");
-    }
-
-    // We ask the host on every call. This is different from x86 but we keep this
-    // behavior for maximum compatibility with previous releases.
-    if (CallNeedsHostHook((size_t)pTarget))
-    {
-        // call LeaveRuntime
-        class LeaveRuntimeHolderThrowComplus
-        {
-        public:
-            LeaveRuntimeHolderThrowComplus(size_t target)
-            {
-                Thread::LeaveRuntimeThrowComplus(target);
-            }
-            ~LeaveRuntimeHolderThrowComplus()
-            {
-                Thread::EnterRuntime();
-            }
-        } holder((size_t)pTarget);
-
-        PInvokeStubForHostInner(dwStackSize, pStackFrame, pTarget);
-        // ~LeaveRuntimeHolderThrowComplus calls EnterRuntime here
-    }
-    else
-    {
-        // The host doesn't want to be notified - just call the target
-        PInvokeStubForHostInner(dwStackSize, pStackFrame, pTarget);
-    }
-}
-#endif // _WIN64 && !FEATURE_PAL
-
 
 
 void UnmanagedToManagedFrame::ExceptionUnwind()
@@ -2094,10 +1954,6 @@ void ContextTransitionFrame::GcScanRoots(promote_func *fn, ScanContext* sc)
 {
     WRAPPER_NO_CONTRACT;
 
-    // Don't check app domains here - m_ReturnExecutionContext is in the parent frame's app domain
-    (*fn)(dac_cast<PTR_PTR_Object>(PTR_HOST_MEMBER_TADDR(ContextTransitionFrame, this, m_ReturnExecutionContext)), sc, 0);
-    LOG((LF_GC, INFO3, "    " FMT_ADDR "\n", DBG_ADDR(m_ReturnExecutionContext) ));
-
     // Don't check app domains here - m_LastThrownObjectInParentContext is in the parent frame's app domain
     (*fn)(dac_cast<PTR_PTR_Object>(PTR_HOST_MEMBER_TADDR(ContextTransitionFrame, this, m_LastThrownObjectInParentContext)), sc, 0);
     LOG((LF_GC, INFO3, "    " FMT_ADDR "\n", DBG_ADDR(m_LastThrownObjectInParentContext) ));
@@ -2111,38 +1967,6 @@ void ContextTransitionFrame::GcScanRoots(promote_func *fn, ScanContext* sc)
         
     // The dac only cares about strong references at the moment.  Since this is always
     // in a weak ref, we don't report it here.
-#if defined(FEATURE_REMOTING) && !defined(DACCESS_COMPILE)
-    Context *returnContext = GetReturnContext();
-    PREFIX_ASSUME(returnContext != NULL);
-    _ASSERTE(returnContext);
-    _ASSERTE(returnContext->GetDomain());    // this will make sure is a valid pointer
-
-    // In the VM we operate on a local to avoid double relocation.  In the dac we actually want
-    // to know the real location.
-#ifdef DACCESS_COMPILE
-    PTR_PTR_Object ppRef = returnContext->GetExposedObjectRawUncheckedPtr();
-    
-    if (*ppRef == NULL)
-        return;
-        
-    (*fn)(ppRef, sc, 0);
-
-#else // DACCESS_COMPILE
-    // We are in the middle of the GC. OBJECTREFs can't be used here since their built-in validation
-    // chokes on objects that have been relocated already
-    Object *pRef = returnContext->GetExposedObjectRawUnchecked();
-    
-    if (pRef == NULL)
-        return;
-
-    LOG((LF_GC, INFO3, "ContextTransitionFrame Protection Frame Promoting" FMT_ADDR "to ", DBG_ADDR(pRef) ));
-    // Don't check app domains here - the objects are in the parent frame's app domain
-
-    (*fn)(&pRef, sc, 0);
-    LOG((LF_GC, INFO3, FMT_ADDR "\n", DBG_ADDR(pRef)));    
-#endif // !DACCESS_COMPILE
-
-#endif    
 }
 
 

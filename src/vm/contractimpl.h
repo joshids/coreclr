@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //
 // File: contractimpl.h
 //
@@ -257,7 +256,7 @@ public:
         m_token = INVALID_TOKEN;
     }
 
-    DispatchToken(UINT_PTR token)
+    explicit DispatchToken(UINT_PTR token)
     {
         CONSISTENCY_CHECK(token != INVALID_TOKEN);
         m_token = token;
@@ -413,7 +412,6 @@ public:
             THROWS;
             GC_NOTRIGGER;
             MODE_ANY;
-            SO_TOLERANT;
             INJECT_FAULT(COMPlusThrowOM());
             PRECONDITION(m_nextID != 0);
             PRECONDITION(m_incSize != 0);
@@ -441,7 +439,6 @@ public:
             THROWS;
             GC_NOTRIGGER;
             MODE_ANY;
-            SO_TOLERANT;
             INJECT_FAULT(COMPlusThrowOM());
             PRECONDITION(m_nextFatID != 0);
             PRECONDITION(m_incSize != 0);
@@ -474,7 +471,6 @@ protected:
     BOOL                m_fUseFatIdsForUniqueness;
     UINT32              m_entryCount;
 
-#ifndef BINDER
     //------------------------------------------------------------------------
     // Returns the next available ID
     inline UINT32 GetNextID()
@@ -496,7 +492,6 @@ protected:
         CONSISTENCY_CHECK(id != TYPE_ID_THIS_CLASS);
         return id;
     }
-#endif
 
 public:
     // Starting values for shared and unshared domains
@@ -511,14 +506,12 @@ public:
 
     //------------------------------------------------------------------------
     // Ctor
-#ifndef BINDER
     TypeIDMap()
         : m_lock(CrstTypeIDMap, CrstFlags(CRST_REENTRANCY))
     {
         WRAPPER_NO_CONTRACT;
         static_assert_no_msg(TypeIDProvider::INVALID_TYPE_ID == static_cast<UINT32>(INVALIDENTRY));
     }
-#endif
 
     //------------------------------------------------------------------------
     // Dtor
@@ -537,6 +530,12 @@ public:
     // Returns the ID of the type if found. If not found, assigns the ID and
     // returns the new ID.
     UINT32 GetTypeID(PTR_MethodTable pMT);
+
+#ifndef DACCESS_COMPILE
+    //------------------------------------------------------------------------
+    // Remove all types that belong to the passed in LoaderAllocator
+    void RemoveTypes(LoaderAllocator* pLoaderAllocator);
+#endif // DACCESS_COMPILE
 
     //------------------------------------------------------------------------
     inline UINT32 GetCount()
@@ -876,7 +875,6 @@ protected:
 
 typedef DPTR(class DispatchMap) PTR_DispatchMap;
 // ===========================================================================
-#ifndef BINDER
 class DispatchMap
 {
 protected:
@@ -999,8 +997,6 @@ public:
         DispatchMapEntry *Entry();
     };  // class Iterator
 };  // class DispatchMap
-
-#endif // BINDER
 
 #ifdef LOGGING 
 struct StubDispatchStats

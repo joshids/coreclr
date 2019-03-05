@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 // 
 
 // 
@@ -37,9 +36,8 @@ CLRPrivTypeCacheWinRT::ContainsType(
         // Find DomainAssembly * (can be cached if this is too slow to call always)
         DomainAssembly * pDomainAssembly = pAppDomain->LoadDomainAssembly(
             nullptr,    // pIdentity
-            pPEAssembly, 
-            FILE_LOAD_DELIVER_EVENTS, 
-            nullptr);   // pLoadSecurity
+            pPEAssembly,
+            FILE_LOAD_DELIVER_EVENTS);
         
         // Convert the type name into namespace and class name in UTF8
         StackSString ssTypeNameWCHAR(wszTypeName);
@@ -101,7 +99,7 @@ CLRPrivTypeCacheWinRT::ContainsTypeHelper(
             &tkType, 
             &pTypeModule, 
             &tkExportedType, 
-            nullptr,    // ppClassHashEntry
+            nullptr,    // pFoundEntry
             nullptr,    // pLookInThisModuleOnly
             Loader::DontLoad))
     {
@@ -175,43 +173,36 @@ CLRPrivTypeCacheWinRT::RaiseDesignerNamespaceResolveEvent(
     CLRPrivBinderUtil::WStringListHolder * pFileNameList)
 {
     STANDARD_VM_CONTRACT;
-    
+
     _ASSERTE(pFileNameList != nullptr);
-    
-    AppDomain * pAppDomain = AppDomain::GetCurrentDomain();
-    
+
     GCX_COOP();
     
     struct _gc {
-        OBJECTREF AppDomainRef;
         STRINGREF str;
     } gc;
     ZeroMemory(&gc, sizeof(gc));
     
     GCPROTECT_BEGIN(gc);
-    if ((gc.AppDomainRef = pAppDomain->GetRawExposedObject()) != NULL)
+    MethodDescCallSite onNamespaceResolve(METHOD__WINDOWSRUNTIMEMETATADA__ON_DESIGNER_NAMESPACE_RESOLVE);
+    gc.str = StringObject::NewString(wszNamespace);
+    ARG_SLOT args[1] =
     {
-        MethodDescCallSite onNamespaceResolve(METHOD__APP_DOMAIN__ON_DESIGNER_NAMESPACE_RESOLVE, &gc.AppDomainRef);
-        gc.str = StringObject::NewString(wszNamespace);
-        ARG_SLOT args[2] =
+        ObjToArgSlot(gc.str)
+    };
+    PTRARRAYREF ResultingFileNameArrayRef = (PTRARRAYREF) onNamespaceResolve.Call_RetOBJECTREF(args);
+    if (ResultingFileNameArrayRef != NULL)
+    {
+        for (DWORD i = 0; i < ResultingFileNameArrayRef->GetNumComponents(); i++)
         {
-            ObjToArgSlot(gc.AppDomainRef),
-            ObjToArgSlot(gc.str)
-        };
-        PTRARRAYREF ResultingFileNameArrayRef = (PTRARRAYREF) onNamespaceResolve.Call_RetOBJECTREF(args);
-        if (ResultingFileNameArrayRef != NULL)
-        {
-            for (DWORD i = 0; i < ResultingFileNameArrayRef->GetNumComponents(); i++)
-            {
-                STRINGREF ResultingFileNameRef = (STRINGREF) ResultingFileNameArrayRef->GetAt(i);
-                _ASSERTE(ResultingFileNameRef != NULL); // Verified in the managed code OnDesignerNamespaceResolveEvent
+            STRINGREF ResultingFileNameRef = (STRINGREF) ResultingFileNameArrayRef->GetAt(i);
+            _ASSERTE(ResultingFileNameRef != NULL); // Verified in the managed code OnDesignerNamespaceResolveEvent
                 
-                SString sFileName;
-                ResultingFileNameRef->GetSString(sFileName);
-                _ASSERTE(!sFileName.IsEmpty()); // Verified in the managed code OnDesignerNamespaceResolveEvent
+            SString sFileName;
+            ResultingFileNameRef->GetSString(sFileName);
+            _ASSERTE(!sFileName.IsEmpty()); // Verified in the managed code OnDesignerNamespaceResolveEvent
                 
-                pFileNameList->InsertTail(sFileName.GetUnicode());
-            }
+            pFileNameList->InsertTail(sFileName.GetUnicode());
         }
     }
     GCPROTECT_END();

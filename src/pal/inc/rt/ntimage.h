@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //
 
 //
@@ -428,6 +427,7 @@ typedef PIMAGE_NT_HEADERS32                 PIMAGE_NT_HEADERS;
 //      IMAGE_LIBRARY_PROCESS_TERM           0x0002     // Reserved.
 //      IMAGE_LIBRARY_THREAD_INIT            0x0004     // Reserved.
 //      IMAGE_LIBRARY_THREAD_TERM            0x0008     // Reserved.
+#define IMAGE_DLLCHARACTERISTICS_HIGH_ENTROPY_VA 0x0020 // Image can handle a high entropy 64-bit virtual address space.
 #define IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE 0x0040    // DLL can move
 #define IMAGE_DLLCHARACTERISTICS_NX_COMPAT   0x0100     // Image ix NX compatible
 #define IMAGE_DLLCHARACTERISTICS_NO_SEH       0x0400    // Image does not use SEH.  No SE handler may reside in this image
@@ -796,7 +796,7 @@ typedef struct _IMAGE_RELOCATION {
     union {
         ULONG   VirtualAddress;
         ULONG   RelocCount;             // Set to the real count when IMAGE_SCN_LNK_NRELOC_OVFL is set
-    } u;
+    };
     ULONG   SymbolTableIndex;
     USHORT  Type;
 } IMAGE_RELOCATION;
@@ -1780,90 +1780,6 @@ typedef enum IMPORT_OBJECT_NAME_TYPE
 } IMPORT_OBJECT_NAME_TYPE;
 
 // end_winnt
-
-// The structure is used by the NT loader for clr URT support.  It
-// is a duplicate of the definition in corhdr.h.
-
-// begin_winnt
-
-#ifndef __IMAGE_COR20_HEADER_DEFINED__
-#define __IMAGE_COR20_HEADER_DEFINED__
-
-typedef enum ReplacesCorHdrNumericDefines
-{
-// COM+ Header entry point flags.
-    COMIMAGE_FLAGS_ILONLY               =0x00000001,
-    COMIMAGE_FLAGS_32BITREQUIRED        =0x00000002,
-    COMIMAGE_FLAGS_IL_LIBRARY           =0x00000004,
-    COMIMAGE_FLAGS_STRONGNAMESIGNED     =0x00000008,
-    COMIMAGE_FLAGS_NATIVE_ENTRYPOINT    =0x00000010,
-    COMIMAGE_FLAGS_TRACKDEBUGDATA       =0x00010000,
-
-// Version flags for image.
-    COR_VERSION_MAJOR_V2                =2,
-    COR_VERSION_MAJOR                   =COR_VERSION_MAJOR_V2,
-    COR_VERSION_MINOR                   =0,
-    COR_DELETED_NAME_LENGTH             =8,
-    COR_VTABLEGAP_NAME_LENGTH           =8,
-
-// Maximum size of a NativeType descriptor.
-    NATIVE_TYPE_MAX_CB                  =1,   
-    COR_ILMETHOD_SECT_SMALL_MAX_DATASIZE=0xFF,
-
-// #defines for the MIH FLAGS
-    IMAGE_COR_MIH_METHODRVA             =0x01,
-    IMAGE_COR_MIH_EHRVA                 =0x02,    
-    IMAGE_COR_MIH_BASICBLOCK            =0x08,
-
-// V-table constants
-    COR_VTABLE_32BIT                    =0x01,          // V-table slots are 32-bits in size.   
-    COR_VTABLE_64BIT                    =0x02,          // V-table slots are 64-bits in size.   
-    COR_VTABLE_FROM_UNMANAGED           =0x04,          // If set, transition from unmanaged.
-    COR_VTABLE_CALL_MOST_DERIVED        =0x10,          // Call most derived method described by
-
-// EATJ constants
-    IMAGE_COR_EATJ_THUNK_SIZE           =32,            // Size of a jump thunk reserved range.
-
-// Max name lengths    
-    //<TODO> Change to unlimited name lengths. </TODO>
-    MAX_CLASS_NAME                      =1024,
-    MAX_PACKAGE_NAME                    =1024,
-} ReplacesCorHdrNumericDefines;
-
-// COM+ 2.0 header structure.
-typedef struct IMAGE_COR20_HEADER
-{
-    // Header versioning
-    ULONG                   cb;              
-    USHORT                  MajorRuntimeVersion;
-    USHORT                  MinorRuntimeVersion;
-    
-    // Symbol table and startup information
-    IMAGE_DATA_DIRECTORY    MetaData;        
-    ULONG                   Flags;           
-
-    // If COMIMAGE_FLAGS_NATIVE_ENTRYPOINT is not set, EntryPointToken represents a managed entrypoint.
-    // If COMIMAGE_FLAGS_NATIVE_ENTRYPOINT is set, EntryPointRVA represents an RVA to a native entrypoint.
-    union {
-        ULONG               EntryPointToken;
-        ULONG               EntryPointRVA;
-    };
-    
-    // Binding information
-    IMAGE_DATA_DIRECTORY    Resources;
-    IMAGE_DATA_DIRECTORY    StrongNameSignature;
-
-    // Regular fixup and binding information
-    IMAGE_DATA_DIRECTORY    CodeManagerTable;
-    IMAGE_DATA_DIRECTORY    VTableFixups;
-    IMAGE_DATA_DIRECTORY    ExportAddressTableJumps;
-
-    // Precompiled image info (internal use only - set to zero)
-    IMAGE_DATA_DIRECTORY    ManagedNativeHeader;
-    
-} IMAGE_COR20_HEADER, *PIMAGE_COR20_HEADER;
-
-#endif // __IMAGE_COR20_HEADER_DEFINED__
 
 //
 // End Image Format

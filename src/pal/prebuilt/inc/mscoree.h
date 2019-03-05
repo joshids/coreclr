@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 
 /* this ALWAYS GENERATED file contains the definitions for the interfaces */
@@ -113,14 +112,13 @@ typedef interface ICLRRuntimeHost ICLRRuntimeHost;
 #define __ICLRRuntimeHost2_FWD_DEFINED__
 typedef interface ICLRRuntimeHost2 ICLRRuntimeHost2;
 
-#endif 	/* __ICLRRuntimeHost2_FWD_DEFINED__ */
+#endif 	/* __ICLRRuntimeHost4_FWD_DEFINED__ */
 
+#ifndef __ICLRRuntimeHost4_FWD_DEFINED__
+#define __ICLRRuntimeHost4_FWD_DEFINED__
+typedef interface ICLRRuntimeHost4 ICLRRuntimeHost4;
 
-#ifndef __ICLRExecutionManager_FWD_DEFINED__
-#define __ICLRExecutionManager_FWD_DEFINED__
-typedef interface ICLRExecutionManager ICLRExecutionManager;
-
-#endif 	/* __ICLRExecutionManager_FWD_DEFINED__ */
+#endif  /* __ICLRRuntimeHost4_FWD_DEFINED__ */
 
 
 #ifndef __IHostNetCFDebugControlManager_FWD_DEFINED__
@@ -216,7 +214,6 @@ typedef interface ICLRAppDomainResourceMonitor ICLRAppDomainResourceMonitor;
 /* header files for imported files */
 #include "unknwn.h"
 #include "gchost.h"
-#include "ivalidator.h"
 
 #ifdef __cplusplus
 extern "C"{
@@ -231,18 +228,6 @@ extern "C"{
 
 struct IActivationFactory;
 
-#define	CLR_MAJOR_VERSION	( 4 )
-
-#define	CLR_MINOR_VERSION	( 0 )
-
-#define	CLR_BUILD_VERSION	( 23203 )
-
-#define	CLR_ASSEMBLY_MAJOR_VERSION	( 4 )
-
-#define	CLR_ASSEMBLY_MINOR_VERSION	( 0 )
-
-#define	CLR_ASSEMBLY_BUILD_VERSION	( 0 )
-
 EXTERN_GUID(CLSID_TypeNameFactory, 0xB81FF171, 0x20F3, 0x11d2, 0x8d, 0xcc, 0x00, 0xa0, 0xc9, 0xb0, 0x05, 0x25);
 EXTERN_GUID(CLSID_ComCallUnmarshal, 0x3F281000,0xE95A,0x11d2,0x88,0x6B,0x00,0xC0,0x4F,0x86,0x9F,0x04);
 EXTERN_GUID(CLSID_ComCallUnmarshalV4, 0x45fb4600,0xe6e8,0x4928,0xb2,0x5e,0x50,0x47,0x6f,0xf7,0x94,0x25);
@@ -255,7 +240,7 @@ EXTERN_GUID(IID_ICLRErrorReportingManager, 0x980d2f1a, 0xbf79, 0x4c08, 0x81, 0x2
 EXTERN_GUID(IID_ICLRErrorReportingManager2, 0xc68f63b1, 0x4d8b, 0x4e0b, 0x95, 0x64, 0x9d, 0x2e, 0xfe, 0x2f, 0xa1, 0x8c);
 EXTERN_GUID(IID_ICLRRuntimeHost, 0x90F1A06C, 0x7712, 0x4762, 0x86, 0xB5, 0x7A, 0x5E, 0xBA, 0x6B, 0xDB, 0x02);
 EXTERN_GUID(IID_ICLRRuntimeHost2, 0x712AB73F, 0x2C22, 0x4807, 0xAD, 0x7E, 0xF5, 0x01, 0xD7, 0xb7, 0x2C, 0x2D);
-EXTERN_GUID(IID_ICLRExecutionManager, 0x1000A3E7, 0xB420, 0x4620, 0xAE, 0x30, 0xFB, 0x19, 0xB5, 0x87, 0xAD, 0x1D);
+EXTERN_GUID(IID_ICLRRuntimeHost4, 0x64F6D366, 0xD7C2, 0x4F1F, 0xB4, 0xB2, 0xE8, 0x16, 0x0C, 0xAC, 0x43, 0xAF);
 EXTERN_GUID(IID_ITypeName, 0xB81FF171, 0x20F3, 0x11d2, 0x8d, 0xcc, 0x00, 0xa0, 0xc9, 0xb0, 0x05, 0x22);
 EXTERN_GUID(IID_ITypeNameBuilder, 0xB81FF171, 0x20F3, 0x11d2, 0x8d, 0xcc, 0x00, 0xa0, 0xc9, 0xb0, 0x05, 0x23);
 EXTERN_GUID(IID_ITypeNameFactory, 0xB81FF171, 0x20F3, 0x11d2, 0x8d, 0xcc, 0x00, 0xa0, 0xc9, 0xb0, 0x05, 0x21);
@@ -270,8 +255,6 @@ DEPRECATED_CLR_STDAPI CorBindToRuntimeEx(LPCWSTR pwszVersion, LPCWSTR pwszBuildF
 DEPRECATED_CLR_STDAPI CorBindToRuntimeByCfg(IStream* pCfgStream, DWORD reserved, DWORD startupFlags, REFCLSID rclsid,REFIID riid, LPVOID FAR* ppv);
 DEPRECATED_CLR_STDAPI CorBindToRuntime(LPCWSTR pwszVersion, LPCWSTR pwszBuildFlavor, REFCLSID rclsid, REFIID riid, LPVOID FAR *ppv);
 DEPRECATED_CLR_STDAPI CorBindToCurrentRuntime(LPCWSTR pwszFileName, REFCLSID rclsid, REFIID riid, LPVOID FAR *ppv);
-DEPRECATED_CLR_STDAPI ClrCreateManagedInstance(LPCWSTR pTypeName, REFIID riid, void **ppObject);
-DECLARE_DEPRECATED void STDMETHODCALLTYPE CorMarkThreadInThreadPool();
 DEPRECATED_CLR_STDAPI RunDll32ShimW(HWND hwnd, HINSTANCE hinst, LPCWSTR lpszCmdLine, int nCmdShow);
 DEPRECATED_CLR_STDAPI LoadLibraryShim(LPCWSTR szDllName, LPCWSTR szVersion, LPVOID pvReserved, HMODULE *phModDll);
 DEPRECATED_CLR_STDAPI CallFunctionShim(LPCWSTR szDllName, LPCSTR szFunctionName, LPVOID lpvArgument1, LPVOID lpvArgument2, LPCWSTR szVersion, LPVOID pvReserved);
@@ -312,7 +295,7 @@ enum __MIDL___MIDL_itf_mscoree_0000_0000_0002
         STARTUP_ARM	= 0x400000,
         STARTUP_SINGLE_APPDOMAIN	= 0x800000,
         STARTUP_APPX_APP_MODEL	= 0x1000000,
-        STARTUP_DISABLE_RANDOMIZED_STRING_HASHING	= 0x2000000
+        STARTUP_DISABLE_RANDOMIZED_STRING_HASHING	= 0x2000000 // not supported
     } 	STARTUP_FLAGS;
 
 typedef /* [public] */ 
@@ -1820,6 +1803,14 @@ EXTERN_C const IID IID_ICLRRuntimeHost2;
         
     };
     
+    MIDL_INTERFACE("64F6D366-D7C2-4F1F-B4B2-E8160CAC43AF")
+    ICLRRuntimeHost4 : public ICLRRuntimeHost2
+    {
+        virtual HRESULT STDMETHODCALLTYPE UnloadAppDomain2(
+            /* [in] */ DWORD dwAppDomainId,
+            /* [in] */ BOOL fWaitUntilDone,
+            /* [out] */ int *pLatchedExitCode) = 0;
+    };
     
 #else 	/* C style interface */
 
@@ -2010,98 +2001,6 @@ EXTERN_C const IID IID_ICLRRuntimeHost2;
 
 
 #endif 	/* __ICLRRuntimeHost2_INTERFACE_DEFINED__ */
-
-
-#ifndef __ICLRExecutionManager_INTERFACE_DEFINED__
-#define __ICLRExecutionManager_INTERFACE_DEFINED__
-
-/* interface ICLRExecutionManager */
-/* [object][local][unique][helpstring][version][uuid] */ 
-
-
-EXTERN_C const IID IID_ICLRExecutionManager;
-
-#if defined(__cplusplus) && !defined(CINTERFACE)
-    
-    MIDL_INTERFACE("1000A3E7-B420-4620-AE30-FB19B587AD1D")
-    ICLRExecutionManager : public IUnknown
-    {
-    public:
-        virtual HRESULT STDMETHODCALLTYPE Pause( 
-            /* [in] */ DWORD dwAppDomainId,
-            /* [in] */ DWORD dwFlags) = 0;
-        
-        virtual HRESULT STDMETHODCALLTYPE Resume( 
-            /* [in] */ DWORD dwAppDomainId) = 0;
-        
-    };
-    
-    
-#else 	/* C style interface */
-
-    typedef struct ICLRExecutionManagerVtbl
-    {
-        BEGIN_INTERFACE
-        
-        HRESULT ( STDMETHODCALLTYPE *QueryInterface )( 
-            ICLRExecutionManager * This,
-            /* [in] */ REFIID riid,
-            /* [annotation][iid_is][out] */ 
-            _COM_Outptr_  void **ppvObject);
-        
-        ULONG ( STDMETHODCALLTYPE *AddRef )( 
-            ICLRExecutionManager * This);
-        
-        ULONG ( STDMETHODCALLTYPE *Release )( 
-            ICLRExecutionManager * This);
-        
-        HRESULT ( STDMETHODCALLTYPE *Pause )( 
-            ICLRExecutionManager * This,
-            /* [in] */ DWORD dwAppDomainId,
-            /* [in] */ DWORD dwFlags);
-        
-        HRESULT ( STDMETHODCALLTYPE *Resume )( 
-            ICLRExecutionManager * This,
-            /* [in] */ DWORD dwAppDomainId);
-        
-        END_INTERFACE
-    } ICLRExecutionManagerVtbl;
-
-    interface ICLRExecutionManager
-    {
-        CONST_VTBL struct ICLRExecutionManagerVtbl *lpVtbl;
-    };
-
-    
-
-#ifdef COBJMACROS
-
-
-#define ICLRExecutionManager_QueryInterface(This,riid,ppvObject)	\
-    ( (This)->lpVtbl -> QueryInterface(This,riid,ppvObject) ) 
-
-#define ICLRExecutionManager_AddRef(This)	\
-    ( (This)->lpVtbl -> AddRef(This) ) 
-
-#define ICLRExecutionManager_Release(This)	\
-    ( (This)->lpVtbl -> Release(This) ) 
-
-
-#define ICLRExecutionManager_Pause(This,dwAppDomainId,dwFlags)	\
-    ( (This)->lpVtbl -> Pause(This,dwAppDomainId,dwFlags) ) 
-
-#define ICLRExecutionManager_Resume(This,dwAppDomainId)	\
-    ( (This)->lpVtbl -> Resume(This,dwAppDomainId) ) 
-
-#endif /* COBJMACROS */
-
-
-#endif 	/* C style interface */
-
-
-
-
-#endif 	/* __ICLRExecutionManager_INTERFACE_DEFINED__ */
 
 
 #ifndef __IHostNetCFDebugControlManager_INTERFACE_DEFINED__

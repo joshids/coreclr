@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 
 //
@@ -515,9 +514,6 @@ void __pfx_assume(int, const char *);
 #undef __PRIMOP
 #define __PRIMOP(type, fun)
 #endif /* !defined(_Outptr_) || _MSC_VER <= 1600 */
-
-// ROTOR doesn't need driverspecs.h
-// #include <driverspecs.h>
 
 /*
  If no SAL 2 appears to have been defined (_Outptr_ is a representative choice)

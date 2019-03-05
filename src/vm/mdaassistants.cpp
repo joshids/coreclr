@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 
 #include "common.h"
@@ -33,9 +32,6 @@
 ////
 
 
-// Why is ANYTHING in here marked SO_TOLERANT?? Presumably some of them are called from managed code????
-
-
 //
 // MdaFramework
 // 
@@ -46,7 +42,6 @@ void MdaFramework::DumpDiagnostics()
         THROWS;
         GC_TRIGGERS;
         MODE_ANY;
-        SO_NOT_MAINLINE;
     }
     CONTRACTL_END;
     
@@ -84,7 +79,6 @@ void MdaFramework::Initialize(MdaXmlElement* pXmlInput)
         THROWS;
         GC_TRIGGERS;
         MODE_ANY;
-        SO_INTOLERANT;
     }
     CONTRACTL_END;
 
@@ -130,17 +124,13 @@ void TriggerGCForMDAInternal()
         NOTHROW;
         GC_TRIGGERS;
         MODE_COOPERATIVE;
-        SO_TOLERANT;
     }
     CONTRACTL_END;
 
-    BEGIN_SO_INTOLERANT_CODE_NOTHROW(GetThread(), return);
-
     EX_TRY
     {
-        GCHeap::GetGCHeap()->GarbageCollect();
+        GCHeapUtilities::GetGCHeap()->GarbageCollect();
 
-#ifdef FEATURE_SYNCHRONIZATIONCONTEXT_WAIT
         //
         // It is very dangerous to wait for finalizer thread here if we are inside a wait 
         // operation, as the wait operation might call into interop which calls this MDA
@@ -151,7 +141,6 @@ void TriggerGCForMDAInternal()
         // So, if we are inside a SyncContext.Wait, don't call out to FinalizerThreadWait
         //
         if (!GetThread()->HasThreadStateNC(Thread::TSNC_InsideSyncContextWait))
-#endif // FEATURE_SYNCHRONIZATIONCONTEXT_WAIT            
             // It is possible that user code run as part of finalization will wait for this thread.
             // To avoid deadlocks, we limit the wait time to 10 seconds (an arbitrary number).
             FinalizerThread::FinalizerThreadWait(10 * 1000);
@@ -161,8 +150,6 @@ void TriggerGCForMDAInternal()
         // Caller cannot take exceptions.
     }
     EX_END_CATCH(SwallowAllExceptions);
-    
-    END_SO_INTOLERANT_CODE;
 }
 
 //
@@ -190,7 +177,6 @@ void MdaCallbackOnCollectedDelegate::ReportViolation(MethodDesc* pMD)
         THROWS;
         GC_TRIGGERS;
         MODE_ANY;
-        SO_INTOLERANT;
     }
     CONTRACTL_END;
 
@@ -215,7 +201,6 @@ void MdaCallbackOnCollectedDelegate::AddToList(UMEntryThunk* pEntryThunk)
         NOTHROW;
         GC_NOTRIGGER;
         MODE_ANY;
-        SO_INTOLERANT;
         PRECONDITION(CheckPointer(pEntryThunk));
     }
     CONTRACTL_END;
@@ -245,7 +230,6 @@ void MdaCallbackOnCollectedDelegate::ReplaceEntry(int index, UMEntryThunk* pET)
         NOTHROW;
         GC_NOTRIGGER;
         MODE_ANY;
-        SO_INTOLERANT;
         PRECONDITION((index >= 0) && (index < m_size));
         PRECONDITION(CheckPointer(m_pList));
     }
@@ -275,7 +259,6 @@ void MdaInvalidMemberDeclaration::ReportViolation(ComCallMethodDesc *pCMD, OBJEC
         NOTHROW;
         GC_TRIGGERS;
         MODE_COOPERATIVE;
-        SO_INTOLERANT;
     }
     CONTRACTL_END;
 
@@ -336,7 +319,6 @@ void MdaExceptionSwallowedOnCallFromCom::ReportViolation(MethodDesc *pMD, OBJECT
         NOTHROW;
         GC_TRIGGERS;
         MODE_ANY;
-        SO_INTOLERANT;
     }
     CONTRACTL_END;
 
@@ -380,7 +362,6 @@ void MdaInvalidVariant::ReportViolation()
         THROWS;
         GC_TRIGGERS;
         MODE_ANY;
-        SO_INTOLERANT;
     }
     CONTRACTL_END;
 
@@ -401,7 +382,6 @@ void MdaInvalidIUnknown::ReportViolation()
         THROWS;
         GC_TRIGGERS;
         MODE_ANY;
-        SO_INTOLERANT;
     }
     CONTRACTL_END;
 
@@ -422,7 +402,6 @@ void MdaContextSwitchDeadlock::ReportDeadlock(LPVOID Origin, LPVOID Destination)
         NOTHROW;
         GC_TRIGGERS;
         MODE_ANY;
-        SO_INTOLERANT;
     }
     CONTRACTL_END;
 
@@ -454,7 +433,6 @@ void MdaRaceOnRCWCleanup::ReportViolation()
         THROWS;
         GC_TRIGGERS;
         MODE_ANY;
-        SO_INTOLERANT;
     }
     CONTRACTL_END;
 
@@ -475,7 +453,6 @@ void MdaFailedQI::ReportAdditionalInfo(HRESULT hr, RCW* pRCW, GUID iid, MethodTa
         THROWS;
         GC_TRIGGERS;
         MODE_ANY;
-        SO_INTOLERANT;
     }
     CONTRACTL_END;
 
@@ -548,7 +525,6 @@ HRESULT MdaFailedQIAssistantCallback(LPVOID pData)
         NOTHROW;
         GC_TRIGGERS;
         MODE_PREEMPTIVE;
-        SO_TOLERANT;
         PRECONDITION(CheckPointer(pData));
     }
     CONTRACTL_END;
@@ -586,7 +562,6 @@ void MdaDisconnectedContext::ReportViolationDisconnected(LPVOID context, HRESULT
         THROWS;
         GC_TRIGGERS;
         MODE_ANY;
-        SO_INTOLERANT;
     }
     CONTRACTL_END;
 
@@ -609,7 +584,6 @@ void MdaDisconnectedContext::ReportViolationCleanup(LPVOID context1, LPVOID cont
         NOTHROW;
         GC_TRIGGERS;
         MODE_ANY;
-        SO_INTOLERANT;
     }
     CONTRACTL_END;
 
@@ -644,7 +618,6 @@ void MdaInvalidApartmentStateChange::ReportViolation(Thread* pThread, Thread::Ap
         NOTHROW;
         GC_TRIGGERS;
         MODE_ANY;
-        SO_INTOLERANT;
     }
     CONTRACTL_END;
     
@@ -695,18 +668,13 @@ void MdaDllMainReturnsFalse::ReportError()
         THROWS;
         GC_TRIGGERS;
         MODE_ANY;
-        SO_TOLERANT;
     }
     CONTRACTL_END;
-
-    BEGIN_SO_INTOLERANT_CODE_NOTHROW(GetThread(), return);
 
     MdaXmlElement* pXml;
     MdaXmlMessage msg(this->AsMdaAssistant(), TRUE, &pXml);
 
     msg.SendMessagef(MDARC_DLLMAIN_RETURNS_FALSE);
-
-    END_SO_INTOLERANT_CODE;
 }
 
 //
@@ -719,7 +687,6 @@ void MdaOverlappedFreeError::ReportError(LPVOID pOverlapped)
         THROWS;
         GC_TRIGGERS;
         MODE_ANY;
-        SO_INTOLERANT;
     }
     CONTRACTL_END;
 
@@ -752,7 +719,6 @@ Return Flags Mda_##Name Args                                                    
     {                                                                                                       \
         THROWS;                                                                                             \
         GC_TRIGGERS;                                                                                        \
-        SO_TOLERANT;                                                                                        \
         MODE_ANY;                                                                                           \
     }                                                                                                       \
     CONTRACTL_END;                                                                                          \
@@ -782,8 +748,6 @@ void MdaInvalidOverlappedToPinvoke::Initialize(MdaXmlElement* pXmlInput)
     }
     CONTRACTL_END;
 
-// TODO: CONTRACT_VIOLATION(SOToleranceViolation);
-
     m_entries = PInvokeTable;
     m_entryCount = sizeof(PInvokeTable) / sizeof(pinvoke_entry);
     m_bJustMyCode = pXmlInput->GetAttributeValueAsBool(MdaAttrDecl(JustMyCode));    
@@ -796,7 +760,6 @@ BOOL MdaInvalidOverlappedToPinvoke::InitializeModuleFunctions(HINSTANCE hmod)
         THROWS;
         GC_TRIGGERS;
         MODE_ANY;
-        SO_TOLERANT;
     }
     CONTRACTL_END;
 
@@ -804,8 +767,6 @@ BOOL MdaInvalidOverlappedToPinvoke::InitializeModuleFunctions(HINSTANCE hmod)
     // and fill in the m_realFunction pointer.
 
     BOOL bFoundSomething = FALSE;
-
-    BEGIN_SO_INTOLERANT_CODE_NOTHROW(GetThread(), return FALSE);
 
     SString moduleNameFullPath, moduleName;
     ClrGetModuleFileNameNoThrow(hmod,moduleNameFullPath);
@@ -832,8 +793,6 @@ BOOL MdaInvalidOverlappedToPinvoke::InitializeModuleFunctions(HINSTANCE hmod)
         }
     }
 
-    END_SO_INTOLERANT_CODE;
-
     return bFoundSomething;
 }
 
@@ -844,7 +803,6 @@ LPVOID MdaInvalidOverlappedToPinvoke::CheckOverlappedPointer(UINT index, LPVOID 
         THROWS;
         GC_TRIGGERS;
         MODE_ANY;
-        SO_TOLERANT;
     }
     CONTRACTL_END;
 
@@ -861,15 +819,11 @@ LPVOID MdaInvalidOverlappedToPinvoke::CheckOverlappedPointer(UINT index, LPVOID 
     // Is the overlapped pointer in the gc heap?
     if (pOverlapped != NULL)
     {
-        // If a stack overflow occurs, we would just want to continue and
-        // return the function pointer as expected.
-        BEGIN_SO_INTOLERANT_CODE_NOTHROW(GetThread(), return pEntry->m_realFunction);
-
         BOOL fHeapPointer;
 
         {
             GCX_COOP();
-            GCHeap *pHeap = GCHeap::GetGCHeap();
+            IGCHeap *pHeap = GCHeapUtilities::GetGCHeap();
             fHeapPointer = pHeap->IsHeapPointer(pOverlapped);
         }
 
@@ -884,8 +838,6 @@ LPVOID MdaInvalidOverlappedToPinvoke::CheckOverlappedPointer(UINT index, LPVOID 
                 pEntry->m_functionName,
                 pEntry->m_moduleName);
         }
-
-        END_SO_INTOLERANT_CODE;
     }
     
     return pEntry->m_realFunction;
@@ -907,7 +859,6 @@ LPVOID MdaInvalidOverlappedToPinvoke::Register(HINSTANCE hmod,LPVOID pvTarget)
         THROWS;
         GC_TRIGGERS;
         MODE_ANY;
-        SO_TOLERANT;
     }
     CONTRACTL_END;
 
@@ -959,7 +910,6 @@ BOOL MdaPInvokeLog::Filter(SString& sszDllName)
         THROWS;
         GC_TRIGGERS;
         MODE_ANY;
-        SO_INTOLERANT;
     }
     CONTRACTL_END;
 
@@ -987,7 +937,6 @@ void MdaPInvokeLog::LogPInvoke(NDirectMethodDesc* pMD, HINSTANCE hMod)
         NOTHROW;
         GC_TRIGGERS;
         MODE_ANY;
-        SO_INTOLERANT;
     }
     CONTRACTL_END;
 
@@ -996,12 +945,12 @@ void MdaPInvokeLog::LogPInvoke(NDirectMethodDesc* pMD, HINSTANCE hMod)
         StackSString sszEntryPoint;
         sszEntryPoint.SetUTF8(pMD->GetEntrypointName());
 
-        WCHAR szDllFullName[_MAX_PATH] = {0};
+        PathString szDllFullName ;
         WCHAR szDrive[_MAX_PATH] = {0};
         WCHAR szPath[_MAX_PATH] = {0};
         WCHAR szFileName[_MAX_PATH] = {0};
         WCHAR szExt[_MAX_PATH] = {0};
-        WszGetModuleFileName(hMod, szDllFullName, _MAX_PATH);      
+        WszGetModuleFileName(hMod, szDllFullName);      
         SplitPath(szDllFullName, szDrive, _MAX_PATH, szPath, _MAX_PATH, szFileName, _MAX_PATH, szExt, _MAX_PATH);
 
         StackSString sszDllName;
@@ -1043,7 +992,6 @@ void MdaPInvokeStackImbalance::CheckStack(StackImbalanceCookie *pSICookie, DWORD
         THROWS;
         GC_TRIGGERS;
         MODE_ANY;
-        SO_TOLERANT;
     }
     CONTRACTL_END;
 
@@ -1102,8 +1050,6 @@ void MdaPInvokeStackImbalance::CheckStack(StackImbalanceCookie *pSICookie, DWORD
     if (!bStackImbalance)
         return;
 
-    BEGIN_SO_INTOLERANT_CODE(GetThread());
-
     MdaXmlElement* pXml;
     MdaXmlMessage msg(this->AsMdaAssistant(), TRUE, &pXml);
     MdaXmlElement* pMethod = pXml->AddChild(MdaElemDecl(Method));
@@ -1111,8 +1057,6 @@ void MdaPInvokeStackImbalance::CheckStack(StackImbalanceCookie *pSICookie, DWORD
     
     StackSString sszMethodName;
     msg.SendMessagef(MDARC_PINVOKE_SIGNATURE_MISMATCH, AsMdaAssistant()->ToString(sszMethodName, pSICookie->m_pMD).GetUnicode());
-
-    END_SO_INTOLERANT_CODE;
 }
 #endif
 
@@ -1127,7 +1071,6 @@ void MdaJitCompilationStart::Initialize(MdaXmlElement* pXmlInput)
         THROWS;
         GC_TRIGGERS;
         MODE_ANY;
-        SO_INTOLERANT;
     }
     CONTRACTL_END;
 
@@ -1149,7 +1092,6 @@ void MdaJitCompilationStart::NowCompiling(MethodDesc* pMD)
         THROWS;
         GC_TRIGGERS;
         MODE_ANY;
-        SO_INTOLERANT;
     }
     CONTRACTL_END;
 
@@ -1175,7 +1117,6 @@ void MdaLoadFromContext::NowLoading(IAssembly** ppIAssembly, StackCrawlMark *pCa
         THROWS;
         GC_TRIGGERS;
         MODE_ANY;
-        SO_INTOLERANT;
     }
     CONTRACTL_END;
 
@@ -1237,7 +1178,6 @@ void MdaBindingFailure::BindFailed(AssemblySpec *pSpec, OBJECTREF *pExceptionObj
         THROWS;
         GC_TRIGGERS;
         MODE_ANY;
-        SO_INTOLERANT;
     }
     CONTRACTL_END;
 
@@ -1315,157 +1255,6 @@ void MdaBindingFailure::BindFailed(AssemblySpec *pSpec, OBJECTREF *pExceptionObj
     }
 }
 
-
-//
-// MdaReflection
-//
-FCIMPL0(void, MdaManagedSupport::MemberInfoCacheCreation)
-{
-    FCALL_CONTRACT;
-
-    HELPER_METHOD_FRAME_BEGIN_0();
-    {
-        MdaMemberInfoCacheCreation* pMda = MDA_GET_ASSISTANT(MemberInfoCacheCreation);
-        if (pMda)
-        {
-            pMda->MemberInfoCacheCreation();
-        }
-    }
-    HELPER_METHOD_FRAME_END();
-}
-FCIMPLEND
-
-void MdaMemberInfoCacheCreation::MemberInfoCacheCreation()
-{
-    CONTRACTL
-    {
-        THROWS;
-        GC_TRIGGERS;
-        MODE_ANY;
-        SO_INTOLERANT;
-    }
-    CONTRACTL_END;
-
-    MdaXmlElement* pXml;
-    MdaXmlMessage msg(this->AsMdaAssistant(), TRUE, &pXml);
-    
-    msg.SendMessage(MDARC_REFLECTION_PERFORMANCE_MEMBERINFOCACHECREATION);
-}
-
-
-FCIMPL0(FC_BOOL_RET, MdaManagedSupport::IsStreamWriterBufferedDataLostEnabled)
-{
-    FCALL_CONTRACT;
-
-    // To see if it's enabled, allocate one then throw it away.
-    MdaStreamWriterBufferedDataLost* pMda = MDA_GET_ASSISTANT(StreamWriterBufferedDataLost);
-        
-    FC_RETURN_BOOL(pMda != NULL);
-}
-FCIMPLEND
-
-FCIMPL0(FC_BOOL_RET, MdaManagedSupport::IsStreamWriterBufferedDataLostCaptureAllocatedCallStack)
-{
-    FCALL_CONTRACT;
-
-    // To see if it's enabled, allocate one then throw it away.
-    MdaStreamWriterBufferedDataLost* pMda = MDA_GET_ASSISTANT(StreamWriterBufferedDataLost);
-        
-    FC_RETURN_BOOL((pMda != NULL) && (pMda->CaptureAllocatedCallStack()));
-}
-FCIMPLEND
-
-FCIMPL1(void, MdaManagedSupport::ReportStreamWriterBufferedDataLost, StringObject * stringRef)
-{
-    FCALL_CONTRACT;
-
-    STRINGREF str(stringRef);
-    MdaStreamWriterBufferedDataLost* pMda = MDA_GET_ASSISTANT(StreamWriterBufferedDataLost);
-    if (pMda)
-    {
-        HELPER_METHOD_FRAME_BEGIN_1(str);
-        StackSString message(str->GetBuffer());
-        pMda->ReportError(message);
-        HELPER_METHOD_FRAME_END();
-    }   
-}
-FCIMPLEND
-
-FCIMPL0(FC_BOOL_RET, MdaManagedSupport::IsInvalidGCHandleCookieProbeEnabled)
-{
-    FCALL_CONTRACT;
-
-    // To see if it's enabled, allocate one then throw it away.
-    MdaInvalidGCHandleCookie* pMda = MDA_GET_ASSISTANT(InvalidGCHandleCookie);
-        
-    FC_RETURN_BOOL(pMda != NULL);
-}
-FCIMPLEND
-
-FCIMPL1(void, MdaManagedSupport::FireInvalidGCHandleCookieProbe, LPVOID cookie)
-{
-    FCALL_CONTRACT;
-
-    MdaInvalidGCHandleCookie* pMda = MDA_GET_ASSISTANT(InvalidGCHandleCookie);
-    if (pMda)
-    {
-        HELPER_METHOD_FRAME_BEGIN_0();
-        pMda->ReportError(cookie);
-        HELPER_METHOD_FRAME_END();
-    }
-}
-FCIMPLEND
-
-FCIMPL1(void, MdaManagedSupport::ReportErrorSafeHandleRelease, ExceptionObject * exceptionRef)
-{
-    FCALL_CONTRACT;
-
-    OBJECTREF exception(exceptionRef);
-    MdaMarshalCleanupError* pMda = MDA_GET_ASSISTANT(MarshalCleanupError);
-    if (pMda)
-    {
-        HELPER_METHOD_FRAME_BEGIN_1(exception);
-        pMda->ReportErrorSafeHandleRelease(&exception);
-        HELPER_METHOD_FRAME_END();
-    }
-}
-FCIMPLEND
-
-void MdaInvalidGCHandleCookie::ReportError(LPVOID cookie)
-{
-    CONTRACTL
-    {
-        THROWS;
-        GC_TRIGGERS;
-        MODE_ANY;
-        SO_INTOLERANT;
-    }
-    CONTRACTL_END;
-
-    MdaXmlElement* pXml;
-    MdaXmlMessage msg(this->AsMdaAssistant(), TRUE, &pXml);
-
-    msg.SendMessagef(MDARC_INVALID_GCHANDLE_COOKIE, cookie);
-}
-
-void MdaStreamWriterBufferedDataLost::ReportError(SString text)
-{
-    CONTRACTL
-    {
-        THROWS;
-        GC_TRIGGERS;
-        MODE_ANY;
-        SO_INTOLERANT;
-    }
-    CONTRACTL_END;
-    
-    MdaXmlElement* pXml;
-    MdaXmlMessage msg(this->AsMdaAssistant(), TRUE, &pXml);
-    
-    msg.SendMessage(text);
-}
-
-
 //
 // MdaNotMarshalable
 //
@@ -1476,7 +1265,6 @@ void MdaNotMarshalable::ReportViolation()
         THROWS;
         GC_TRIGGERS;
         MODE_ANY;
-        SO_INTOLERANT;
     }
     CONTRACTL_END;
 
@@ -1497,7 +1285,6 @@ void MdaMarshalCleanupError::ReportErrorThreadCulture(OBJECTREF *pExceptionObj)
         NOTHROW;
         GC_TRIGGERS;
         MODE_ANY;
-        SO_INTOLERANT;
     }
     CONTRACTL_END;
 
@@ -1518,34 +1305,6 @@ void MdaMarshalCleanupError::ReportErrorThreadCulture(OBJECTREF *pExceptionObj)
     EX_END_CATCH(SwallowAllExceptions);
 }
 
-void MdaMarshalCleanupError::ReportErrorSafeHandleRelease(OBJECTREF *pExceptionObj)
-{
-    CONTRACTL
-    {
-        NOTHROW;
-        GC_TRIGGERS;
-        MODE_ANY;
-        SO_INTOLERANT;
-    }
-    CONTRACTL_END;
-
-    EX_TRY
-    {
-        MdaXmlElement* pXml;
-        MdaXmlMessage msg(this->AsMdaAssistant(), TRUE, &pXml);
-
-        // retrieve the exception message.
-        SString sszMessage;
-        GetExceptionMessage(*pExceptionObj, sszMessage);
-
-        msg.SendMessagef(MDARC_MARSHALCLEANUPERROR_SAFEHANDLERELEASE, sszMessage.GetUnicode());
-    }
-    EX_CATCH
-    {
-    }
-    EX_END_CATCH(SwallowAllExceptions);
-}
-
 void MdaMarshalCleanupError::ReportErrorSafeHandleProp(OBJECTREF *pExceptionObj)
 {
     CONTRACTL
@@ -1553,7 +1312,6 @@ void MdaMarshalCleanupError::ReportErrorSafeHandleProp(OBJECTREF *pExceptionObj)
         NOTHROW;
         GC_TRIGGERS;
         MODE_ANY;
-        SO_INTOLERANT;
     }
     CONTRACTL_END;
 
@@ -1581,7 +1339,6 @@ void MdaMarshalCleanupError::ReportErrorCustomMarshalerCleanup(TypeHandle typeCu
         NOTHROW;
         GC_TRIGGERS;
         MODE_ANY;
-        SO_INTOLERANT;
     }
     CONTRACTL_END;
 
@@ -1608,246 +1365,6 @@ void MdaMarshalCleanupError::ReportErrorCustomMarshalerCleanup(TypeHandle typeCu
 }
 
 //
-// MdaMarshaling
-//
-void MdaMarshaling::Initialize(MdaXmlElement* pXmlInput)
-{
-    CONTRACTL
-    {
-        THROWS;
-        GC_TRIGGERS;
-        MODE_ANY;
-        SO_INTOLERANT;
-    }
-    CONTRACTL_END;
-    
-    m_pMethodFilter = new MdaQuery::CompiledQueries();
-    m_pFieldFilter = new MdaQuery::CompiledQueries();
-
-    MdaXmlElement* pXmlMethodFilter = pXmlInput->GetChild(MdaElemDecl(MethodFilter));
-    if (pXmlMethodFilter)
-        MdaQuery::Compile(pXmlMethodFilter, m_pMethodFilter);
-
-    MdaXmlElement* pXmlFieldFilter = pXmlInput->GetChild(MdaElemDecl(FieldFilter));
-    if (pXmlFieldFilter)
-        MdaQuery::Compile(pXmlFieldFilter, m_pFieldFilter);
-}
-
-void MdaMarshaling::ReportFieldMarshal(FieldMarshaler* pFM)
-{
-    CONTRACTL
-    {
-        THROWS;
-        GC_TRIGGERS;
-        MODE_ANY;
-        SO_INTOLERANT;
-        PRECONDITION(CheckPointer(pFM));
-    }
-    CONTRACTL_END;
-
-    FieldDesc* pFD = pFM->GetFieldDesc();
-
-    if (!pFD || !m_pFieldFilter->Test(pFD))
-        return;
-
-    MdaXmlElement* pXml;
-    MdaXmlMessage msg(this->AsMdaAssistant(), FALSE, &pXml);
-    
-    MdaXmlElement* pField = pXml->AddChild(MdaElemDecl(MarshalingField));
-    AsMdaAssistant()->OutputFieldDesc(pFD, pField);
-
-    StackSString sszField;
-    SString managed;
-    SString unmanaged;
-        
-    GetManagedSideForField(managed, pFD);
-    GetUnmanagedSideForField(unmanaged, pFM);
-
-    msg.SendMessagef(MDARC_MARSHALING_FIELD, AsMdaAssistant()->ToString(sszField, pFD).GetUnicode(), managed.GetUnicode(), unmanaged.GetUnicode());
-}
-
-
-void MdaMarshaling::GetManagedSideForField(SString& strManagedMarshalType, FieldDesc* pFD)
-{
-    CONTRACTL
-    {
-        THROWS;
-        GC_TRIGGERS;
-        MODE_ANY;
-        SO_INTOLERANT;
-    }
-    CONTRACTL_END;
-
-    if (!CheckForPrimitiveType(pFD->GetFieldType(), strManagedMarshalType))
-    {
-        // The following workaround is added to avoid a recursion caused by calling GetTypeHandle on
-        // the m_value field of the UIntPtr class.
-        LPCUTF8 szNamespace, szClassName;
-        IfFailThrow(pFD->GetMDImport()->GetNameOfTypeDef(pFD->GetApproxEnclosingMethodTable()->GetCl(), &szClassName, &szNamespace));
-        
-        if (strcmp(szNamespace, "System") == 0 && strcmp(szClassName, "UIntPtr") == 0)
-        {
-            static LPWSTR strRetVal = W("Void*");
-            strManagedMarshalType.Set(strRetVal);
-        }
-        else
-        {
-            MetaSig fSig(pFD);
-            fSig.NextArgNormalized();
-            TypeHandle th = fSig.GetLastTypeHandleNT();
-            if (th.IsNull())
-            {
-                static const WCHAR strErrorMsg[] = W("<error>");
-                strManagedMarshalType.Set(strErrorMsg);
-            }
-            else
-            {
-                SigFormat sigFmt;
-                sigFmt.AddType(th);
-                UINT iManagedTypeLen = (UINT)strlen(sigFmt.GetCString()) + 1;
-
-                WCHAR* buffer = strManagedMarshalType.OpenUnicodeBuffer(iManagedTypeLen);
-                MultiByteToWideChar(CP_ACP, MB_PRECOMPOSED, sigFmt.GetCString(), -1, buffer, iManagedTypeLen);
-                strManagedMarshalType.CloseBuffer();
-            }
-        }
-    }
-}
-
-void MdaMarshaling::GetUnmanagedSideForField(SString& strUnmanagedMarshalType, FieldMarshaler* pFM)
-{
-    CONTRACTL
-    {
-        THROWS;
-        GC_NOTRIGGER;
-        MODE_ANY;
-        SO_INTOLERANT;
-    }
-    CONTRACTL_END;
-
-    NStructFieldTypeToString(pFM, strUnmanagedMarshalType);
-}
-
-
-void MdaMarshaling::GetManagedSideForMethod(SString& strManagedMarshalType, Module* pModule, SigPointer sig, CorElementType elemType)
-{
-    CONTRACTL
-    {
-        THROWS;
-        GC_TRIGGERS;
-        MODE_ANY;
-        SO_INTOLERANT;
-    }
-    CONTRACTL_END;
-
-    if (!CheckForPrimitiveType(elemType, strManagedMarshalType))
-    {        
-        // an empty type context is sufficient: all methods should be non-generic
-        SigTypeContext emptyTypeContext;
-
-        TypeHandle th = sig.GetTypeHandleNT(pModule, &emptyTypeContext);
-        if (th.IsNull())
-        {
-            strManagedMarshalType.Set(W("<error>"));
-        }
-        else
-        {
-            SigFormat sigfmt;
-            sigfmt.AddType(th);
-            UINT iManagedMarshalTypeLength = MultiByteToWideChar( CP_ACP, MB_PRECOMPOSED, sigfmt.GetCString(), -1, NULL, 0);
-                
-            WCHAR* str = strManagedMarshalType.OpenUnicodeBuffer(iManagedMarshalTypeLength);
-            MultiByteToWideChar( CP_ACP, MB_PRECOMPOSED, sigfmt.GetCString(), -1, str, iManagedMarshalTypeLength);
-            strManagedMarshalType.CloseBuffer();
-        }
-    }  
-}
-
-
-void MdaMarshaling::GetUnmanagedSideForMethod(SString& strNativeMarshalType, MarshalInfo* mi, BOOL fSizeIsSpecified)
-{
-    CONTRACTL
-    {
-        THROWS;
-        GC_TRIGGERS;
-        MODE_ANY;
-        SO_INTOLERANT;
-    }
-    CONTRACTL_END;
-    
-    mi->MarshalTypeToString(strNativeMarshalType, fSizeIsSpecified);    
-}
-
-BOOL MdaMarshaling::CheckForPrimitiveType(CorElementType elemType, SString& strPrimitiveType)
-{
-    CONTRACTL
-    {
-        THROWS;
-        GC_NOTRIGGER;
-        MODE_ANY;
-        SO_INTOLERANT;
-        INJECT_FAULT(COMPlusThrowOM());
-    }
-    CONTRACTL_END;
-    
-    LPWSTR  strRetVal;
-
-    switch (elemType)
-    {
-        case ELEMENT_TYPE_VOID:
-            strRetVal = W("Void");
-            break;
-        case ELEMENT_TYPE_BOOLEAN:
-            strRetVal = W("Boolean");
-            break;
-        case ELEMENT_TYPE_I1:
-            strRetVal = W("SByte");
-            break;
-        case ELEMENT_TYPE_U1:
-            strRetVal = W("Byte");
-            break;
-        case ELEMENT_TYPE_I2:
-            strRetVal = W("Int16");
-            break;
-        case ELEMENT_TYPE_U2:
-            strRetVal = W("UInt16");
-            break;
-        case ELEMENT_TYPE_CHAR:
-            strRetVal = W("Char");
-            break;
-        case ELEMENT_TYPE_I:
-            strRetVal = W("IntPtr");
-            break;
-        case ELEMENT_TYPE_U:
-            strRetVal = W("UIntPtr");
-            break;
-        case ELEMENT_TYPE_I4:
-            strRetVal = W("Int32"); 
-            break;
-        case ELEMENT_TYPE_U4:       
-            strRetVal = W("UInt32"); 
-            break;
-        case ELEMENT_TYPE_I8:       
-            strRetVal = W("Int64"); 
-            break;
-        case ELEMENT_TYPE_U8:       
-            strRetVal = W("UInt64"); 
-            break;
-        case ELEMENT_TYPE_R4:       
-            strRetVal = W("Single"); 
-            break;
-        case ELEMENT_TYPE_R8:       
-            strRetVal = W("Double"); 
-            break;
-        default:
-            return FALSE;
-    }
-
-    strPrimitiveType.Set(strRetVal);
-    return TRUE;
-}
-
-//
 // MdaLoaderLock
 //
 void MdaLoaderLock::ReportViolation(HINSTANCE hInst)
@@ -1857,12 +1374,8 @@ void MdaLoaderLock::ReportViolation(HINSTANCE hInst)
         NOTHROW;
         GC_TRIGGERS;
         MODE_ANY;
-        // Called from SO_TOLERANT CODE
-        SO_TOLERANT;
     }
     CONTRACTL_END;
-
-    BEGIN_SO_INTOLERANT_CODE_NOTHROW(GetThread(), return);
 
     EX_TRY
     {
@@ -1870,16 +1383,14 @@ void MdaLoaderLock::ReportViolation(HINSTANCE hInst)
         MdaXmlMessage msg(this->AsMdaAssistant(), TRUE, &pXml);
 
         DWORD cName = 0;
-        WCHAR szName[_MAX_PATH * 2];
+        PathString szName;
         if (hInst)
         {
-            cName = _MAX_PATH * 2 - 1;
-            cName = WszGetModuleFileName(hInst, szName, cName);
+            cName = WszGetModuleFileName(hInst, szName);
         }
 
         if (cName)
         {
-            szName[cName] = W('\0');
             msg.SendMessagef(MDARC_LOADER_LOCK_DLL, szName);
         }
         else
@@ -1892,8 +1403,6 @@ void MdaLoaderLock::ReportViolation(HINSTANCE hInst)
         // Caller cannot take exceptions.
     }
     EX_END_CATCH(SwallowAllExceptions);
-
-    END_SO_INTOLERANT_CODE;
 }
 
 
@@ -1907,11 +1416,8 @@ void MdaReentrancy::ReportViolation()
         NOTHROW;
         GC_TRIGGERS;
         MODE_ANY;
-        SO_TOLERANT;
     }
     CONTRACTL_END;
-
-    BEGIN_SO_INTOLERANT_CODE_NOTHROW(GetThread(), return);
 
     EX_TRY
     {
@@ -1925,8 +1431,6 @@ void MdaReentrancy::ReportViolation()
         // Caller cannot take exceptions.
     }
     EX_END_CATCH(SwallowAllExceptions);
-
-    END_SO_INTOLERANT_CODE;
 }
 
 //
@@ -1939,7 +1443,6 @@ void MdaAsynchronousThreadAbort::ReportViolation(Thread *pCallingThread, Thread 
         NOTHROW;
         GC_TRIGGERS;
         MODE_ANY;
-        SO_INTOLERANT;
     }
     CONTRACTL_END;
 
@@ -1971,7 +1474,6 @@ void MdaDangerousThreadingAPI::ReportViolation(__in_z WCHAR *apiName)
         THROWS;
         GC_TRIGGERS;
         MODE_ANY;
-        SO_INTOLERANT;
     }
     CONTRACTL_END;
 
@@ -1993,7 +1495,6 @@ void MdaReportAvOnComRelease::ReportHandledException(RCW* pRCW)
         NOTHROW;
         GC_TRIGGERS;
         MODE_ANY;
-        SO_INTOLERANT;
     }
     CONTRACTL_END;
 
@@ -2029,7 +1530,6 @@ void MdaInvalidFunctionPointerInDelegate::ReportViolation(LPVOID pFunc)
         THROWS;
         GC_TRIGGERS;
         MODE_ANY;
-        SO_INTOLERANT;
     }
     CONTRACTL_END;
 
@@ -2050,7 +1550,6 @@ void MdaDirtyCastAndCallOnInterface::ReportViolation(IUnknown* pUnk)
         THROWS;
         GC_TRIGGERS;
         MODE_ANY;
-        SO_INTOLERANT;
     }
     CONTRACTL_END;
 
@@ -2070,7 +1569,6 @@ void MdaFatalExecutionEngineError::ReportFEEE(TADDR addrOfError, HRESULT hrError
         NOTHROW;
         GC_TRIGGERS;
         MODE_ANY;
-        SO_INTOLERANT;
     }
     CONTRACTL_END;
 
@@ -2101,7 +1599,6 @@ void MdaInvalidCERCall::ReportViolation(MethodDesc* pCallerMD, MethodDesc *pCall
         THROWS;
         GC_TRIGGERS;
         MODE_ANY;
-        SO_INTOLERANT;
     }
     CONTRACTL_END;
 
@@ -2127,7 +1624,6 @@ void MdaVirtualCERCall::ReportViolation(MethodDesc* pCallerMD, MethodDesc *pCall
         THROWS;
         GC_TRIGGERS;
         MODE_ANY;
-        SO_INTOLERANT;
     }
     CONTRACTL_END;
 
@@ -2153,7 +1649,6 @@ void MdaOpenGenericCERCall::ReportViolation(MethodDesc* pMD)
         THROWS;
         GC_TRIGGERS;
         MODE_ANY;
-        SO_INTOLERANT;
     }
     CONTRACTL_END;
 
@@ -2177,7 +1672,6 @@ void MdaIllegalPrepareConstrainedRegion::ReportViolation(MethodDesc* pMD, DWORD 
         THROWS;
         GC_TRIGGERS;
         MODE_ANY;
-        SO_INTOLERANT;
     }
     CONTRACTL_END;
 
@@ -2201,7 +1695,6 @@ void MdaReleaseHandleFailed::ReportViolation(TypeHandle th, LPVOID lpvHandle)
         THROWS;
         GC_TRIGGERS;
         MODE_ANY;
-        SO_INTOLERANT;
     }
     CONTRACTL_END;
 
@@ -2231,7 +1724,6 @@ void MdaNonComVisibleBaseClass::ReportViolation(MethodTable *pMT, BOOL fForIDisp
         THROWS;
         GC_TRIGGERS;
         MODE_ANY;
-        SO_INTOLERANT;
     }
     CONTRACTL_END;
 
@@ -2275,7 +1767,6 @@ void MdaXmlValidationError::ReportError(MdaSchema::ValidationResult* pValidation
         GC_TRIGGERS;
         MODE_ANY;
         DEBUG_ONLY;
-        SO_NOT_MAINLINE;
     }
     CONTRACTL_END;
     PRECONDITION(CheckPointer(pValidationResult->m_pViolatingElement));
@@ -2303,7 +1794,6 @@ void MdaInvalidConfigFile::ReportError(MdaElemDeclDef configFile)
         GC_TRIGGERS;
         MODE_ANY;
         DEBUG_ONLY;
-        SO_NOT_MAINLINE;
     }
     CONTRACTL_END;
 
@@ -2315,41 +1805,6 @@ void MdaInvalidConfigFile::ReportError(MdaElemDeclDef configFile)
     
     report.SendMessagef(MDARC_INVALID_CONFIG_FILE, szConfigFile);
 }
-
-//
-// MdaDateTimeInvalidLocalFormat
-//
-void MdaDateTimeInvalidLocalFormat::ReportError()
-{
-    CONTRACTL
-    {
-        THROWS;
-        GC_TRIGGERS;
-        MODE_ANY;
-        DEBUG_ONLY;
-        SO_NOT_MAINLINE;
-    }
-    CONTRACTL_END;
-
-    MdaXmlElement* pXml;
-    MdaXmlMessage msg(this->AsMdaAssistant(), TRUE, &pXml);
-
-    msg.SendMessagef(MDARC_DATETIME_INVALID_LOCAL_FORMAT);
-}
-
-FCIMPL0(void, MdaManagedSupport::DateTimeInvalidLocalFormat)
-{
-    FCALL_CONTRACT;
-
-    MdaDateTimeInvalidLocalFormat* pMda = MDA_GET_ASSISTANT(DateTimeInvalidLocalFormat);
-    if (pMda)
-    {
-        HELPER_METHOD_FRAME_BEGIN_0();
-        pMda->ReportError();
-        HELPER_METHOD_FRAME_END();
-    }
-}
-FCIMPLEND
 
 #endif
 #endif //MDA_SUPPORTED

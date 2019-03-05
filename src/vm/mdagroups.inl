@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 
 //
@@ -23,7 +22,6 @@ MDA_GROUP_DEFINITION(managedDebugger)
     MDA_GROUP_MEMBER(CallbackOnCollectedDelegate)
     MDA_GROUP_MEMBER(ContextSwitchDeadlock)
     MDA_GROUP_MEMBER(DangerousThreadingAPI)
-    MDA_GROUP_MEMBER(DateTimeInvalidLocalFormat)
     MDA_GROUP_MEMBER(DisconnectedContext)
     MDA_GROUP_MEMBER(DllMainReturnsFalse)
     MDA_GROUP_MEMBER(ExceptionSwallowedOnCallFromCom)
@@ -46,7 +44,6 @@ MDA_GROUP_DEFINITION(managedDebugger)
     MDA_GROUP_MEMBER(Reentrancy)
     MDA_GROUP_MEMBER(ReleaseHandleFailed)
     MDA_GROUP_MEMBER(ReportAvOnComRelease)
-    MDA_GROUP_MEMBER(StreamWriterBufferedDataLost)   
 MDA_GROUP_DEFINITION_END(managedDebugger) 
 
 MDA_GROUP_DEFINITION(unmanagedDebugger) 
@@ -57,7 +54,6 @@ MDA_GROUP_DEFINITION_END(unmanagedDebugger)
 MDA_GROUP_DEFINITION(halting) 
     MDA_GROUP_MEMBER(CallbackOnCollectedDelegate)
     MDA_GROUP_MEMBER(ContextSwitchDeadlock)
-    MDA_GROUP_MEMBER(DateTimeInvalidLocalFormat)
     MDA_GROUP_MEMBER(DisconnectedContext)
     MDA_GROUP_MEMBER(FatalExecutionEngineError)    
     MDA_GROUP_MEMBER(InvalidFunctionPointerInDelegate)

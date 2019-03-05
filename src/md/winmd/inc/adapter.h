@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 #ifndef __MDWinMDAdapter__h__
 #define __MDWinMDAdapter__h__
 
@@ -137,7 +136,7 @@ public:
     static BOOL ConvertWellKnownTypeNameFromClrToWinRT(LPCSTR *pszFullName);
 
     // Map a well-known CLR typename to WinRT typename
-    static BOOL WinMDAdapter::ConvertWellKnownTypeNameFromClrToWinRT(LPCSTR *pszNamespace, LPCSTR *pszName);
+    static BOOL ConvertWellKnownTypeNameFromClrToWinRT(LPCSTR *pszNamespace, LPCSTR *pszName);
         
     // Returns names of redirected type 'index'.
     static void GetRedirectedTypeInfo(
@@ -237,14 +236,12 @@ public:
             if (pusRevisionNumber != nullptr)
                 *pusRevisionNumber = VER_ASSEMBLYBUILD_QFE;
 
-#ifdef FEATURE_CORECLR
             // Under CoreCLR, we replace the ECMA key in the mscorlib assembly ref with the CoreCLR platform public key token
             if (ppbPublicKeyOrToken != nullptr)
             {
                 *ppbPublicKeyOrToken = g_rbTheSilverlightPlatformKeyToken;
                 *pcbPublicKeyOrToken = _countof(g_rbTheSilverlightPlatformKeyToken);
             }
-#endif
         }
         else if (RidFromToken(mdar) > m_rawAssemblyRefCount)
         {

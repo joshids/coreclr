@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //*****************************************************************************
 // PostErrors.cpp
 //
@@ -85,13 +84,11 @@ HRESULT UtilLoadResourceString(CCompRC::ResourceCategory eCategory, UINT iResour
     {
         DISABLED(NOTHROW);
         GC_NOTRIGGER;
-        SO_TOLERANT;
     }
     CONTRACTL_END;
 
     HRESULT retVal = E_OUTOFMEMORY;
 
-    BEGIN_SO_INTOLERANT_CODE_NO_THROW_CHECK_THREAD(return COR_E_STACKOVERFLOW);
     SString::Startup();
     EX_TRY
     {
@@ -108,8 +105,6 @@ HRESULT UtilLoadResourceString(CCompRC::ResourceCategory eCategory, UINT iResour
         retVal = E_OUTOFMEMORY;
     }
     EX_END_CATCH(SwallowAllExceptions);
-
-    END_SO_INTOLERANT_CODE;
 
     return retVal;
 }
@@ -128,13 +123,11 @@ STDAPI UtilLoadStringRCEx(
     {
         DISABLED(NOTHROW);
         GC_NOTRIGGER;
-        SO_TOLERANT;
     }
     CONTRACTL_END;
         
     HRESULT retVal = E_OUTOFMEMORY;
 
-    BEGIN_SO_INTOLERANT_CODE_NO_THROW_CHECK_THREAD(return COR_E_STACKOVERFLOW);
     EX_TRY
     {
         SString::Startup();
@@ -151,7 +144,6 @@ STDAPI UtilLoadStringRCEx(
         retVal = E_OUTOFMEMORY;
     }
     EX_END_CATCH(SwallowAllExceptions);
-    END_SO_INTOLERANT_CODE;
 
     return retVal;
 }

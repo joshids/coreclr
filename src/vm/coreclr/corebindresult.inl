@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 // ============================================================
 //
 // CoreBindResult.inl
@@ -15,18 +14,6 @@
 #define __CORE_BIND_RESULT_INL__
 
 #include "clrprivbinderutil.h"
-
-inline BOOL CoreBindResult::IsFromGAC()
-{
-    LIMITED_METHOD_CONTRACT;
-    return m_bIsFromGAC;
-};
-
-inline BOOL CoreBindResult::IsOnTpaList()
-{
-    LIMITED_METHOD_CONTRACT;
-    return m_bIsOnTpaList;
-};
 
 inline BOOL CoreBindResult::Found()
 {
@@ -48,7 +35,7 @@ inline BOOL CoreBindResult::IsMscorlib()
 #ifndef CROSSGEN_COMPILE
     return pAssembly->GetAssemblyName()->IsMscorlib();
 #else
-    return (pAssembly->GetPath()).EndsWithCaseInsensitive(SString(W("mscorlib.dll")), PEImage::GetFileSystemLocale());
+    return (pAssembly->GetPath()).EndsWithCaseInsensitive(SString(CoreLibName_IL_W), PEImage::GetFileSystemLocale());
 #endif
 }
 
@@ -73,14 +60,12 @@ inline PEImage* CoreBindResult::GetPEImage()
     return m_pAssembly?BINDER_SPACE::GetAssemblyFromPrivAssemblyFast(m_pAssembly)->GetNativeOrILPEImage():NULL;
 };
 
-inline void CoreBindResult::Init(ICLRPrivAssembly* pAssembly, BOOL bFromGAC, BOOL bOnTpaList = FALSE)
+inline void CoreBindResult::Init(ICLRPrivAssembly* pAssembly)
 {
     WRAPPER_NO_CONTRACT;
     m_pAssembly=pAssembly;
     if(pAssembly)
         pAssembly->AddRef();
-    m_bIsFromGAC=bFromGAC;
-    m_bIsOnTpaList = bOnTpaList;
     m_hrBindResult = S_OK;
 }
 
@@ -88,8 +73,6 @@ inline void CoreBindResult::Reset()
 {
     WRAPPER_NO_CONTRACT;
     m_pAssembly=NULL;
-    m_bIsFromGAC=FALSE;
-    m_bIsOnTpaList=FALSE;
     m_hrBindResult = S_OK;
 }
 #ifdef FEATURE_PREJIT

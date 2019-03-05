@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 // ==++==
 //
@@ -48,6 +47,8 @@ OFFSET_OF_FRAME=(4 + SIZEOF__GSCookie)
         //
         // Runtime check for 8-byte alignment. 
         PROLOG_STACK_SAVE r7
+        // We lose stack unwindability here by configuring fp(r7) incorrectely
+        // here.
         and r0, r7, #4
         sub sp, sp, r0
 
@@ -74,32 +75,12 @@ OFFSET_OF_FRAME=(4 + SIZEOF__GSCookie)
         .endm
 
 // ------------------------------------------------------------------
-//
-// Helpers for async (NullRef, AccessViolation) exceptions
-//
-
-        NESTED_ENTRY NakedThrowHelper2,_TEXT,FixContextHandler
-        push         {r0, lr}
-
-        // On entry:
-        //
-        // R0 = Address of FaultingExceptionFrame
-        bl C_FUNC(LinkFrameAndThrow)
-
-        // Target should not return.
-        EMIT_BREAKPOINT
-
-        NESTED_END NakedThrowHelper2, _TEXT
-
-
-        GenerateRedirectedStubWithFrame NakedThrowHelper, NakedThrowHelper2
-
-// ------------------------------------------------------------------
 
         // This helper enables us to call into a funclet after applying the non-volatiles
         NESTED_ENTRY CallEHFunclet, _TEXT, NoHandler
 
         PROLOG_PUSH  "{r4-r11, lr}"
+        PROLOG_STACK_SAVE_OFFSET  r7, #12
         alloc_stack  4
 
         // On entry:
@@ -112,7 +93,9 @@ OFFSET_OF_FRAME=(4 + SIZEOF__GSCookie)
         // Save the SP of this function
         str sp, [r3]
         // apply the non-volatiles corresponding to the CrawlFrame
-        ldm r2, {r4-r11}
+        ldm r2!, {r4-r6}
+        add r2, r2, #4
+        ldm r2!, {r8-r11}
         // Invoke the funclet
         blx r1
 
@@ -125,8 +108,8 @@ OFFSET_OF_FRAME=(4 + SIZEOF__GSCookie)
         // frame pointer for accessing the locals in the parent method.
         NESTED_ENTRY CallEHFilterFunclet, _TEXT, NoHandler
 
-        PROLOG_PUSH  "{lr}"
-        alloc_stack  4
+        PROLOG_PUSH  "{r7, lr}"
+        PROLOG_STACK_SAVE r7
 
         // On entry:
         //
@@ -140,7 +123,6 @@ OFFSET_OF_FRAME=(4 + SIZEOF__GSCookie)
         // Invoke the filter funclet
         blx r2
 
-        free_stack   4
-        EPILOG_POP   "{pc}"
+        EPILOG_POP   "{r7, pc}"
 
         NESTED_END CallEHFilterFunclet, _TEXT

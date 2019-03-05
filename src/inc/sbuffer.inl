@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 // 
 
@@ -13,6 +12,11 @@
 #if defined(_MSC_VER)
 #pragma inline_depth (20)
 #endif
+
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable:4702) // Disable bogus unreachable code warning
+#endif // _MSC_VER
 
 inline SBuffer::SBuffer(PreallocFlag flag, void *buffer, COUNT_T size)
   : m_size(0),
@@ -152,7 +156,6 @@ inline SBuffer::SBuffer(ImmutableFlag immutable, const BYTE *buffer, COUNT_T siz
         POSTCONDITION(Equals(buffer, size));
         NOTHROW;
         GC_NOTRIGGER;
-        SO_TOLERANT;
         SUPPORTS_DAC_HOST_ONLY;
     } 
     CONTRACT_END;
@@ -170,13 +173,10 @@ inline SBuffer::~SBuffer()
     {
         NOTHROW;
         DESTRUCTOR_CHECK;
-        SO_TOLERANT;
         GC_NOTRIGGER;
-        SO_TOLERANT;
         SUPPORTS_DAC_HOST_ONLY;
     }
     CONTRACT_END;
-    VALIDATE_BACKOUT_STACK_CONSUMPTION;  
 
     if (IsAllocated())
     {
@@ -229,7 +229,7 @@ inline void SBuffer::Set(const SBuffer &buffer)
         // From the code for Resize and EnsureMutable, this is clearly impossible.
         PREFIX_ASSUME( (this->m_buffer != NULL) || (buffer.m_size == 0) );
 
-        CopyMemory(m_buffer, buffer.m_buffer, buffer.m_size);
+        MoveMemory(m_buffer, buffer.m_buffer, buffer.m_size);
     }
 
     RETURN;
@@ -255,7 +255,7 @@ inline void SBuffer::Set(const BYTE *buffer, COUNT_T size)
     // From the code for Resize, this is clearly impossible.
     PREFIX_ASSUME( (this->m_buffer != NULL) || (size == 0) );
 
-    CopyMemory(m_buffer, buffer, size);
+    MoveMemory(m_buffer, buffer, size);
 
     RETURN;
 }
@@ -333,7 +333,6 @@ inline COUNT_T SBuffer::GetAllocation() const
         INSTANCE_CHECK;
         NOTHROW;
         GC_NOTRIGGER;
-        SO_TOLERANT;
         SUPPORTS_DAC;
     } 
     CONTRACT_END;
@@ -665,7 +664,6 @@ inline BOOL SBuffer::Equals(const SBuffer &compare) const
         PRECONDITION(compare.Check());
         NOTHROW;
         GC_NOTRIGGER;
-        SO_TOLERANT;
     } 
     CONTRACT_END;
 
@@ -681,7 +679,6 @@ inline BOOL SBuffer::Equals(const BYTE *compare, COUNT_T size) const
         PRECONDITION(CheckSize(size));
         NOTHROW;
         GC_NOTRIGGER;
-        SO_TOLERANT;
     } 
     CONTRACT_END;
 
@@ -851,7 +848,6 @@ inline void SBuffer::TweakSize(COUNT_T size)
         POSTCONDITION(GetSize() == size);
         POSTCONDITION(CheckInvariant(*this));
         NOTHROW;
-        SO_TOLERANT;
         GC_NOTRIGGER;
         SUPPORTS_DAC_HOST_ONLY;
     } 
@@ -1010,14 +1006,11 @@ inline void SBuffer::DeleteBuffer(BYTE *buffer, COUNT_T allocation)
     {
         PRECONDITION(CheckSize(allocation));
         POSTCONDITION(CheckPointer(buffer));
-        SO_TOLERANT;
         NOTHROW;
         GC_NOTRIGGER;
-        SO_TOLERANT;
         SUPPORTS_DAC_HOST_ONLY;
     } 
     CONTRACT_END;
-    VALIDATE_BACKOUT_STACK_CONSUMPTION;  
 
     CONSISTENCY_CHECK(CheckBuffer(buffer, allocation));
 
@@ -1044,7 +1037,6 @@ inline CHECK SBuffer::CheckBuffer(const BYTE *buffer, COUNT_T allocation) const
     {
         NOTHROW;
         GC_NOTRIGGER;
-        SO_TOLERANT;
         CANNOT_TAKE_LOCK;
         PRECONDITION(CheckPointer(buffer));
     }
@@ -1358,7 +1350,6 @@ inline void SBuffer::SetRepresentationField(int value)
         PRECONDITION((value & ~REPRESENTATION_MASK) == 0);
         NOTHROW;
         GC_NOTRIGGER;
-        SO_TOLERANT;
         SUPPORTS_DAC_HOST_ONLY;
     } 
     CONTRACT_END;
@@ -1700,5 +1691,8 @@ inline void SBuffer::Index::Resync(const SBuffer *buffer, BYTE *value) const
     RETURN;
 }
 
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif // _MSC_VER
 
 #endif  // _SBUFFER_INL_

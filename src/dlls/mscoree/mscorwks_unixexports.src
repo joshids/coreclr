@@ -3,12 +3,15 @@ coreclr_create_delegate
 coreclr_execute_assembly
 coreclr_initialize
 coreclr_shutdown
+coreclr_shutdown_2
 
-; Obsolete Unix hosting API, to be removed
-ExecuteAssembly
+; il{d}asm
+MetaDataGetDispenser
+GetMetaDataInternalInterface
+GetMetaDataInternalInterfaceFromPublic
+GetMetaDataPublicInterfaceFromInternal
 
-; PAL initialization and module registration
-PAL_InitializeCoreCLR 
+; PAL module registration
 PAL_RegisterModule
 PAL_UnregisterModule
 
@@ -17,80 +20,41 @@ CoreDllMain
 DllMain
 GetCLRRuntimeHost
 
-; Win32 API and other PAL functions used by the mscorlib
+; Win32 API and other PAL functions used by the System.Private.CoreLib
 CloseHandle
-CoCreateGuid
-CopyFileW
 CoTaskMemAlloc
+CoTaskMemRealloc
 CoTaskMemFree
-CreateDirectoryW
 CreateEventW
-CreateFileW
+CreateEventExW
 CreateMutexW
+CreateMutexExW
 CreateSemaphoreW
-DeleteFileW
-DuplicateHandle
-FindClose
-FindFirstFileW
-FindNextFileW
-FlushFileBuffers
+CreateSemaphoreExW
 FormatMessageW
 FreeEnvironmentStringsW
-GetACP
-GetConsoleCP
-GetConsoleOutputCP
-GetCurrentDirectoryW
-GetCurrentProcess
 GetCurrentProcessId
 GetCurrentThreadId
 GetEnvironmentStringsW
 GetEnvironmentVariableW
-GetFileAttributesExW
-GetFileSize
-GetFileType
-GetFullPathNameW
-GetLongPathNameW
-GetProcAddress
 GetStdHandle
 GetSystemInfo
-GetTempFileNameW
-GetTempPathW
 LocalAlloc
+LocalReAlloc
 LocalFree
-LockFile
-lstrlenA
-lstrlenW
-MapViewOfFile
-MetaDataGetDispenser
-MoveFileExW
-MultiByteToWideChar
 OpenEventW
 OpenMutexW
 OpenSemaphoreW
 OutputDebugStringW
-PAL_Random
 QueryPerformanceCounter  
 QueryPerformanceFrequency
-RaiseException
-ReadFile
 ReleaseMutex
 ReleaseSemaphore
-RemoveDirectoryW
 ResetEvent
-RtlZeroMemory
-SetConsoleCtrlHandler
-SetCurrentDirectoryW
-SetEndOfFile
 SetEnvironmentVariableW
-SetErrorMode
 SetEvent
-SetFileAttributesW
-SetFilePointer
-SetFileTime
-UnlockFile
-UnmapViewOfFile
-VirtualAlloc
-VirtualFree
-VirtualQuery
-WideCharToMultiByte
+SysAllocStringByteLen
+SysAllocStringLen
+SysFreeString
+SysStringLen
 WriteFile

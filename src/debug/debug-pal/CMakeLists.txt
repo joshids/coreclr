@@ -2,6 +2,7 @@
 include_directories(../inc)
 include_directories(../../pal/inc)
 
+add_definitions(-DPAL_STDCPP_COMPAT=1)
 
 if(WIN32)
     #use static crt
@@ -11,6 +12,7 @@ if(WIN32)
 
     set(TWO_WAY_PIPE_SOURCES 
         win/twowaypipe.cpp
+        win/processdescriptor.cpp
     )
 endif(WIN32)
 
@@ -23,8 +25,9 @@ if(CLR_CMAKE_PLATFORM_UNIX)
 
     set(TWO_WAY_PIPE_SOURCES
       unix/twowaypipe.cpp
+      unix/processdescriptor.cpp
     )
 
 endif(CLR_CMAKE_PLATFORM_UNIX)
 
-add_library(debug-pal STATIC ${TWO_WAY_PIPE_SOURCES})
+_add_library(debug-pal STATIC ${TWO_WAY_PIPE_SOURCES})

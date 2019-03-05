@@ -1,5 +1,6 @@
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //
 
 //testing plain double, array member, struct member or class member
@@ -78,7 +79,7 @@ internal class pow2
 
         //Instead of using 10 * Double.Epsilon as the maximum allowed Delta
         //we can use a small value based on the precision of double (15-16 digits)
-        //to accomodate slight differences in the pow intrinsic on ARM
+        //to accommodate slight differences in the pow intrinsic on ARM
         double maxDelta = 9.9E-16;
 
         //straight

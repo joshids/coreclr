@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //
 // File: StubGen.h
 // 
@@ -61,17 +60,26 @@ struct LocalDesc
 
     void MakeByRef()
     {
+        LIMITED_METHOD_CONTRACT;
         ChangeType(ELEMENT_TYPE_BYREF);
     }
 
     void MakePinned()
     {
+        LIMITED_METHOD_CONTRACT;
         ChangeType(ELEMENT_TYPE_PINNED);
+    }
+
+    void MakeArray()
+    {
+        LIMITED_METHOD_CONTRACT;
+        ChangeType(ELEMENT_TYPE_SZARRAY);
     }
 
     // makes the LocalDesc semantically equivalent to ET_TYPE_CMOD_REQD<IsCopyConstructed>/ET_TYPE_CMOD_REQD<NeedsCopyConstructorModifier>
     void MakeCopyConstructedPointer()
     {
+        LIMITED_METHOD_CONTRACT;
         ChangeType(ELEMENT_TYPE_PTR);
         bIsCopyConstructed = TRUE;
     }
@@ -97,22 +105,40 @@ struct LocalDesc
             THROWS;
             GC_TRIGGERS;
             MODE_ANY;
-            PRECONDITION(cbType == 1);    // this only works on 1-element types for now
         }
         CONTRACTL_END;
+
+        bool lastElementTypeIsValueType = false;
         
         if (ElementType[0] == ELEMENT_TYPE_VALUETYPE)
         {
-            return true;
+            lastElementTypeIsValueType = true;
         }
         else if ((ElementType[0] == ELEMENT_TYPE_INTERNAL) &&
                     (InternalToken.IsNativeValueType() ||
                      InternalToken.GetMethodTable()->IsValueType()))
         {
-            return true;
+            lastElementTypeIsValueType = true;
         }
 
-        return false;
+        if (!lastElementTypeIsValueType)
+        {
+             return false;
+        }
+
+        // verify that the prefix element types don't make the type a non-value type
+        // this only works on LocalDescs with the prefixes exposed in the Add* methods above.
+        for (size_t i = 0; i < cbType - 1; i++)
+        {
+            if (ElementType[i] == ELEMENT_TYPE_BYREF
+                || ElementType[i] == ELEMENT_TYPE_SZARRAY
+                || ElementType[i] == ELEMENT_TYPE_PTR)
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 };
 
@@ -432,7 +458,7 @@ public:
 
     void ClearCodeStreams();
 
-    void LogILStub(DWORD dwJitFlags, SString *pDumpILStubCode = NULL);
+    void LogILStub(CORJIT_FLAGS jitFlags, SString *pDumpILStubCode = NULL);
 protected:
     void LogILStubWorker(ILInstruction* pInstrBuffer, UINT numInstr, size_t* pcbCode, INT* piCurStack, SString *pDumpILStubCode = NULL);
     void LogILInstruction(size_t curOffset, bool isLabeled, INT iCurStack, ILInstruction* pInstruction, SString *pDumpILStubCode = NULL);
@@ -596,6 +622,7 @@ public:
     void EmitLDC        (DWORD_PTR uConst);
     void EmitLDC_R4     (UINT32 uConst);
     void EmitLDC_R8     (UINT64 uConst);
+    void EmitLDELEMA    (int token);
     void EmitLDELEM_REF ();
     void EmitLDFLD      (int token);
     void EmitLDFLDA     (int token);

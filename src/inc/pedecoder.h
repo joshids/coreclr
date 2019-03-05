@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 // --------------------------------------------------------------------------------
 // PEDecoder.h
 //
@@ -50,6 +49,7 @@ typedef DPTR(struct CORCOMPILE_HEADER) PTR_CORCOMPILE_HEADER;
 
 #include "readytorun.h"
 typedef DPTR(struct READYTORUN_HEADER) PTR_READYTORUN_HEADER;
+typedef DPTR(struct READYTORUN_SECTION) PTR_READYTORUN_SECTION;
 
 typedef DPTR(IMAGE_COR20_HEADER)    PTR_IMAGE_COR20_HEADER;
 
@@ -91,6 +91,21 @@ inline CHECK CheckOverflow(RVA value1, COUNT_T value2)
 #else
 #error "port me"
 #endif
+
+// Machine code for native images
+#if defined(__APPLE__)
+#define IMAGE_FILE_MACHINE_NATIVE_OS_OVERRIDE 0x4644
+#elif defined(__FreeBSD__)
+#define IMAGE_FILE_MACHINE_NATIVE_OS_OVERRIDE 0xADC4
+#elif defined(__linux__)
+#define IMAGE_FILE_MACHINE_NATIVE_OS_OVERRIDE 0x7B79
+#elif defined(__NetBSD__)
+#define IMAGE_FILE_MACHINE_NATIVE_OS_OVERRIDE 0x1993
+#else
+#define IMAGE_FILE_MACHINE_NATIVE_OS_OVERRIDE 0
+#endif
+
+#define IMAGE_FILE_MACHINE_NATIVE_NI (IMAGE_FILE_MACHINE_NATIVE ^ IMAGE_FILE_MACHINE_NATIVE_OS_OVERRIDE)
 
 // --------------------------------------------------------------------------------
 // Types
@@ -168,10 +183,12 @@ class PEDecoder
     UINT32 GetWin32VersionValue() const;
     COUNT_T GetNumberOfRvaAndSizes() const;
     COUNT_T GetNumberOfSections() const;
-    IMAGE_SECTION_HEADER *FindFirstSection() const;
+    PTR_IMAGE_SECTION_HEADER FindFirstSection() const;
     IMAGE_SECTION_HEADER *FindSection(LPCSTR sectionName) const;
 
     DWORD GetImageIdentity() const;
+
+    BOOL HasWriteableSections() const;
 
     // Directory entry access
 
@@ -313,10 +330,6 @@ class PEDecoder
     void GetNativeILPEKindAndMachine(DWORD* pdwKind, DWORD* pdwMachine) const;
     CORCOMPILE_DEPENDENCY * GetNativeDependencies(COUNT_T *pCount = NULL) const;
 
-    COUNT_T GetNativeImportTableCount() const;
-    CORCOMPILE_IMPORT_TABLE_ENTRY *GetNativeImportFromIndex(COUNT_T index) const;
-    CHECK CheckNativeImportFromIndex(COUNT_T index) const;
-
     PTR_CORCOMPILE_IMPORT_SECTION GetNativeImportSections(COUNT_T *pCount = NULL) const;
     PTR_CORCOMPILE_IMPORT_SECTION GetNativeImportSectionFromIndex(COUNT_T index) const;
     PTR_CORCOMPILE_IMPORT_SECTION GetNativeImportSectionForRVA(RVA rva) const;
@@ -365,6 +378,8 @@ class PEDecoder
     IMAGE_SECTION_HEADER *RvaToSection(RVA rva) const;
     IMAGE_SECTION_HEADER *OffsetToSection(COUNT_T fileOffset) const;
 
+    void SetRelocated();
+
   private:
 
     // ------------------------------------------------------------
@@ -386,7 +401,7 @@ class PEDecoder
     IMAGE_NT_HEADERS *FindNTHeaders() const;
     IMAGE_COR20_HEADER *FindCorHeader() const;
     CORCOMPILE_HEADER *FindNativeHeader() const;
-   READYTORUN_HEADER *FindReadyToRunHeader() const;
+    READYTORUN_HEADER *FindReadyToRunHeader() const;
 
     // Flat mapping utilities
     RVA InternalAddressToRva(SIZE_T address) const;

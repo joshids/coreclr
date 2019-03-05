@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //*****************************************************************************
 // File: inspect.cpp
 // 
@@ -167,9 +166,6 @@ GetTypeFieldValueFlags(TypeHandle typeHandle,
             otherFlags |= CLRDATA_VALUE_FROM_TASK_LOCAL;
         }
         else
-#ifdef FEATURE_REMOTING                    
-            if (!fieldDesc->IsContextStatic())
-#endif                
         {
             otherFlags |= CLRDATA_VALUE_FROM_INSTANCE;
         }
@@ -1435,15 +1431,8 @@ ClrDataValue::NewFromFieldDesc(ClrDataAccess* dac,
         }
 
         baseAddr =
-            TO_CDADDR(tlsThread->GetStaticFieldAddrNoCreate(fieldDesc, NULL));
+            TO_CDADDR(tlsThread->GetStaticFieldAddrNoCreate(fieldDesc));
     }
-#ifdef FEATURE_REMOTING            
-    else if (fieldDesc->IsContextStatic())
-    {
-        // XXX Microsoft - Microsoft says Context is going away.
-        return E_NOTIMPL;
-    }
-#endif    
     else if (fieldDesc->IsStatic())
     {
         baseAddr = TO_CDADDR

@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 
 
@@ -21,7 +20,6 @@ enum PredefinedTlsSlots
     TlsIdx_JitLogEnv,
     TlsIdx_IceCap,
     TlsIdx_StressLog,
-    TlsIdx_StackProbe,
     TlsIdx_Check,
     TlsIdx_ForbidGCLoaderUseCount,
     TlsIdx_ClrDebugState,         // Pointer to ClrDebugState* structure
@@ -56,8 +54,6 @@ enum PredefinedTlsSlots
     TlsIdx_PEXCEPTION_RECORD,
     TlsIdx_PCONTEXT,
 
-    TlsIdx_SOIntolerantTransitionHandler, // The thread is entering SO intolerant code.  This one is used by
-                                          // Thread::IsSOIntolerant to decide the SO mode of the thread.
     MAX_PREDEFINED_TLS_SLOT
 };
 

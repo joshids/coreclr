@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 // ==++==
 //
@@ -19,22 +18,6 @@
     LEAF_ENTRY JIT_PatchedCodeStart, _TEXT
         bx      lr
     LEAF_END JIT_PatchedCodeStart, _TEXT
-
-// ------------------------------------------------------------------
-// Optimized TLS getters
-
-    LEAF_ENTRY GetTLSDummy, _TEXT
-        mov     r0, #0
-        bx      lr
-    LEAF_END GetTLSDummy, _TEXT
-
-        .align 4
-    LEAF_ENTRY ClrFlsGetBlock, _TEXT
-        // This will be overwritten at runtime with optimized ClrFlsGetBlock implementation
-        b       C_FUNC(GetTLSDummy)
-        // Just allocate space that will be filled in at runtime
-        .space (TLS_GETTER_MAX_SIZE_ASM - 2)
-    LEAF_END ClrFlsGetBlock, _TEXT
 
 // ------------------------------------------------------------------
 // GC write barrier support.

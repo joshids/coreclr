@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 // ThreadStatics.h
 //
 
@@ -23,7 +22,6 @@
 #ifndef __threadstatics_h__
 #define __threadstatics_h__
 
-#ifndef BINDER
 #include "vars.hpp"
 #include "util.hpp"
 
@@ -31,7 +29,7 @@
 #include "field.h"
 #include "methodtable.h"
 #include "threads.h"
-#endif
+#include "spinlock.h"
 
 // Defines ObjectHandeList type
 #include "specialstatics.h"
@@ -45,7 +43,62 @@ struct ThreadLocalModule
     friend class CheckAsmOffsets; 
     friend struct ThreadLocalBlock;
 
+    // After these macros complete, they may have returned an interior pointer into a gc object. This pointer will have been cast to a byte pointer
+    // It is critically important that no GC is allowed to occur before this pointer is used.
+#define GET_DYNAMICENTRY_GCTHREADSTATICS_BASEPOINTER(pLoaderAllocator, dynamicClassInfoParam, pGCStatics) \
+    {\
+        ThreadLocalModule::PTR_DynamicClassInfo dynamicClassInfo = dac_cast<ThreadLocalModule::PTR_DynamicClassInfo>(dynamicClassInfoParam);\
+        ThreadLocalModule::PTR_DynamicEntry pDynamicEntry = dac_cast<ThreadLocalModule::PTR_DynamicEntry>((ThreadLocalModule::DynamicEntry*)dynamicClassInfo->m_pDynamicEntry); \
+        if ((dynamicClassInfo->m_dwFlags) & ClassInitFlags::COLLECTIBLE_FLAG) \
+        {\
+            PTRARRAYREF objArray;\
+            objArray = (PTRARRAYREF)pLoaderAllocator->GetHandleValueFastCannotFailType2( \
+                                        (dac_cast<ThreadLocalModule::PTR_CollectibleDynamicEntry>(pDynamicEntry))->m_hGCStatics);\
+            *(pGCStatics) = dac_cast<PTR_BYTE>(PTR_READ(PTR_TO_TADDR(OBJECTREFToObject( objArray )) + offsetof(PtrArray, m_Array), objArray->GetNumComponents() * sizeof(void*))) ;\
+        }\
+        else\
+        {\
+            *(pGCStatics) = (dac_cast<ThreadLocalModule::PTR_NormalDynamicEntry>(pDynamicEntry))->GetGCStaticsBasePointer();\
+        }\
+    }\
+
+#define GET_DYNAMICENTRY_NONGCTHREADSTATICS_BASEPOINTER(pLoaderAllocator, dynamicClassInfoParam, pNonGCStatics) \
+    {\
+        ThreadLocalModule::PTR_DynamicClassInfo dynamicClassInfo = dac_cast<ThreadLocalModule::PTR_DynamicClassInfo>(dynamicClassInfoParam);\
+        ThreadLocalModule::PTR_DynamicEntry pDynamicEntry = dac_cast<ThreadLocalModule::PTR_DynamicEntry>((ThreadLocalModule::DynamicEntry*)(dynamicClassInfo)->m_pDynamicEntry); \
+        if (((dynamicClassInfo)->m_dwFlags) & ClassInitFlags::COLLECTIBLE_FLAG) \
+        {\
+            if ((dac_cast<ThreadLocalModule::PTR_CollectibleDynamicEntry>(pDynamicEntry))->m_hNonGCStatics != 0) \
+            { \
+                U1ARRAYREF objArray;\
+                objArray = (U1ARRAYREF)pLoaderAllocator->GetHandleValueFastCannotFailType2( \
+                                            (dac_cast<ThreadLocalModule::PTR_CollectibleDynamicEntry>(pDynamicEntry))->m_hNonGCStatics);\
+                *(pNonGCStatics) = dac_cast<PTR_BYTE>(PTR_READ( \
+                        PTR_TO_TADDR(OBJECTREFToObject( objArray )) + sizeof(ArrayBase) - ThreadLocalModule::DynamicEntry::GetOffsetOfDataBlob(), \
+                            objArray->GetNumComponents() * (DWORD)objArray->GetComponentSize() + ThreadLocalModule::DynamicEntry::GetOffsetOfDataBlob())); \
+            } else (*pNonGCStatics) = NULL; \
+        }\
+        else\
+        {\
+            *(pNonGCStatics) = dac_cast<ThreadLocalModule::PTR_NormalDynamicEntry>(pDynamicEntry)->GetNonGCStaticsBasePointer();\
+        }\
+    }\
+
     struct DynamicEntry
+    {
+        static DWORD GetOffsetOfDataBlob();
+    };
+    typedef DPTR(DynamicEntry) PTR_DynamicEntry;
+
+    struct CollectibleDynamicEntry : public DynamicEntry
+    {
+        LOADERHANDLE        m_hGCStatics;
+        LOADERHANDLE        m_hNonGCStatics;
+        PTR_LoaderAllocator m_pLoaderAllocator;
+    };
+    typedef DPTR(CollectibleDynamicEntry) PTR_CollectibleDynamicEntry;
+
+    struct NormalDynamicEntry : public DynamicEntry
     {
         OBJECTHANDLE    m_pGCStatics;
 #ifdef FEATURE_64BIT_ALIGNMENT
@@ -54,7 +107,7 @@ struct ThreadLocalModule
         SIZE_T          m_padding;
 #endif
         BYTE            m_pDataBlob[0];
-#ifndef BINDER
+
         inline PTR_BYTE GetGCStaticsBasePointer()
         {
             CONTRACTL
@@ -62,16 +115,14 @@ struct ThreadLocalModule
                 NOTHROW;
                 GC_NOTRIGGER;
                 MODE_ANY;
-                SO_TOLERANT;
                 SUPPORTS_DAC;
             }
             CONTRACTL_END;
 
             _ASSERTE(m_pGCStatics != NULL);
 
-            return dac_cast<PTR_BYTE>((PTR_OBJECTREF)((PTRARRAYREF)ObjectFromHandle(m_pGCStatics))->GetDataPtr());
+            return dac_cast<PTR_BYTE>(((PTRARRAYREF)ObjectFromHandle(m_pGCStatics))->GetDataPtr());
         }
-#endif
         inline PTR_BYTE GetGCStaticsBaseHandle()
         {
             LIMITED_METHOD_CONTRACT;
@@ -84,13 +135,8 @@ struct ThreadLocalModule
             SUPPORTS_DAC;
             return dac_cast<PTR_BYTE>(this);
         }
-        static DWORD GetOffsetOfDataBlob()
-        {
-            LIMITED_METHOD_CONTRACT;
-            return offsetof(DynamicEntry, m_pDataBlob);
-        }
     };
-    typedef DPTR(DynamicEntry) PTR_DynamicEntry;
+    typedef DPTR(NormalDynamicEntry) PTR_NormalDynamicEntry;
 
     struct DynamicClassInfo
     {
@@ -115,7 +161,6 @@ struct ThreadLocalModule
     static SIZE_T GetOffsetOfDataBlob() { return offsetof(ThreadLocalModule, m_pDataBlob); }
     static SIZE_T GetOffsetOfGCStaticHandle() { return offsetof(ThreadLocalModule, m_pGCStatics); }
 
-#ifndef BINDER
     inline PTR_OBJECTREF GetPrecomputedGCStaticsBasePointer()
     {
         CONTRACTL
@@ -123,16 +168,14 @@ struct ThreadLocalModule
             NOTHROW;
             GC_NOTRIGGER;
             MODE_ANY;
-            SO_TOLERANT;
             SUPPORTS_DAC;
         }
         CONTRACTL_END;
 
         _ASSERTE(m_pGCStatics != NULL);
 
-        return (PTR_OBJECTREF)((PTRARRAYREF)ObjectFromHandle(m_pGCStatics))->GetDataPtr();
+        return ((PTRARRAYREF)ObjectFromHandle(m_pGCStatics))->GetDataPtr();
     }
-#endif
 
     inline OBJECTHANDLE GetPrecomputedGCStaticsBaseHandle()
     {
@@ -160,7 +203,6 @@ struct ThreadLocalModule
         return &m_pGCStatics;
     }
 
-#ifndef BINDER
     // Returns bytes so we can add offsets
     inline PTR_BYTE GetGCStaticsBasePointer(MethodTable * pMT)
     {
@@ -175,14 +217,13 @@ struct ThreadLocalModule
 
         if (pMT->IsDynamicStatics())
         {
-            return GetDynamicEntryGCStaticsBasePointer(pMT->GetModuleDynamicEntryID());
+            return GetDynamicEntryGCStaticsBasePointer(pMT->GetModuleDynamicEntryID(), pMT->GetLoaderAllocator());
         }
         else
         {
             return dac_cast<PTR_BYTE>(GetPrecomputedGCStaticsBasePointer());
         }
     }
-#endif
 
     inline PTR_BYTE GetNonGCStaticsBasePointer(MethodTable * pMT)
     {
@@ -197,7 +238,7 @@ struct ThreadLocalModule
 
         if (pMT->IsDynamicStatics())
         {
-            return GetDynamicEntryNonGCStaticsBasePointer(pMT->GetModuleDynamicEntryID());
+            return GetDynamicEntryNonGCStaticsBasePointer(pMT->GetModuleDynamicEntryID(), pMT->GetLoaderAllocator());
         }
         else
         {
@@ -215,10 +256,19 @@ struct ThreadLocalModule
         return pEntry;
     }
 
-#ifndef BINDER
+    inline DynamicClassInfo* GetDynamicClassInfo(DWORD n)
+    {
+        LIMITED_METHOD_CONTRACT
+        SUPPORTS_DAC;
+        _ASSERTE(m_pDynamicClassTable && m_aDynamicEntries > n);
+        dac_cast<PTR_DynamicEntry>(m_pDynamicClassTable[n].m_pDynamicEntry);
+
+        return &m_pDynamicClassTable[n];
+    }
+
     // These helpers can now return null, as the debugger may do queries on a type
     // before the calls to PopulateClass happen
-    inline PTR_BYTE GetDynamicEntryGCStaticsBasePointer(DWORD n)
+    inline PTR_BYTE GetDynamicEntryGCStaticsBasePointer(DWORD n, PTR_LoaderAllocator pLoaderAllocator)
     {
         CONTRACTL
         {
@@ -234,17 +284,20 @@ struct ThreadLocalModule
             return NULL;
         }
         
-        DynamicEntry* pEntry = GetDynamicEntry(n);
-        if (!pEntry)
+        DynamicClassInfo* pClassInfo = GetDynamicClassInfo(n);
+        if (!pClassInfo->m_pDynamicEntry)
         {
             return NULL;
         }
 
-        return pEntry->GetGCStaticsBasePointer();
-    }
-#endif
+        PTR_BYTE retval = NULL;
 
-    inline PTR_BYTE GetDynamicEntryNonGCStaticsBasePointer(DWORD n)
+        GET_DYNAMICENTRY_GCTHREADSTATICS_BASEPOINTER(pLoaderAllocator, pClassInfo, &retval);
+
+        return retval;
+    }
+
+    inline PTR_BYTE GetDynamicEntryNonGCStaticsBasePointer(DWORD n, PTR_LoaderAllocator pLoaderAllocator)
     {
         CONTRACTL
         {
@@ -260,15 +313,19 @@ struct ThreadLocalModule
             return NULL;
         }
 
-        DynamicEntry* pEntry = GetDynamicEntry(n);
-        if (!pEntry)
+        DynamicClassInfo* pClassInfo = GetDynamicClassInfo(n);
+        if (!pClassInfo->m_pDynamicEntry)
         {
             return NULL;
         }
 
-        return pEntry->GetNonGCStaticsBasePointer();
+        PTR_BYTE retval = NULL;
+
+        GET_DYNAMICENTRY_NONGCTHREADSTATICS_BASEPOINTER(pLoaderAllocator, pClassInfo, &retval);
+
+        return retval;
     }
-#ifndef BINDER
+
     FORCEINLINE PTR_DynamicClassInfo GetDynamicClassInfoIfInitialized(DWORD n)
     {
         WRAPPER_NO_CONTRACT;
@@ -319,7 +376,6 @@ struct ThreadLocalModule
         {
             THROWS;
             GC_NOTRIGGER;
-            SO_INTOLERANT;
             MODE_ANY;
         }
         CONTRACTL_END;
@@ -328,16 +384,6 @@ struct ThreadLocalModule
         _ASSERTE(!IsClassInitError(pMT));
         
         SetClassFlags(pMT, ClassInitFlags::INITIALIZED_FLAG);
-    }
-
-    void SetClassAllocatedAndInitialized(MethodTable* pMT)
-    {
-        WRAPPER_NO_CONTRACT;
-    
-        _ASSERTE(!IsClassInitialized(pMT));
-        _ASSERTE(!IsClassInitError(pMT));
-    
-        SetClassFlags(pMT, ClassInitFlags::ALLOCATECLASS_FLAG | ClassInitFlags::INITIALIZED_FLAG);
     }
 
     void SetClassAllocated(MethodTable* pMT)
@@ -367,7 +413,7 @@ struct ThreadLocalModule
 #ifdef DACCESS_COMPILE
     void EnumMemoryRegions(CLRDataEnumMemoryFlags flags);
 #endif
-#endif
+
     static DWORD OffsetOfDataBlob()
     {
         LIMITED_METHOD_CONTRACT;
@@ -395,7 +441,6 @@ private:
     //              Non GC Statics
 
 public:
-#ifndef BINDER
     inline PTR_BYTE GetPrecomputedStaticsClassData()
     {
         LIMITED_METHOD_CONTRACT
@@ -448,12 +493,15 @@ public:
     }
 
 #endif
-#endif
 };  // struct ThreadLocalModule
 
 
-
-#ifndef BINDER
+#define OFFSETOF__ThreadLocalModule__m_pDataBlob               (3 * TARGET_POINTER_SIZE /* m_pDynamicClassTable + m_aDynamicEntries + m_pGCStatics */)
+#ifdef FEATURE_64BIT_ALIGNMENT
+#define OFFSETOF__ThreadLocalModule__DynamicEntry__m_pDataBlob (TARGET_POINTER_SIZE /* m_pGCStatics */ + TARGET_POINTER_SIZE /* m_padding */)
+#else
+#define OFFSETOF__ThreadLocalModule__DynamicEntry__m_pDataBlob TARGET_POINTER_SIZE /* m_pGCStatics */
+#endif
 
 typedef DPTR(struct TLMTableEntry) PTR_TLMTableEntry;
 
@@ -466,216 +514,47 @@ struct TLMTableEntry
 typedef DPTR(struct ThreadLocalBlock) PTR_ThreadLocalBlock;
 typedef DPTR(PTR_ThreadLocalBlock) PTR_PTR_ThreadLocalBlock;
 
-struct ThreadLocalBlock
-{
-    friend class ClrDataAccess;
-
-private:
-    PTR_TLMTableEntry   m_pTLMTable;     // Table of ThreadLocalModules
-    SIZE_T              m_TLMTableSize;  // Current size of table
-
-    // Each ThreadLocalBlock has its own ThreadStaticHandleTable. The ThreadStaticHandleTable works
-    // by allocating Object arrays on the GC heap and keeping them alive with pinning handles.
-    //
-    // We use the ThreadStaticHandleTable to allocate space for GC thread statics. A GC thread
-    // static is thread static that is either a reference type or a value type whose layout
-    // contains a pointer to a reference type.
-
-    ThreadStaticHandleTable * m_pThreadStaticHandleTable;
-
-    // Need to keep a list of the pinning handles we've created
-    // so they can be cleaned up when the thread dies
-    ObjectHandleList          m_PinningHandleList;
-
-public: 
-
-#ifndef DACCESS_COMPILE
-    void AddPinningHandleToList(OBJECTHANDLE oh);
-    void FreePinningHandles();
-    void AllocateThreadStaticHandles(Module * pModule, ThreadLocalModule * pThreadLocalModule);
-    OBJECTHANDLE AllocateStaticFieldObjRefPtrs(int nRequested, OBJECTHANDLE* ppLazyAllocate = NULL);
-    void InitThreadStaticHandleTable();
-
-    void AllocateThreadStaticBoxes(MethodTable* pMT);
-#endif
-
-public: // used by code generators
-    static SIZE_T GetOffsetOfModuleSlotsPointer() { return offsetof(ThreadLocalBlock, m_pTLMTable); }
-
-public:
-
-#ifndef DACCESS_COMPILE
-    ThreadLocalBlock()
-      : m_pTLMTable(NULL), m_TLMTableSize(0), m_pThreadStaticHandleTable(NULL) {}
-
-    void    FreeTLM(SIZE_T i);
-
-    void    FreeTable();
-
-    void    EnsureModuleIndex(ModuleIndex index);
-
-#endif
-
-    void SetModuleSlot(ModuleIndex index, PTR_ThreadLocalModule pLocalModule);
-
-    FORCEINLINE PTR_ThreadLocalModule GetTLMIfExists(ModuleIndex index)
-    {
-        WRAPPER_NO_CONTRACT;
-        SUPPORTS_DAC;
-
-        if (index.m_dwIndex >= m_TLMTableSize)
-            return NULL;
-
-        return m_pTLMTable[index.m_dwIndex].pTLM;
-    }
-
-    FORCEINLINE PTR_ThreadLocalModule GetTLMIfExists(MethodTable* pMT)
-    {
-        WRAPPER_NO_CONTRACT;
-        ModuleIndex index = pMT->GetModuleForStatics()->GetModuleIndex();
-        return GetTLMIfExists(index);
-    }
-
-#ifdef DACCESS_COMPILE
-    void EnumMemoryRegions(CLRDataEnumMemoryFlags flags);
-#endif
-};
-
-
-
-
 class ThreadStatics
 {
   public:
 
 #ifndef DACCESS_COMPILE
-    static PTR_ThreadLocalBlock AllocateTLB(PTR_Thread pThread, ADIndex index);
     static PTR_ThreadLocalModule AllocateTLM(Module * pModule);
     static PTR_ThreadLocalModule AllocateAndInitTLM(ModuleIndex index, PTR_ThreadLocalBlock pThreadLocalBlock, Module * pModule);
 
     static PTR_ThreadLocalModule GetTLM(ModuleIndex index, Module * pModule);
     static PTR_ThreadLocalModule GetTLM(MethodTable * pMT);
 #endif
-    static PTR_ThreadLocalBlock GetTLBIfExists(PTR_Thread pThread, ADIndex index);
 
-#ifndef DACCESS_COMPILE
-    // Grows the TLB table
-    inline static void EnsureADIndex(PTR_Thread pThread, ADIndex index)
-    {
-        CONTRACTL
-        {
-            THROWS;
-            GC_NOTRIGGER;
-            SO_TOLERANT;
-            MODE_ANY;
-        }
-        CONTRACTL_END;
-        SIZE_T size = max(16, pThread->m_TLBTableSize);
-        while (size <= index.m_dwIndex)
-        {
-            size *= 2;
-        }
-
-        // If this allocation fails, we will throw. If it succeeds,
-        // then we are good to go
-        PTR_ThreadLocalBlock * pNewTLBTable = (PTR_ThreadLocalBlock *)(void*)new PTR_ThreadLocalBlock [size];
-
-        // Zero out the new TLB table
-        memset(pNewTLBTable, 0, sizeof(PTR_ThreadLocalBlock) * size);
-
-        if (pThread->m_pTLBTable != NULL)
-        {
-            memcpy(pNewTLBTable, pThread->m_pTLBTable, sizeof(PTR_ThreadLocalBlock) * pThread->m_TLBTableSize);
-        }
-
-        PTR_ThreadLocalBlock * pOldTLBTable = pThread->m_pTLBTable;
-
-        pThread->m_pTLBTable = pNewTLBTable;
-        pThread->m_TLBTableSize = size;
-
-        delete pOldTLBTable;
-    }
-
-    FORCEINLINE static PTR_ThreadLocalBlock GetCurrentTLBIfExists()
-    {
-        // Get the current thread
-        PTR_Thread pThread = GetThread();
-    
-        // If the current TLB pointer is NULL, search the TLB table
-        if (pThread->m_pThreadLocalBlock == NULL)
-        {
-            ADIndex index = pThread->GetDomain()->GetIndex();
-            pThread->m_pThreadLocalBlock = ThreadStatics::GetTLBIfExists(pThread, index);
-        }
-
-        return pThread->m_pThreadLocalBlock;
-    }
-#endif
-
-    FORCEINLINE static PTR_ThreadLocalBlock GetCurrentTLBIfExists(PTR_Thread pThread, PTR_AppDomain pDomain)
+    FORCEINLINE static PTR_ThreadLocalBlock GetCurrentTLB(PTR_Thread pThread)
     {
         SUPPORTS_DAC;
 
-        // If the current TLB pointer is NULL, search the TLB table
-        PTR_ThreadLocalBlock pTLB = pThread->m_pThreadLocalBlock;
-        if (pTLB == NULL)
-        {
-            if (pDomain == NULL)
-            {
-                pDomain = pThread->GetDomain();
-            }
-
-            pTLB = ThreadStatics::GetTLBIfExists(pThread, pDomain->GetIndex());
-
-            // Update the ThreadLocalBlock pointer,
-            // but only on non-DAC builds
-#ifndef DACCESS_COMPILE
-            pThread->m_pThreadLocalBlock = pTLB;
-#endif
-        }
-
-        return pTLB;
+        return dac_cast<PTR_ThreadLocalBlock>(PTR_TO_MEMBER_TADDR(Thread, pThread, m_ThreadLocalBlock));
     }
 
 #ifndef DACCESS_COMPILE
-    FORCEINLINE static PTR_ThreadLocalBlock GetCurrentTLB()
+    FORCEINLINE static ThreadLocalBlock* GetCurrentTLB()
     {
         // Get the current thread
         Thread * pThread = GetThread();
     
-        // If the current TLB pointer is NULL, search the TLB table
-        if (pThread->m_pThreadLocalBlock == NULL)
-        {
-            AppDomain * pDomain = pThread->GetDomain();
-            pThread->m_pThreadLocalBlock = ThreadStatics::GetTLBIfExists(pThread, pDomain->GetIndex());
-            if (pThread->m_pThreadLocalBlock == NULL)
-            {
-                // Allocate the new ThreadLocalBlock.
-                // If the allocation fails this will throw.
-                return ThreadStatics::AllocateTLB(pThread, pDomain->GetIndex());
-            }
-        }
-
-        return pThread->m_pThreadLocalBlock;       
+        return &pThread->m_ThreadLocalBlock;
     }
 
-    FORCEINLINE static PTR_ThreadLocalModule GetTLMIfExists(ModuleIndex index)
+    FORCEINLINE static ThreadLocalModule* GetTLMIfExists(ModuleIndex index)
     {
         // Get the current ThreadLocalBlock
-        PTR_ThreadLocalBlock pThreadLocalBlock = GetCurrentTLBIfExists();
-        if (pThreadLocalBlock == NULL)
-            return NULL;
+        PTR_ThreadLocalBlock pThreadLocalBlock = GetCurrentTLB();
 
         // Get the TLM from the ThreadLocalBlock's table
         return pThreadLocalBlock->GetTLMIfExists(index);
     }
 
-    FORCEINLINE static PTR_ThreadLocalModule GetTLMIfExists(MethodTable * pMT)
+    FORCEINLINE static ThreadLocalModule* GetTLMIfExists(MethodTable * pMT)
     {
         // Get the current ThreadLocalBlock
-        PTR_ThreadLocalBlock pThreadLocalBlock = GetCurrentTLBIfExists();
-        if (pThreadLocalBlock == NULL)
-            return NULL;
+        ThreadLocalBlock* pThreadLocalBlock = GetCurrentTLB();
 
         // Get the TLM from the ThreadLocalBlock's table
         return pThreadLocalBlock->GetTLMIfExists(pMT);
@@ -683,7 +562,13 @@ class ThreadStatics
 #endif
 
 };
-#endif
 
+/* static */
+inline DWORD ThreadLocalModule::DynamicEntry::GetOffsetOfDataBlob()
+{
+    LIMITED_METHOD_CONTRACT;
+    _ASSERTE(DWORD(offsetof(NormalDynamicEntry, m_pDataBlob)) == offsetof(NormalDynamicEntry, m_pDataBlob));
+    return (DWORD)offsetof(NormalDynamicEntry, m_pDataBlob);
+}
 
 #endif

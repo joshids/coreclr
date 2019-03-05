@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 /*++
 
@@ -30,6 +29,7 @@ Revision History:
 #include "pal/utf8.h"
 #include "pal/locale.h"
 #include "pal/cruntime.h"
+#include "pal/stackstring.hpp"
 
 #if !(HAVE_PTHREAD_RWLOCK_T || HAVE_COREFOUNDATION)
 #error Either pthread rwlocks or Core Foundation are required for Unicode support
@@ -37,12 +37,12 @@ Revision History:
 
 #include <pthread.h>
 #include <locale.h>
-#ifndef __APPLE__
+#if HAVE_LIBINTL_H
 #include <libintl.h>
-#endif // __APPLE__
+#endif // HAVE_LIBINTL_H
 #include <errno.h>
 #if HAVE_COREFOUNDATION
-#include <corefoundation/corefoundation.h>
+#include <CoreFoundation/CoreFoundation.h>
 #endif // HAVE_COREFOUNDATION
 
 #include <debugmacrosext.h>
@@ -138,7 +138,7 @@ TRUE if the Unicode character was found.
 BOOL GetUnicodeData(INT nUnicodeValue, UnicodeDataRec *pDataRec)
 {
     BOOL bRet;
-    if (nUnicodeValue <= UNICODE_DATA_DIRECT_ACCESS)
+    if (nUnicodeValue <= (INT)UNICODE_DATA_DIRECT_ACCESS)
     {
         *pDataRec = UnicodeData[nUnicodeValue];
         bRet = TRUE;
@@ -147,7 +147,7 @@ BOOL GetUnicodeData(INT nUnicodeValue, UnicodeDataRec *pDataRec)
     {
         UnicodeDataRec *dataRec;
         INT nNumOfChars = UNICODE_DATA_SIZE;
-        dataRec = (UnicodeDataRec *) bsearch(&nUnicodeValue, UnicodeData, nNumOfChars, 
+        dataRec = (UnicodeDataRec *) bsearch(&nUnicodeValue, UnicodeData, nNumOfChars,
                        sizeof(UnicodeDataRec), UnicodeDataComp);
         if (dataRec == NULL)
         {
@@ -163,16 +163,16 @@ BOOL GetUnicodeData(INT nUnicodeValue, UnicodeDataRec *pDataRec)
 }
 #endif /* !HAVE_COREFOUNDATION */
 
-/*++ 
+/*++
 Function:
 CODEPAGEGetData
-    
+
     IN UINT CodePage - The code page the caller
     is attempting to retrieve data on.
-    
+
     Returns a pointer to structure, NULL otherwise.
 --*/
-const CP_MAPPING * 
+const CP_MAPPING *
 CODEPAGEGetData( IN UINT CodePage )
 {
     UINT nSize = sizeof( CP_TO_NATIVE_TABLE ) / sizeof( CP_TO_NATIVE_TABLE[ 0 ] );
@@ -192,7 +192,7 @@ CODEPAGEGetData( IN UINT CodePage )
         }
         nIndex++;
     }
-    return NULL;    
+    return NULL;
 }
 
 #if HAVE_COREFOUNDATION
@@ -283,61 +283,6 @@ CharNextExA(
 }
 
 
-
-/*++
-Function:
-AreFileApisANSI
-
-The AreFileApisANSI function determines whether the file I/O functions
-are using the ANSI or OEM character set code page. This function is
-useful for 8-bit console input and output operations.
-
-Return Values
-
-If the set of file I/O functions is using the ANSI code page, the return value is nonzero.
-
-If the set of file I/O functions is using the OEM code page, the return value is zero.
-
-In the ROTOR version we always return true since there is no concept
-of OEM code pages.
-
---*/
-BOOL
-PALAPI
-AreFileApisANSI(
-    VOID)
-{
-    PERF_ENTRY(AreFileApisANSI);
-    ENTRY("AreFileApisANSI ()\n");
-
-    LOGEXIT("AreFileApisANSI returns BOOL TRUE\n");
-    PERF_EXIT(AreFileApisANSI);
-    return TRUE;
-}
-
-
-/*++
-Function:
-GetConsoleCP
-
-See MSDN doc.
---*/
-UINT
-PALAPI
-GetConsoleCP(
-     VOID)
-{
-    UINT nRet = 0;
-    PERF_ENTRY(GetConsoleCP);
-    ENTRY("GetConsoleCP()\n");
-     
-    nRet = GetACP();
-
-    LOGEXIT("GetConsoleCP returns UINT %d\n", nRet );
-    PERF_EXIT(GetConsoleCP);
-    return nRet;
-}
-
 /*++
 Function:
 GetConsoleOutputCP
@@ -369,7 +314,7 @@ Notes :
 "pseudo code pages", like CP_ACP, aren't considered 'valid' in this context.
 CP_UTF7 and CP_UTF8, however, *are* considered valid code pages, even though
 MSDN fails to mention them in the IsValidCodePage entry.
-Note : CP_UTF7 support isn't required for Rotor
+Note : CP_UTF7 support isn't required for CoreCLR
 --*/
 BOOL
 PALAPI
@@ -391,7 +336,7 @@ IsValidCodePage(
         retval = FALSE;
         break;
     case CP_UTF7:
-        /* valid in Win32, but not supported in Rotor */
+        /* valid in Win32, but not supported in the PAL */
         retval = FALSE;
         break;
     case CP_UTF8:
@@ -402,121 +347,11 @@ IsValidCodePage(
         retval = (NULL != CODEPAGEGetData( CodePage ));
         break;
     }
-       
+
     LOGEXIT("IsValidCodePage returns BOOL %d\n",retval);
     PERF_EXIT(IsValidCodePage);
     return retval;
 }
-
-#if ENABLE_DOWNLEVEL_FOR_NLS
-/*++
-Function:
-GetStringTypeEx
-
-See MSDN doc.
---*/
-BOOL
-PALAPI
-GetStringTypeExW(
-     IN LCID Locale,
-     IN DWORD dwInfoType,
-     IN LPCWSTR lpSrcStr,
-     IN int cchSrc,
-     OUT LPWORD lpCharType)
-{
-
-
-    int i = 0;
-#if !HAVE_COREFOUNDATION
-    UnicodeDataRec unicodeDataRec;
-#endif /* !HAVE_COREFOUNDATION */
-    BOOL bRet = TRUE;
-    wchar_t  wcstr ;
-    PERF_ENTRY(GetStringTypeExW);
-    ENTRY("GetStringTypeExW(Locale=%#x, dwInfoType=%#x, lpSrcStr=%p (%S), "
-    "cchSrc=%d, lpCharType=%p)\n",
-    Locale, dwInfoType, lpSrcStr?lpSrcStr:W16_NULLSTRING, lpSrcStr?lpSrcStr:W16_NULLSTRING, cchSrc, lpCharType);
-
-    if((Locale != LOCALE_USER_DEFAULT)||(dwInfoType != CT_CTYPE1)
-        || (cchSrc != 1) || (lpSrcStr == (LPCWSTR)lpCharType))
-    {
-        ASSERT("One of the input parameters is invalid\n");
-        SetLastError(ERROR_INVALID_PARAMETER);
-        bRet = FALSE;
-        goto GetStringTypeExExit;
-    }
-
-
-    /*
-    * get length if needed...
-    */
-    if(cchSrc == -1)
-    {
-      cchSrc = PAL_wcslen(lpSrcStr);
-    }
-
-    /*
-    * Loop through each character of the source string and update
-    * lpCharType accordingly.
-    */
-    for(i = 0; i < cchSrc; i++)
-    {
-        wcstr = lpSrcStr[i];
-#if HAVE_COREFOUNDATION
-        lpCharType[i] = 0;
-        if (PAL_iswlower(wcstr))
-        {
-            lpCharType[i] |= C1_LOWER;
-        }
-        if (PAL_iswupper(wcstr))
-        {
-            lpCharType[i] |= C1_UPPER;
-        }
-        if (PAL_iswalpha(wcstr))
-        {
-            lpCharType[i] |= C1_ALPHA;
-        }
-        if (PAL_iswdigit(wcstr))
-        {
-            lpCharType[i] |= C1_DIGIT;
-        }
-        if (PAL_iswspace(wcstr))
-        {
-            lpCharType[i] |= C1_SPACE;
-        }
-        if (PAL_iswblank(wcstr))
-        {
-            lpCharType[i] |= C1_BLANK;
-        }
-        if (PAL_iswcntrl(wcstr))
-        {
-            lpCharType[i] |= C1_CNTRL;
-        }
-        if (PAL_iswpunct(wcstr))
-        {
-            lpCharType[i] |= C1_PUNCT;
-        }
-#else /* HAVE_COREFOUNDATION */
-        /*
-         * Get the unicode data record for that character.
-         */
-        if(GetUnicodeData(wcstr, &unicodeDataRec))
-        {
-            lpCharType[i] = unicodeDataRec.C1_TYPE_FLAGS;
-        }
-        else
-        {
-            lpCharType[i] = 0;
-        }
-#endif /* HAVE_COREFOUNDATION */
-    }
-
-    GetStringTypeExExit:
-    LOGEXIT("GetStringTypeEx returns BOOL %d\n", bRet);
-    PERF_EXIT(GetStringTypeExW);
-    return bRet;
-}
-#endif // ENABLE_DOWNLEVEL_FOR_NLS
 
 /*++
 Function:
@@ -532,7 +367,7 @@ GetCPInfo(
 {
     const CP_MAPPING * lpStruct = NULL;
     BOOL bRet = FALSE;
-     
+
     PERF_ENTRY(GetCPInfo);
     ENTRY("GetCPInfo(CodePage=%hu, lpCPInfo=%p)\n", CodePage, lpCPInfo);
 
@@ -625,9 +460,9 @@ IsDBCSLeadByteEx(
         {
             goto done;
         }
-         
+
         /*check if the given char is in one of the lead byte ranges*/
-        if( cpinfo.LeadByte[i] <= TestChar && TestChar<= cpinfo.LeadByte[i+1] ) 
+        if( cpinfo.LeadByte[i] <= TestChar && TestChar<= cpinfo.LeadByte[i+1] )
         {
             bRet = TRUE;
             goto done;
@@ -821,14 +656,14 @@ WideCharToMultiByte(
           lpDefaultChar, lpUsedDefaultChar);
 
     if (dwFlags & ~WC_NO_BEST_FIT_CHARS)
-    {  
+    {
         ERROR("dwFlags %d invalid\n", dwFlags);
         SetLastError(ERROR_INVALID_FLAGS);
         goto EXIT;
     }
 
     // No special action is needed for WC_NO_BEST_FIT_CHARS. The default
-    // behavior of this API on Unix is not to find the best fit for a unicode 
+    // behavior of this API on Unix is not to find the best fit for a unicode
     // character that does not map directly into a code point in the given
     // code page. The best fit functionality is not available in wctomb on Unix
     // and is better left unimplemented for security reasons anyway.
@@ -855,7 +690,7 @@ WideCharToMultiByte(
     {
         if (cchWideChar == -1)
         {
-            cchWideChar = PAL_wcslen(lpWideCharStr) + 1; 
+            cchWideChar = PAL_wcslen(lpWideCharStr) + 1;
         }
         retval = UnicodeToUTF8(lpWideCharStr, cchWideChar, lpMultiByteStr, cbMultiByte);
         goto EXIT;
@@ -928,6 +763,10 @@ ReleaseString:
     {
         CFRelease(cfString);
     }
+#else /*HAVE_COREFOUNDATION */
+    ERROR( "This code page is not in the system.\n" );
+    SetLastError( ERROR_INVALID_PARAMETER );
+    goto EXIT;
 #endif /* HAVE_COREFOUNDATION */
 
 EXIT:
@@ -940,12 +779,12 @@ EXIT:
     /* Flag the cases when WC_NO_BEST_FIT_CHARS was not specified
      * but we found characters that had to be replaced with default
      * characters. Note that Windows would have attempted to find
-     * best fit characters under these conditions and that could pose 
-     * a security risk. 
+     * best fit characters under these conditions and that could pose
+     * a security risk.
      */
     _ASSERT_MSG((dwFlags & WC_NO_BEST_FIT_CHARS) || !usedDefaultChar,
           "WideCharToMultiByte found a string which doesn't round trip: (%p)%S "
-          "and WC_NO_BEST_FIT_CHARS was not specified\n", 
+          "and WC_NO_BEST_FIT_CHARS was not specified\n",
           lpWideCharStr, lpWideCharStr);
 
     LOGEXIT("WideCharToMultiByte returns INT %d\n", retval);
@@ -953,7 +792,7 @@ EXIT:
     return retval;
 }
 
-extern char g_szCoreCLRPath[MAX_LONGPATH];
+extern char * g_szCoreCLRPath;
 
 /*++
 Function :
@@ -966,20 +805,26 @@ BOOL
 PALAPI
 PAL_BindResources(IN LPCSTR lpDomain)
 {
-#ifndef __APPLE__
-    char coreCLRDirectoryPath[MAX_LONGPATH];
-
-    INDEBUG(DWORD size = )
-    FILEGetDirectoryFromFullPathA(g_szCoreCLRPath, MAX_LONGPATH, coreCLRDirectoryPath);
-    _ASSERTE(size <= MAX_LONGPATH);
+#if HAVE_LIBINTL_H
+    _ASSERTE(g_szCoreCLRPath != NULL);
+    char * coreCLRDirectoryPath;
+    PathCharString coreCLRDirectoryPathPS;
+    int len = strlen(g_szCoreCLRPath);
+    coreCLRDirectoryPath = coreCLRDirectoryPathPS.OpenStringBuffer(len);
+    if (NULL == coreCLRDirectoryPath)
+    {
+        return FALSE;
+    }
+    DWORD size = FILEGetDirectoryFromFullPathA(g_szCoreCLRPath, len, coreCLRDirectoryPath);
+    coreCLRDirectoryPathPS.CloseBuffer(size);
 
     LPCSTR boundPath = bindtextdomain(lpDomain, coreCLRDirectoryPath);
 
     return boundPath != NULL;
-#else // __APPLE__
-    // UNIXTODO: Implement for OSX if necessary
+#else // HAVE_LIBINTL_H
+    // UNIXTODO: Implement for Unixes without libintl if necessary
     return TRUE;
-#endif // __APPLE__
+#endif // HAVE_LIBINTL_H
 }
 
 /*++
@@ -1000,16 +845,16 @@ PAL_GetResourceString(
         IN int cchWideChar
       )
 {
-#ifndef __APPLE__
+#if HAVE_LIBINTL_H
     // NOTE: dgettext returns the key if it fails to locate the appropriate
     // resource. In our case, that will be the English string.
     LPCSTR resourceString = dgettext(lpDomain, lpResourceStr);
-#else // __APPLE__
-    // UNIXTODO: Implement for OSX using the native localization API 
+#else // HAVE_LIBINTL_H
+    // UNIXTODO: Implement for OSX using the native localization API
 
     // This is a temporary solution until we add the real native resource support.
     LPCSTR resourceString = lpResourceStr;
-#endif // __APPLE__
+#endif // HAVE_LIBINTL_H
 
     int length = strlen(resourceString);
     return UTF8ToUnicode(lpResourceStr, length + 1, lpWideCharStr, cchWideChar, 0);

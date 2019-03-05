@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 //
 //   This class is used to perform data flow optimizations.
@@ -10,15 +9,21 @@
 //     DataFlow flow(m_pCompiler);
 //     flow.ForwardAnalysis(callback);
 //
-//  The "callback" object needs to implement the necessary callback
-//  functions that  the "flow" object will call as the data flow
-//  analysis progresses.
+//  The "callback" object needs to implement the following member
+//  functions that the "flow" object will call as the data flow
+//  analysis progresses:
 //
+//  class Callback
+//  {
+//  public:
+//      void StartMerge(BasicBlock* block);
+//      void Merge(BasicBlock* block, BasicBlock* pred, flowList* preds);
+//      bool EndMerge(BasicBlock* block);
+//  };
 #pragma once
 
 #include "compiler.h"
 #include "jitstd.h"
-
 
 class DataFlow
 {
@@ -26,30 +31,6 @@ private:
     DataFlow();
 
 public:
-    // Used to ask the dataflow object to restart analysis.
-    enum UpdateResult
-    {
-        RestartAnalysis,
-        ContinueAnalysis
-    };
-
-    // The callback interface that needs to be implemented by anyone
-    // needing updates by the dataflow object.
-    class Callback
-    {
-    public:
-        Callback(Compiler* pCompiler);
-
-        void StartMerge(BasicBlock* block);
-        void Merge(BasicBlock* block, BasicBlock* pred, flowList* preds);
-        void EndMerge(BasicBlock* block);
-        bool Changed(BasicBlock* block);
-        DataFlow::UpdateResult Update(BasicBlock* block);
-
-    private:
-        Compiler* m_pCompiler;
-    };
-
     DataFlow(Compiler* pCompiler);
 
     template <typename TCallback>
@@ -78,21 +59,13 @@ void DataFlow::ForwardAnalysis(TCallback& callback)
                 callback.Merge(block, pred->flBlock, preds);
             }
         }
-        callback.EndMerge(block);
 
-        if (callback.Changed(block))
+        if (callback.EndMerge(block))
         {
-            UpdateResult result = callback.Update(block);
-
-            assert(result == DataFlow::ContinueAnalysis);
-
-            AllSuccessorIter succsBegin = block->GetAllSuccs(m_pCompiler).begin();
-            AllSuccessorIter succsEnd = block->GetAllSuccs(m_pCompiler).end(); 
-            for (AllSuccessorIter succ = succsBegin; succ != succsEnd; ++succ)
+            for (BasicBlock* succ : block->GetAllSuccs(m_pCompiler))
             {
-                worklist.insert(worklist.end(), *succ);
+                worklist.insert(worklist.end(), succ);
             }
         }
     }
 }
-

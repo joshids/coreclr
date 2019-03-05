@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //
 // File: typehandle.h
 //
@@ -365,8 +364,6 @@ public:
         return *this == TypeHandle(g_pObjectClass);
     }
 
-    DWORD IsTransparentProxy() const;
-
     // Retrieve the key corresponding to this handle
     TypeKey GetTypeKey() const;
 
@@ -395,10 +392,8 @@ public:
     CHECK CheckFullyLoaded();
 #endif
 
-#ifdef FEATURE_HFA
     bool IsHFA() const;   
     CorElementType GetHFAType() const;
-#endif // FEATURE_HFA
 
 #ifdef FEATURE_64BIT_ALIGNMENT
     bool RequiresAlign8() const;
@@ -461,11 +456,7 @@ public:
     // The module where this type lives for the purposes of loading and prejitting
     // Note: NGen time result might differ from runtime result for parametrized types (generics, arrays, etc.)
     // See code:ClassLoader::ComputeLoaderModule or file:clsload.hpp#LoaderModule for more information
-#ifndef BINDER
     PTR_Module GetLoaderModule() const;
-#else
-    MdilModule* GetLoaderModule() const;
-#endif
 
     // The assembly that defined this type (== GetModule()->GetAssembly())
     Assembly * GetAssembly() const;
@@ -478,8 +469,6 @@ public:
     PTR_BaseDomain GetDomain() const;
 
     PTR_LoaderAllocator GetLoaderAllocator() const;
-
-    BOOL IsDomainNeutral() const;
 
     // Get the class token, assuming the type handle represents a named type,
     // i.e. a class, a value type, a generic instantiation etc.
@@ -518,6 +507,9 @@ public:
     // BYREF
     BOOL IsByRef() const;
 
+    // BYREFLIKE (does not return TRUE for IsByRef types)
+    BOOL IsByRefLike() const;
+
     // PTR
     BOOL IsPointer() const;
 
@@ -546,12 +538,6 @@ public:
     void CheckRestore() const;
     BOOL IsExternallyVisible() const;
 
-    // Is this type part of an assembly loaded for introspection?
-    BOOL IsIntrospectionOnly() const;
-
-    // Checks this type and its components for "IsIntrospectionOnly"
-    BOOL ContainsIntrospectionOnlyTypes() const;
-
     // Does this type participate in type equivalence?
     inline BOOL HasTypeEquivalence() const;
 
@@ -577,14 +563,6 @@ public:
     }
 
     INDEBUGIMPL(BOOL Verify();)             // DEBUGGING Make certain this is a valid type handle 
-
-#if defined(CHECK_APP_DOMAIN_LEAKS) || defined(_DEBUG)
-    BOOL IsAppDomainAgile() const;
-    BOOL IsCheckAppDomainAgile() const;
-
-    BOOL IsArrayOfElementsAppDomainAgile() const;
-    BOOL IsArrayOfElementsCheckAppDomainAgile() const;
-#endif
 
 #ifdef DACCESS_COMPILE
     void EnumMemoryRegions(CLRDataEnumMemoryFlags flags);
@@ -696,7 +674,6 @@ inline CHECK CheckPointer(TypeHandle th, IsNullOK ok = NULL_NOT_OK)
     STATIC_CONTRACT_NOTHROW;
     STATIC_CONTRACT_GC_NOTRIGGER;
     STATIC_CONTRACT_FORBID_FAULT;
-    STATIC_CONTRACT_SO_TOLERANT;
     SUPPORTS_DAC;
     STATIC_CONTRACT_CANNOT_TAKE_LOCK;
 

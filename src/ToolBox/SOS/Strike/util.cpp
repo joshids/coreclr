@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 // ==++==
 // 
@@ -43,7 +42,20 @@
 #define SYM_BUFFER_SIZE (sizeof(IMAGEHLP_SYMBOL) + MAX_SYMBOL_LEN)
 char symBuffer[SYM_BUFFER_SIZE];
 PIMAGEHLP_SYMBOL sym = (PIMAGEHLP_SYMBOL) symBuffer;
+#else
+#include <sys/stat.h>
+#include <coreruncommon.h>
+#include <dlfcn.h>
 #endif // !FEATURE_PAL
+
+#include <coreclrhost.h>
+#include <set>
+
+LoadSymbolsForModuleDelegate SymbolReader::loadSymbolsForModuleDelegate;
+DisposeDelegate SymbolReader::disposeDelegate;
+ResolveSequencePointDelegate SymbolReader::resolveSequencePointDelegate;
+GetLocalVariableName SymbolReader::getLocalVariableNameDelegate;
+GetLineByILOffsetDelegate SymbolReader::getLineByILOffsetDelegate;
 
 const char * const CorElementTypeName[ELEMENT_TYPE_MAX]=
 {
@@ -63,10 +75,6 @@ IXCLRDataProcess *g_clrData = NULL;
 ISOSDacInterface *g_sos = NULL;
 ICorDebugProcess *g_pCorDebugProcess = NULL;
 
-#ifdef FEATURE_PAL
-PFN_CLRDataCreateInstance g_pCLRDataCreateInstance = NULL;
-#endif // FEATURE_PAL
-
 #ifndef IfFailRet
 #define IfFailRet(EXPR) do { Status = (EXPR); if(FAILED(Status)) { return (Status); } } while (0)
 #endif
@@ -80,9 +88,20 @@ PFN_CLRDataCreateInstance g_pCLRDataCreateInstance = NULL;
 #endif // IfFailGo
 
 // Max number of reverted rejit versions that !dumpmd and !ip2md will print
-const UINT kcMaxRevertedRejitData = 10;
-
+const UINT kcMaxRevertedRejitData   = 10;
+const UINT kcMaxTieredVersions      = 10;
 #ifndef FEATURE_PAL
+
+// ensure we always allocate on the process heap
+void* __cdecl operator new(size_t size) throw()
+{ return HeapAlloc(GetProcessHeap(), 0, size); }
+void __cdecl operator delete(void* pObj) throw()
+{ HeapFree(GetProcessHeap(), 0, pObj); }
+
+void* __cdecl operator new[](size_t size) throw()
+{ return HeapAlloc(GetProcessHeap(), 0, size); }
+void __cdecl operator delete[](void* pObj) throw()
+{ HeapFree(GetProcessHeap(), 0, pObj); }
 
 /**********************************************************************\
 * Here we define types and functions that support custom COM           *
@@ -235,47 +254,49 @@ HRESULT CreateInstanceCustomImpl(
 
         typedef HRESULT (__stdcall IDebugSymbols3::*GetPathFunc)(LPWSTR , ULONG, ULONG*);
 
-        // Handle both the image path and the symbol path
-        GetPathFunc rgGetPathFuncs[] = 
-            { &IDebugSymbols3::GetImagePathWide, &IDebugSymbols3::GetSymbolPathWide };
-
-        for (int i = 0; i < _countof(rgGetPathFuncs); ++i)
         {
-            ULONG pathSize = 0;
+            // Handle both the image path and the symbol path
+            GetPathFunc rgGetPathFuncs[] = 
+                { &IDebugSymbols3::GetImagePathWide, &IDebugSymbols3::GetSymbolPathWide };
 
-            // get the path buffer size
-            if ((spSym3.GetPtr()->*rgGetPathFuncs[i])(NULL, 0, &pathSize) != S_OK)
+            for (int i = 0; i < _countof(rgGetPathFuncs); ++i)
             {
-                continue;
-            }
+                ULONG pathSize = 0;
 
-            ArrayHolder<WCHAR> imgPath = new WCHAR[pathSize+MAX_LONGPATH+1];
-            if (imgPath == NULL)
-            {
-                continue;
-            }
-
-            // actually get the path
-            if ((spSym3.GetPtr()->*rgGetPathFuncs[i])(imgPath, pathSize, NULL) != S_OK)
-            {
-                continue;
-            }
-
-            LPWSTR ctx;
-            LPCWSTR pathElem = wcstok_s(imgPath, W(";"), &ctx);
-            while (pathElem != NULL)
-            {
-                WCHAR fullName[MAX_LONGPATH];
-                wcscpy_s(fullName, _countof(fullName), pathElem);
-                if (wcscat_s(fullName, W("\\")) == 0 && wcscat_s(fullName, dllName) == 0)
+                // get the path buffer size
+                if ((spSym3.GetPtr()->*rgGetPathFuncs[i])(NULL, 0, &pathSize) != S_OK)
                 {
-                    if (SUCCEEDED(CreateInstanceFromPath(clsid, iid, fullName, ppItf)))
-                    {
-                        return S_OK;
-                    }
+                    continue;
                 }
 
-                pathElem = wcstok_s(NULL, W(";"), &ctx);
+                ArrayHolder<WCHAR> imgPath = new WCHAR[pathSize+MAX_LONGPATH+1];
+                if (imgPath == NULL)
+                {
+                    continue;
+                }
+
+                // actually get the path
+                if ((spSym3.GetPtr()->*rgGetPathFuncs[i])(imgPath, pathSize, NULL) != S_OK)
+                {
+                    continue;
+                }
+
+                LPWSTR ctx;
+                LPCWSTR pathElem = wcstok_s(imgPath, W(";"), &ctx);
+                while (pathElem != NULL)
+                {
+                    WCHAR fullName[MAX_LONGPATH];
+                    wcscpy_s(fullName, _countof(fullName), pathElem);
+                    if (wcscat_s(fullName, W("\\")) == 0 && wcscat_s(fullName, dllName) == 0)
+                    {
+                        if (SUCCEEDED(CreateInstanceFromPath(clsid, iid, fullName, ppItf)))
+                        {
+                            return S_OK;
+                        }
+                    }
+
+                    pathElem = wcstok_s(NULL, W(";"), &ctx);
+                }
             }
         }
 
@@ -753,9 +774,8 @@ HRESULT CheckEEDll()
     // Do we have clr.dll
     if (moduleInfo[MSCORWKS].baseAddr == 0)
     {
-        if (moduleInfo[MSCORWKS].baseAddr == 0)
-            g_ExtSymbols->GetModuleByModuleName (MAIN_CLR_MODULE_NAME_A,0,NULL,
-                                                 &moduleInfo[MSCORWKS].baseAddr);
+        g_ExtSymbols->GetModuleByModuleName (MAIN_CLR_MODULE_NAME_A,0,NULL,
+                                             &moduleInfo[MSCORWKS].baseAddr);
         if (moduleInfo[MSCORWKS].baseAddr != 0 && moduleInfo[MSCORWKS].hasPdb == FALSE)
         {
             g_ExtSymbols->GetModuleParameters (1, &moduleInfo[MSCORWKS].baseAddr, 0, &Params);
@@ -798,9 +818,6 @@ EEFLAVOR GetEEFlavor ()
 
 BOOL IsDumpFile ()
 {
-#ifdef FEATURE_PAL
-    return FALSE;
-#else
     static int g_fDumpFile = -1;
     if (g_fDumpFile == -1) {
         ULONG Class;
@@ -812,7 +829,6 @@ BOOL IsDumpFile ()
             g_fDumpFile = 0;
     }
     return g_fDumpFile != 0;
-#endif //FEATURE_PAL
 }
 
 BOOL g_InMinidumpSafeMode = FALSE;
@@ -1161,16 +1177,6 @@ void GetStaticFieldPTR(DWORD_PTR* pOutPtr, DacpDomainLocalModuleData* pDLMD, Dac
     }
     else
     {
-        if (pFlags && pMTD->bIsShared)
-        {
-            BYTE flags;
-            DWORD_PTR pTargetFlags = (DWORD_PTR) pDLMD->pClassData + RidFromToken(pMTD->cl) - 1;            
-            move_xp (flags, pTargetFlags);
-
-            *pFlags = flags;
-        }
-               
-        
         *pOutPtr = dwTmp;            
     }
     return;
@@ -1298,7 +1304,7 @@ void DisplaySharedStatic(ULONG64 dwModuleDomainID, DacpMethodTableData* pMT, Dac
     ExtOut(" <<\n");
 }
 
-void DisplayThreadStatic (DacpModuleData* pModule, DacpMethodTableData* pMT, DacpFieldDescData *pFD, BOOL fIsShared)
+void DisplayThreadStatic(DacpModuleData* pModule, DacpMethodTableData* pMT, DacpFieldDescData *pFD)
 {
     SIZE_T dwModuleIndex = (SIZE_T)pModule->dwModuleIndex;
     SIZE_T dwModuleDomainID = (SIZE_T)pModule->dwModuleID;
@@ -1320,31 +1326,6 @@ void DisplayThreadStatic (DacpModuleData* pModule, DacpMethodTableData* pMT, Dac
         if (vThread.osThreadId != 0)
         {   
             CLRDATA_ADDRESS appDomainAddr = vThread.domain;
-
-            // Get the DLM (we need this to check the ClassInit flags).
-            // It's annoying that we have to issue one request for
-            // domain-neutral modules and domain-specific modules.
-            DacpDomainLocalModuleData vDomainLocalModule;                
-            if (fIsShared)
-            {
-                if (g_sos->GetDomainLocalModuleDataFromAppDomain(appDomainAddr, (int)dwModuleDomainID, &vDomainLocalModule) != S_OK)
-                {
-                    // Not initialized, go to next thread
-                    // and continue looping
-                    CurThread = vThread.nextThread;
-                    continue;
-                }
-            }
-            else
-            {
-                if (g_sos->GetDomainLocalModuleDataFromModule(pMT->Module, &vDomainLocalModule) != S_OK)
-                {
-                    // Not initialized, go to next thread
-                    // and continue looping
-                    CurThread = vThread.nextThread;
-                    continue;
-                }
-            }
 
             // Get the TLM
             DacpThreadLocalModuleData vThreadLocalModule;
@@ -1368,17 +1349,6 @@ void DisplayThreadStatic (DacpModuleData* pModule, DacpMethodTableData* pMT, Dac
                 continue;
             }
 
-            Flags = 0;
-            GetDLMFlags(&vDomainLocalModule, pMT, &Flags);
-
-            if ((Flags&1) == 0) 
-            {
-                // Not initialized, go to next thread
-                // and continue looping
-                CurThread = vThread.nextThread;
-                continue;
-            }
-            
             ExtOut(" %x:", vThread.osThreadId);
             DisplayDataMember(pFD, dwTmp, FALSE);               
         }
@@ -1387,61 +1357,6 @@ void DisplayThreadStatic (DacpModuleData* pModule, DacpMethodTableData* pMT, Dac
         CurThread = vThread.nextThread;
     }
     ExtOut(" <<\n");
-}
-
-void DisplayContextStatic (DacpFieldDescData *pFD, size_t offset, BOOL fIsShared)
-{
-    ExtOut("\nDisplay of context static variables is not implemented yet\n");
-    /*
-    int numDomain;
-    DWORD_PTR *domainList = NULL;
-    GetDomainList (domainList, numDomain);
-    ToDestroy des0 ((void**)&domainList);
-    AppDomain vAppDomain;
-    Context vContext;
-    
-    ExtOut("    >> Domain:Value");
-    for (int i = 0; i < numDomain; i ++)
-    {
-        DWORD_PTR dwAddr = domainList[i];
-        if (dwAddr == 0) {
-            continue;
-        }
-        vAppDomain.Fill (dwAddr);
-        if (vAppDomain.m_pDefaultContext == 0)
-            continue;
-        dwAddr = (DWORD_PTR)vAppDomain.m_pDefaultContext;
-        vContext.Fill (dwAddr);
-        
-        if (fIsShared)
-            dwAddr = (DWORD_PTR)vContext.m_pSharedStaticData;
-        else
-            dwAddr = (DWORD_PTR)vContext.m_pUnsharedStaticData;
-        if (dwAddr == 0)
-            continue;
-        dwAddr += offsetof(STATIC_DATA, dataPtr);
-        dwAddr += offset;
-        if (safemove (dwAddr, dwAddr) == 0)
-            continue;
-        if (dwAddr == 0)
-            // We have not initialized this yet.
-            continue;
-        
-        dwAddr += pFD->dwOffset;
-        if (pFD->Type == ELEMENT_TYPE_CLASS
-            || pFD->Type == ELEMENT_TYPE_VALUETYPE)
-        {
-            if (safemove (dwAddr, dwAddr) == 0)
-                continue;
-        }
-        if (dwAddr == 0)
-            // We have not initialized this yet.
-            continue;
-        ExtOut(" %p:", (ULONG64)domainList[i]);
-        DisplayDataMember (pFD, dwAddr, FALSE);
-    }
-    ExtOut(" <<\n");
-    */
 }
 
 const char * ElementTypeName(unsigned type)
@@ -1531,7 +1446,7 @@ LPWSTR FormatTypeName (__out_ecount (maxChars) LPWSTR pszName, UINT maxChars)
 *                                                                      *
 *    This function is called to dump all fields of a managed object.   *  
 *    dwStartAddr specifies the beginning memory address.               *
-*    bFirst is used to avoid printing header everytime.                *
+*    bFirst is used to avoid printing header every time.               *
 *                                                                      *
 \**********************************************************************/
 void DisplayFields(CLRDATA_ADDRESS cdaMT, DacpMethodTableData *pMTD, DacpMethodTableFieldData *pMTFD, DWORD_PTR dwStartAddr, BOOL bFirst, BOOL bValueClass)
@@ -1545,8 +1460,6 @@ void DisplayFields(CLRDATA_ADDRESS cdaMT, DacpMethodTableData *pMTD, DacpMethodT
         numInstanceFields = 0;
     }
     
-    BOOL fIsShared = pMTD->bIsShared;
-
     if (pMTD->ParentMethodTable)
     {
         DacpMethodTableData vParentMethTable;
@@ -1594,7 +1507,7 @@ void DisplayFields(CLRDATA_ADDRESS cdaMT, DacpMethodTableData *pMTD, DacpMethodT
         dwAddr = vFieldDesc.NextField;
 
         DWORD offset = vFieldDesc.dwOffset;
-        if(!((vFieldDesc.bIsThreadLocal || vFieldDesc.bIsContextLocal || fIsShared) && vFieldDesc.bIsStatic))
+        if(!(vFieldDesc.bIsThreadLocal && vFieldDesc.bIsStatic))
         {
             if (!bValueClass)
             {
@@ -1633,13 +1546,10 @@ void DisplayFields(CLRDATA_ADDRESS cdaMT, DacpMethodTableData *pMTD, DacpMethodT
         
         ExtOut("%2s ", (IsElementValueType(vFieldDesc.Type)) ? "1" : "0");
 
-        if (vFieldDesc.bIsStatic && (vFieldDesc.bIsThreadLocal || vFieldDesc.bIsContextLocal))
+        if (vFieldDesc.bIsStatic && vFieldDesc.bIsThreadLocal)
         {
             numStaticFields ++;
-            if (fIsShared)
-                ExtOut("%8s %" POINTERSIZE "s", "shared", vFieldDesc.bIsThreadLocal ? "TLstatic" : "CLstatic");
-            else
-                ExtOut("%8s ", vFieldDesc.bIsThreadLocal ? "TLstatic" : "CLstatic");
+            ExtOut("%8s ", vFieldDesc.bIsThreadLocal ? "TLstatic" : "CLstatic");
 
             NameForToken_s(TokenFromRid(vFieldDesc.mb, mdtFieldDef), pImport, g_mdName, mdNameLen, false);
             ExtOut(" %S\n", g_mdName);
@@ -1655,14 +1565,8 @@ void DisplayFields(CLRDATA_ADDRESS cdaMT, DacpMethodTableData *pMTD, DacpMethodT
                     DacpModuleData vModule;
                     if (vModule.Request(g_sos,pMTD->Module) == S_OK)
                     {
-                        DisplayThreadStatic(&vModule, pMTD, &vFieldDesc, fIsShared);
+                        DisplayThreadStatic(&vModule, pMTD, &vFieldDesc);
                     }
-                }
-                else if (vFieldDesc.bIsContextLocal)
-                {
-                    DisplayContextStatic(&vFieldDesc,
-                                         pMTFD->wContextStaticOffset,
-                                         fIsShared);
                 }
             }
     
@@ -1671,47 +1575,24 @@ void DisplayFields(CLRDATA_ADDRESS cdaMT, DacpMethodTableData *pMTD, DacpMethodT
         {
             numStaticFields ++;
 
-            if (fIsShared)
+            ExtOut("%8s ", "static");
+
+            DacpDomainLocalModuleData vDomainLocalModule;
+
+            // The MethodTable isn't shared, so the module must not be loaded domain neutral.  We can
+            // get the specific DomainLocalModule instance without needing to know the AppDomain in advance.
+            if (g_sos->GetDomainLocalModuleDataFromModule(pMTD->Module, &vDomainLocalModule) != S_OK)
             {
-                ExtOut("%8s %" POINTERSIZE "s", "shared", "static");
-
-                NameForToken_s(TokenFromRid(vFieldDesc.mb, mdtFieldDef), pImport, g_mdName, mdNameLen, false);
-                ExtOut(" %S\n", g_mdName);
-
-                if (IsMiniDumpFile())
-                {
-                    ExtOut(" <no information>\n");
-                }
-                else
-                {
-                    DacpModuleData vModule;
-                    if (vModule.Request(g_sos,pMTD->Module) == S_OK)
-                    {
-                        DisplaySharedStatic(vModule.dwModuleID, pMTD, &vFieldDesc);
-                    }
-                }
+                ExtOut(" <no information>\n");
             }
             else
             {
-                ExtOut("%8s ", "static");
-                
-                DacpDomainLocalModuleData vDomainLocalModule;
-                
-                // The MethodTable isn't shared, so the module must not be loaded domain neutral.  We can
-                // get the specific DomainLocalModule instance without needing to know the AppDomain in advance.
-                if (g_sos->GetDomainLocalModuleDataFromModule(pMTD->Module, &vDomainLocalModule) != S_OK)
-                {
-                    ExtOut(" <no information>\n");
-                }
-                else
-                {
-                    DWORD_PTR dwTmp;
-                    GetStaticFieldPTR(&dwTmp, &vDomainLocalModule, pMTD, &vFieldDesc);
-                    DisplayDataMember(&vFieldDesc, dwTmp);
+                DWORD_PTR dwTmp;
+                GetStaticFieldPTR(&dwTmp, &vDomainLocalModule, pMTD, &vFieldDesc);
+                DisplayDataMember(&vFieldDesc, dwTmp);
 
-                    NameForToken_s(TokenFromRid(vFieldDesc.mb, mdtFieldDef), pImport, g_mdName, mdNameLen, false);
-                    ExtOut(" %S\n", g_mdName);
-                }
+                NameForToken_s(TokenFromRid(vFieldDesc.mb, mdtFieldDef), pImport, g_mdName, mdNameLen, false);
+                ExtOut(" %S\n", g_mdName);
             }
         }
         else
@@ -1756,7 +1637,7 @@ int GetObjFieldOffset(CLRDATA_ADDRESS cdaObj, __in_z LPCWSTR wszFieldName, BOOL 
 //                0 = field not found, 
 //              > 0 = offset to field from objAddr
 int GetObjFieldOffset(CLRDATA_ADDRESS cdaObj, CLRDATA_ADDRESS cdaMT, __in_z LPCWSTR wszFieldName,
-                        BOOL bFirst/*=TRUE*/)
+                        BOOL bFirst/*=TRUE*/, DacpFieldDescData* pDacpFieldDescData/*=NULL*/)
 {
 
 #define EXITPOINT(EXPR) do { if(!(EXPR)) { return -1; } } while (0)
@@ -1779,7 +1660,7 @@ int GetObjFieldOffset(CLRDATA_ADDRESS cdaObj, CLRDATA_ADDRESS cdaMT, __in_z LPCW
     if (dmtd.ParentMethodTable)
     {
         DWORD retVal = GetObjFieldOffset (cdaObj, dmtd.ParentMethodTable, 
-                                          wszFieldName, FALSE);
+                                          wszFieldName, FALSE, pDacpFieldDescData);
         if (retVal != 0)
         {
             // return in case of error or success.
@@ -1804,6 +1685,10 @@ int GetObjFieldOffset(CLRDATA_ADDRESS cdaObj, CLRDATA_ADDRESS cdaMT, __in_z LPCW
             NameForToken_s (TokenFromRid(vFieldDesc.mb, mdtFieldDef), pImport, g_mdName, mdNameLen, false);
             if (_wcscmp (wszFieldName, g_mdName) == 0)
             {
+                if (pDacpFieldDescData != NULL)
+                {
+                    *pDacpFieldDescData = vFieldDesc;
+                }
                 return offset;
             }
             numInstanceFields ++;                        
@@ -1814,6 +1699,66 @@ int GetObjFieldOffset(CLRDATA_ADDRESS cdaObj, CLRDATA_ADDRESS cdaMT, __in_z LPCW
 
     // Field name not found...
     return 0;
+
+#undef EXITPOINT    
+}
+
+
+// Return value: -1 = error
+//               -2 = not found
+//             >= 0 = offset to field from cdaValue
+int GetValueFieldOffset(CLRDATA_ADDRESS cdaMT, __in_z LPCWSTR wszFieldName, DacpFieldDescData* pDacpFieldDescData)
+{
+#define EXITPOINT(EXPR) do { if(!(EXPR)) { return -1; } } while (0)
+
+    const int NOT_FOUND = -2;
+    DacpMethodTableData dmtd;
+    DacpMethodTableFieldData vMethodTableFields;
+    DacpFieldDescData vFieldDesc;
+    DacpModuleData module;
+    static DWORD numInstanceFields = 0; // Static due to recursion visiting parents
+    numInstanceFields = 0;
+
+    EXITPOINT(vMethodTableFields.Request(g_sos, cdaMT) == S_OK);
+
+    EXITPOINT(dmtd.Request(g_sos, cdaMT) == S_OK);
+    EXITPOINT(module.Request(g_sos, dmtd.Module) == S_OK);
+    if (dmtd.ParentMethodTable)
+    {
+        DWORD retVal = GetValueFieldOffset(dmtd.ParentMethodTable, wszFieldName, pDacpFieldDescData);
+        if (retVal != NOT_FOUND)
+        {
+            // Return in case of error or success. Fall through for field-not-found.
+            return retVal;
+        }
+    }
+
+    CLRDATA_ADDRESS dwAddr = vMethodTableFields.FirstField;
+    ToRelease<IMetaDataImport> pImport = MDImportForModule(&module);
+
+    while (numInstanceFields < vMethodTableFields.wNumInstanceFields)
+    {
+        EXITPOINT(vFieldDesc.Request(g_sos, dwAddr) == S_OK);
+
+        if (!vFieldDesc.bIsStatic)
+        {
+            NameForToken_s(TokenFromRid(vFieldDesc.mb, mdtFieldDef), pImport, g_mdName, mdNameLen, false);
+            if (_wcscmp(wszFieldName, g_mdName) == 0)
+            {
+                if (pDacpFieldDescData != NULL)
+                {
+                    *pDacpFieldDescData = vFieldDesc;
+                }
+                return vFieldDesc.dwOffset;
+            }
+            numInstanceFields++;
+        }
+
+        dwAddr = vFieldDesc.NextField;
+    }
+
+    // Field name not found...
+    return NOT_FOUND;
 
 #undef EXITPOINT    
 }
@@ -2090,7 +2035,7 @@ HRESULT FileNameForModule (DacpModuleData *pModule, __out_ecount (MAX_LONGPATH) 
         hr = g_sos->GetPEFileName(dwAddr, MAX_LONGPATH, fileName, NULL);
         if (SUCCEEDED(hr))
         {
-            if (fileName[0] != L'\0')
+            if (fileName[0] != W('\0'))
                 return hr; // done
         }
 #ifndef FEATURE_PAL
@@ -2108,9 +2053,9 @@ HRESULT FileNameForModule (DacpModuleData *pModule, __out_ecount (MAX_LONGPATH) 
 
 void AssemblyInfo(DacpAssemblyData *pAssembly)
 {
-    ExtOut("ClassLoader:        %p\n", (ULONG64)pAssembly->ClassLoader);
+    ExtOut("ClassLoader:        %p\n", SOS_PTR(pAssembly->ClassLoader));
     if ((ULONG64)pAssembly->AssemblySecDesc != NULL)
-        ExtOut("SecurityDescriptor: %p\n", (ULONG64)pAssembly->AssemblySecDesc);
+        ExtOut("SecurityDescriptor: %p\n", SOS_PTR(pAssembly->AssemblySecDesc));
     ExtOut("  Module Name\n");
     
     ArrayHolder<CLRDATA_ADDRESS> Modules = new CLRDATA_ADDRESS[pAssembly->ModuleCount];
@@ -2189,12 +2134,12 @@ const char *GetStageText(DacpAppDomainDataStage stage)
 \**********************************************************************/
 void DomainInfo (DacpAppDomainData *pDomain)
 {
-    ExtOut("LowFrequencyHeap:   %p\n", (ULONG64)pDomain->pLowFrequencyHeap);
-    ExtOut("HighFrequencyHeap:  %p\n", (ULONG64)pDomain->pHighFrequencyHeap);
-    ExtOut("StubHeap:           %p\n", (ULONG64)pDomain->pStubHeap);
+    ExtOut("LowFrequencyHeap:   %p\n", SOS_PTR(pDomain->pLowFrequencyHeap));
+    ExtOut("HighFrequencyHeap:  %p\n", SOS_PTR(pDomain->pHighFrequencyHeap));
+    ExtOut("StubHeap:           %p\n", SOS_PTR(pDomain->pStubHeap));
     ExtOut("Stage:              %s\n", GetStageText(pDomain->appDomainStage));
     if ((ULONG64)pDomain->AppSecDesc != NULL)
-        ExtOut("SecurityDescriptor: %p\n", (ULONG64)pDomain->AppSecDesc);
+        ExtOut("SecurityDescriptor: %p\n", SOS_PTR(pDomain->AppSecDesc));
     ExtOut("Name:               ");
 
     if (g_sos->GetAppDomainName(pDomain->AppDomainPtr, mdNameLen, g_mdName, NULL)!=S_OK)
@@ -2269,7 +2214,7 @@ BOOL NameForMD_s (DWORD_PTR pMD, __out_ecount (capacity_mdName) WCHAR *mdName, s
     //
     if (!IsMiniDumpFile() && MethodDescData.Request(g_sos,StartAddr) != S_OK)
     {
-        ExtOut("%p is not a MethodDesc\n", (ULONG64)StartAddr);
+        ExtOut("%p is not a MethodDesc\n", SOS_PTR(StartAddr));
         return FALSE;
     }
 
@@ -2445,6 +2390,65 @@ BOOL IsStringObject (size_t obj)
 
     if (SUCCEEDED(GetMTOfObject(obj, &mtAddr)))
         return TO_TADDR(g_special_usefulGlobals.StringMethodTable) == mtAddr;
+
+    return FALSE;
+}
+
+BOOL IsDerivedFrom(CLRDATA_ADDRESS mtObj, __in_z LPCWSTR baseString)
+{
+    DacpMethodTableData dmtd;
+    CLRDATA_ADDRESS walkMT = mtObj;
+    while (walkMT != NULL)
+    {
+        if (dmtd.Request(g_sos, walkMT) != S_OK)
+        {
+            break;
+        }
+
+        NameForMT_s(TO_TADDR(walkMT), g_mdName, mdNameLen);
+        if (_wcscmp(baseString, g_mdName) == 0)
+        {
+            return TRUE;
+        }
+
+        walkMT = dmtd.ParentMethodTable;
+    }
+
+    return FALSE;
+}
+
+BOOL TryGetMethodDescriptorForDelegate(CLRDATA_ADDRESS delegateAddr, CLRDATA_ADDRESS* pMD)
+{
+    if (!sos::IsObject(delegateAddr, false))
+    {
+        return FALSE;
+    }
+
+    sos::Object delegateObj = TO_TADDR(delegateAddr);
+
+    for (int i = 0; i < 2; i++)
+    {
+        int offset;
+        if ((offset = GetObjFieldOffset(delegateObj.GetAddress(), delegateObj.GetMT(), i == 0 ? W("_methodPtrAux") : W("_methodPtr"))) != 0)
+        {
+            CLRDATA_ADDRESS methodPtr;
+            MOVE(methodPtr, delegateObj.GetAddress() + offset);
+            if (methodPtr != NULL)
+            {
+                if (g_sos->GetMethodDescPtrFromIP(methodPtr, pMD) == S_OK)
+                {
+                    return TRUE;
+                }
+
+                DacpCodeHeaderData codeHeaderData;
+                if (codeHeaderData.Request(g_sos, methodPtr) == S_OK)
+                {
+                    *pMD = codeHeaderData.MethodDescPtr;
+                    return TRUE;
+                }
+            }
+        }
+    }
 
     return FALSE;
 }
@@ -2675,7 +2679,8 @@ DWORD_PTR *ModuleFromName(__in_opt LPSTR mName, int *numModule)
     ArrayHolder<CLRDATA_ADDRESS> pAssemblyArray = NULL;
     ArrayHolder<CLRDATA_ADDRESS> pModules = NULL;
     int arrayLength = 0;
-    if (!ClrSafeInt<int>::addition(adsData.DomainCount, 2, arrayLength))
+    int numSpecialDomains = (adsData.sharedDomain != NULL) ? 2 : 1;
+    if (!ClrSafeInt<int>::addition(adsData.DomainCount, numSpecialDomains, arrayLength))
     {
         ExtOut("<integer overflow>\n");
         return NULL;
@@ -2689,8 +2694,11 @@ DWORD_PTR *ModuleFromName(__in_opt LPSTR mName, int *numModule)
     }
 
     pArray[0] = adsData.systemDomain;
-    pArray[1] = adsData.sharedDomain;
-    if (g_sos->GetAppDomainList(adsData.DomainCount, pArray.GetPtr()+2, NULL)!=S_OK)
+    if (adsData.sharedDomain != NULL)
+    {
+        pArray[1] = adsData.sharedDomain;
+    }
+    if (g_sos->GetAppDomainList(adsData.DomainCount, pArray.GetPtr()+numSpecialDomains, NULL)!=S_OK)
     {
         ExtOut("Unable to get array of AppDomains\n");
         return NULL;
@@ -2711,12 +2719,12 @@ DWORD_PTR *ModuleFromName(__in_opt LPSTR mName, int *numModule)
         ReportOOM();
         return NULL;
     }
-    
-    WCHAR StringData[MAX_PATH_FNAME];
+
+    WCHAR StringData[MAX_LONGPATH];
     char fileName[sizeof(StringData)/2];
     
     // Search all domains to find a module
-    for (int n = 0; n < adsData.DomainCount+2; n++)
+    for (int n = 0; n < adsData.DomainCount+numSpecialDomains; n++)
     {
         if (IsInterrupt())
         {
@@ -2754,8 +2762,8 @@ DWORD_PTR *ModuleFromName(__in_opt LPSTR mName, int *numModule)
                 ExtOut("Unable to get array of Assemblies for the given AppDomain..\n");
                 goto Failure;
             }
-                
-            for (int nAssem = 0;nAssem < appDomain.AssemblyCount;nAssem ++)
+
+            for (int nAssem = 0; nAssem < appDomain.AssemblyCount; nAssem ++)
             {
                 if (IsInterrupt())
                 {
@@ -2776,8 +2784,8 @@ DWORD_PTR *ModuleFromName(__in_opt LPSTR mName, int *numModule)
                     ExtOut("Failed to get the modules for the given assembly.\n");
                     goto Failure;
                 }
-                
-                for (UINT nModule=0;nModule<assemblyData.ModuleCount;nModule++)
+
+                for (UINT nModule = 0; nModule < assemblyData.ModuleCount; nModule++)
                 {
                     if (IsInterrupt())
                     {
@@ -2795,8 +2803,10 @@ DWORD_PTR *ModuleFromName(__in_opt LPSTR mName, int *numModule)
 
                     FileNameForModule ((DWORD_PTR)ModuleAddr, StringData);
                     int m;
-                    for (m = 0; StringData[m] != L'\0'; m ++)
+                    for (m = 0; StringData[m] != L'\0'; m++)
+                    {
                         fileName[m] = (char)StringData[m];
+                    }
                     fileName[m] = '\0';
                     
                     if ((mName == NULL) || 
@@ -2804,8 +2814,7 @@ DWORD_PTR *ModuleFromName(__in_opt LPSTR mName, int *numModule)
                         DebuggerModuleNamesMatch(ModuleData.File, mName) ||
                         IsFusionLoadedModule(fileName, mName))
                     {
-                        AddToModuleList(moduleList, *numModule, maxList,
-                                         (DWORD_PTR)ModuleAddr);
+                        AddToModuleList(moduleList, *numModule, maxList, (DWORD_PTR)ModuleAddr);
                     }    
                 }                        
 
@@ -3170,7 +3179,7 @@ void GetInfoFromModule (DWORD_PTR ModuleAddr, ULONG token, DWORD_PTR *ret)
                         else
                             ExtOut("Not JITTED yet. Use !bpmd -md %p to break on run.\n", SOS_PTR(md));
 #else
-                        ExtOut("Not JITTED yet. Use 'sos bpmd -md %p' to break on run.\n", SOS_PTR(md));
+                        ExtOut("Not JITTED yet. Use 'bpmd -md %p' to break on run.\n", SOS_PTR(md));
 #endif
                     }
                 }
@@ -3235,10 +3244,53 @@ const char *EHTypeName(EHClauseType et)
         return "UNKNOWN";
 }
 
-void DumpRejitData(DacpReJitData * pReJitData)
+void DumpTieredNativeCodeAddressInfo(struct DacpTieredVersionData * pTieredVersionData, const UINT cTieredVersionData)
+{
+    ExtOut("Code Version History:\n");
+
+    for(int i = cTieredVersionData - 1; i >= 0; --i)
+    {
+        const char *descriptor = NULL;
+        switch(pTieredVersionData[i].TieredInfo)
+        {
+        case DacpTieredVersionData::TIERED_UNKNOWN:
+        default:
+            _ASSERTE(!"Update SOS to understand the new tier");
+            descriptor = "Unknown Tier";
+            break;
+        case DacpTieredVersionData::NON_TIERED:
+            descriptor = "Non-Tiered";
+            break;
+        case DacpTieredVersionData::TIERED_0:
+            descriptor = "Tier 0";
+            break;
+        case DacpTieredVersionData::TIERED_1:
+            descriptor = "Tier 1";
+            break;
+        }
+
+        DMLOut("  CodeAddr:           %s  (%s)\n", DMLIP(pTieredVersionData[i].NativeCodeAddr), descriptor);
+        ExtOut("  NativeCodeVersion:  %p\n", SOS_PTR(pTieredVersionData[i].NativeCodeVersionNodePtr));
+    }
+}
+
+void DumpRejitData(CLRDATA_ADDRESS pMethodDesc, DacpReJitData * pReJitData)
 {
     ExtOut("    ReJITID %p: ", SOS_PTR(pReJitData->rejitID));
-    DMLOut("CodeAddr = %s", DMLIP(pReJitData->NativeCodeAddr));                
+
+    struct DacpTieredVersionData codeAddrs[kcMaxTieredVersions];
+    int cCodeAddrs;
+
+    ReleaseHolder<ISOSDacInterface5> sos5;
+    if (SUCCEEDED(g_sos->QueryInterface(__uuidof(ISOSDacInterface5), &sos5)) && 
+        SUCCEEDED(sos5->GetTieredVersions(pMethodDesc, 
+                                            (int)pReJitData->rejitID,
+                                            codeAddrs,
+                                            kcMaxTieredVersions,
+                                            &cCodeAddrs)))
+    {
+        DumpTieredNativeCodeAddressInfo(codeAddrs, cCodeAddrs);
+    }
 
     LPCSTR szFlags;
     switch (pReJitData->flags)
@@ -3260,6 +3312,7 @@ void DumpRejitData(DacpReJitData * pReJitData)
         szFlags = " (reverted)";
         break;
     }
+    
     ExtOut("%s\n", szFlags);
 }
 
@@ -3297,18 +3350,18 @@ void DumpAllRejitDataIfNecessary(DacpMethodDescData * pMethodDescData, DacpReJit
     ExtOut("ReJITed versions:\n");
 
     // Dump CURRENT rejit info
-    DumpRejitData(&pMethodDescData->rejitDataCurrent);
+    DumpRejitData(pMethodDescData->MethodDescPtr, &pMethodDescData->rejitDataCurrent);
 
     // Dump reverted rejit infos
     for (ULONG i=0; i < cRevertedRejitData; i++)
     {
-        DumpRejitData(&pRevertedRejitData[i]);
+        DumpRejitData(pMethodDescData->MethodDescPtr, &pRevertedRejitData[i]);
     }
 
     // For !ip2md, ensure we dump the rejit version corresponding to the specified IP
     // (if not already dumped)
     if (ShouldDumpRejitDataRequested(pMethodDescData, pRevertedRejitData, cRevertedRejitData))
-        DumpRejitData(&pMethodDescData->rejitDataRequested);
+        DumpRejitData(pMethodDescData->MethodDescPtr, &pMethodDescData->rejitDataRequested);
 
     // If we maxed out the reverted versions we dumped, let user know there may be more
     if (cRevertedRejitData == kcMaxRevertedRejitData)
@@ -3327,26 +3380,35 @@ void DumpMDInfoFromMethodDescData(DacpMethodDescData * pMethodDescData, DacpReJi
 
     if (!fStackTraceFormat)
     {
-        ExtOut("Method Name:  %S\n", wszNameBuffer);
+        ExtOut("Method Name:          %S\n", wszNameBuffer);
 
         DacpMethodTableData mtdata;
         if (SUCCEEDED(mtdata.Request(g_sos, pMethodDescData->MethodTablePtr)))
         {
-            DMLOut("Class:        %s\n", DMLClass(mtdata.Class));
+            DMLOut("Class:                %s\n", DMLClass(mtdata.Class));
         }            
 
-        DMLOut("MethodTable:  %s\n", DMLMethodTable(pMethodDescData->MethodTablePtr));
-        ExtOut("mdToken:      %p\n", SOS_PTR(pMethodDescData->MDToken));
-        DMLOut("Module:       %s\n", DMLModule(pMethodDescData->ModulePtr));
-        ExtOut("IsJitted:     %s\n", pMethodDescData->bHasNativeCode ? "yes" : "no");
-        DMLOut("CodeAddr:     %s\n", DMLIP(pMethodDescData->NativeCodeAddr));                
+        DMLOut("MethodTable:          %s\n", DMLMethodTable(pMethodDescData->MethodTablePtr));
+        ExtOut("mdToken:              %p\n", SOS_PTR(pMethodDescData->MDToken));
+        DMLOut("Module:               %s\n", DMLModule(pMethodDescData->ModulePtr));
+        ExtOut("IsJitted:             %s\n", pMethodDescData->bHasNativeCode ? "yes" : "no");
 
-        DacpMethodDescTransparencyData transparency;
-        if (SUCCEEDED(transparency.Request(g_sos, pMethodDescData->MethodDescPtr)))
+        DMLOut("Current CodeAddr:     %s\n", DMLIP(pMethodDescData->NativeCodeAddr));                
+
+        struct DacpTieredVersionData codeAddrs[kcMaxTieredVersions];
+        int cCodeAddrs;
+
+        ReleaseHolder<ISOSDacInterface5> sos5;
+        if (SUCCEEDED(g_sos->QueryInterface(__uuidof(ISOSDacInterface5), &sos5)) && 
+            SUCCEEDED(sos5->GetTieredVersions(pMethodDescData->MethodDescPtr, 
+                                                                (int)pMethodDescData->rejitDataCurrent.rejitID,
+                                                                codeAddrs,
+                                                                kcMaxTieredVersions,
+                                                                &cCodeAddrs)))
         {
-            ExtOut("Transparency: %s\n", GetTransparency(transparency));
+            DumpTieredNativeCodeAddressInfo(codeAddrs, cCodeAddrs);
         }
-
+        
         DumpAllRejitDataIfNecessary(pMethodDescData, pRevertedRejitData, cRevertedRejitData);
     }
     else
@@ -3400,7 +3462,8 @@ void GetDomainList (DWORD_PTR *&domainList, int &numDomain)
     // Do prefast integer checks before the malloc.
     size_t AllocSize;
     LONG DomainAllocCount;
-    if (!ClrSafeInt<LONG>::addition(adsData.DomainCount, 2, DomainAllocCount) ||
+    LONG NumExtraDomains = (adsData.sharedDomain != NULL) ? 2 : 1;
+    if (!ClrSafeInt<LONG>::addition(adsData.DomainCount, NumExtraDomains, DomainAllocCount) ||
         !ClrSafeInt<size_t>::multiply(DomainAllocCount, sizeof(PVOID), AllocSize) ||
         (domainList = new DWORD_PTR[DomainAllocCount]) == NULL)
     {
@@ -3408,7 +3471,10 @@ void GetDomainList (DWORD_PTR *&domainList, int &numDomain)
     }
 
     domainList[numDomain++] = (DWORD_PTR) adsData.systemDomain;
-    domainList[numDomain++] = (DWORD_PTR) adsData.sharedDomain;
+    if (adsData.sharedDomain != NULL)
+    {
+        domainList[numDomain++] = (DWORD_PTR) adsData.sharedDomain;
+    }
     
     CLRDATA_ADDRESS *pArray = new CLRDATA_ADDRESS[adsData.DomainCount];
     if (pArray==NULL)
@@ -4144,40 +4210,48 @@ void ResetGlobals(void)
 // Return Value:
 //      HRESULT indicating success or failure
 //
-
 HRESULT LoadClrDebugDll(void)
 {
+    HRESULT hr = S_OK;
 #ifdef FEATURE_PAL
-    if (g_pCLRDataCreateInstance == NULL)
+    static IXCLRDataProcess* s_clrDataProcess = NULL;
+    if (s_clrDataProcess == NULL)
     {
         int err = PAL_InitializeDLL();
         if(err != 0)
         {
-            return E_FAIL;
+            return CORDBG_E_UNSUPPORTED;
         }
         char dacModulePath[MAX_LONGPATH];
-        strcpy_s(dacModulePath, _countof(dacModulePath), g_ExtClient->GetCoreClrDirectory());
+        strcpy_s(dacModulePath, _countof(dacModulePath), g_ExtServices->GetCoreClrDirectory());
         strcat_s(dacModulePath, _countof(dacModulePath), MAKEDLLNAME_A("mscordaccore"));
 
         HMODULE hdac = LoadLibraryA(dacModulePath);
         if (hdac == NULL)
         {
-            return E_FAIL;
+            return CORDBG_E_MISSING_DEBUGGER_EXPORTS;
         }
-        g_pCLRDataCreateInstance = (PFN_CLRDataCreateInstance)GetProcAddress(hdac, "CLRDataCreateInstance");
-        if (g_pCLRDataCreateInstance == NULL)
+        PFN_CLRDataCreateInstance pfnCLRDataCreateInstance = (PFN_CLRDataCreateInstance)GetProcAddress(hdac, "CLRDataCreateInstance");
+        if (pfnCLRDataCreateInstance == NULL)
         {
             FreeLibrary(hdac);
-            return E_FAIL;
+            return CORDBG_E_MISSING_DEBUGGER_EXPORTS;
         }
+        ICLRDataTarget *target = new DataTarget();
+        hr = pfnCLRDataCreateInstance(__uuidof(IXCLRDataProcess), target, (void**)&s_clrDataProcess);
+        if (FAILED(hr))
+        {
+            s_clrDataProcess = NULL;
+            return hr;
+        }
+        ULONG32 flags = 0;
+        s_clrDataProcess->GetOtherNotificationFlags(&flags);
+        flags |= (CLRDATA_NOTIFY_ON_MODULE_LOAD | CLRDATA_NOTIFY_ON_MODULE_UNLOAD | CLRDATA_NOTIFY_ON_EXCEPTION);
+        s_clrDataProcess->SetOtherNotificationFlags(flags);
     }
-    ICLRDataTarget *target = new DataTarget();
-    HRESULT hr = g_pCLRDataCreateInstance(__uuidof(IXCLRDataProcess), target, reinterpret_cast<void**>(&g_clrData));
-    if (FAILED(hr))
-    {
-        g_clrData = NULL;
-        return hr;
-    }
+    g_clrData = s_clrDataProcess;
+    g_clrData->AddRef();
+    g_clrData->Flush();
 #else
     WDBGEXTS_CLR_DATA_INTERFACE Query;
 
@@ -4189,13 +4263,12 @@ HRESULT LoadClrDebugDll(void)
 
     g_clrData = (IXCLRDataProcess*)Query.Iface;
 #endif
-
-    if (FAILED(g_clrData->QueryInterface(__uuidof(ISOSDacInterface), (void**)&g_sos)))
+    hr = g_clrData->QueryInterface(__uuidof(ISOSDacInterface), (void**)&g_sos);
+    if (FAILED(hr))
     {
         g_sos = NULL;
-        return E_FAIL;
+        return hr;
     }
-
     return S_OK;
 }
 
@@ -4437,7 +4510,7 @@ public:
         return hr;
 #else
         WCHAR modulePath[MAX_LONGPATH];
-        int length = MultiByteToWideChar(CP_ACP, 0, g_ExtClient->GetCoreClrDirectory(), -1, modulePath, _countof(modulePath));
+        int length = MultiByteToWideChar(CP_ACP, 0, g_ExtServices->GetCoreClrDirectory(), -1, modulePath, _countof(modulePath));
         if (0 >= length)
         {
             ExtOut("MultiByteToWideChar(coreclrDirectory) failed. Last error = 0x%x\n", GetLastError());
@@ -4465,6 +4538,9 @@ protected:
 // get an ICorDebugProcess back
 // 
 class SOSDataTarget : public ICorDebugMutableDataTarget
+#ifdef FEATURE_PAL
+, public ICorDebugDataTarget4
+#endif
 {
 public:
     SOSDataTarget() : m_ref(0)
@@ -4479,7 +4555,7 @@ public:
     {
         if (InterfaceId == IID_IUnknown)
         {
-            *pInterface = static_cast<IUnknown *>(this);
+            *pInterface = static_cast<IUnknown *>(static_cast<ICorDebugDataTarget *>(this));
         }
         else if (InterfaceId == IID_ICorDebugDataTarget)
         {
@@ -4489,6 +4565,12 @@ public:
         {
             *pInterface = static_cast<ICorDebugMutableDataTarget *>(this);
         }
+#ifdef FEATURE_PAL
+        else if (InterfaceId == IID_ICorDebugDataTarget4)
+        {
+            *pInterface = static_cast<ICorDebugDataTarget4 *>(this);
+        }
+#endif
         else
         {
             *pInterface = NULL;
@@ -4526,6 +4608,8 @@ public:
             *pPlatform = CORDB_PLATFORM_POSIX_X86;
         else if(platformKind == IMAGE_FILE_MACHINE_AMD64)
             *pPlatform = CORDB_PLATFORM_POSIX_AMD64;
+        else if(platformKind == IMAGE_FILE_MACHINE_ARMNT)
+            *pPlatform = CORDB_PLATFORM_POSIX_ARM;
         else
             return E_FAIL;
 #else
@@ -4535,6 +4619,8 @@ public:
             *pPlatform = CORDB_PLATFORM_WINDOWS_AMD64;
         else if(platformKind == IMAGE_FILE_MACHINE_ARMNT)
             *pPlatform = CORDB_PLATFORM_WINDOWS_ARM;
+        else if(platformKind == IMAGE_FILE_MACHINE_ARM64)
+            *pPlatform = CORDB_PLATFORM_WINDOWS_ARM64;
         else
             return E_FAIL;        
 #endif        
@@ -4548,6 +4634,10 @@ public:
         ULONG32 request,
         ULONG32 * pcbRead)
     {
+        if (g_ExtData == NULL)
+        {
+            return E_UNEXPECTED;
+        }
         return g_ExtData->ReadVirtual(address, pBuffer, request, (PULONG) pcbRead);
     }
 
@@ -4558,6 +4648,10 @@ public:
         BYTE * context)
     {
 #ifdef FEATURE_PAL
+        if (g_ExtSystem == NULL)
+        {
+            return E_UNEXPECTED;
+        }
         return g_ExtSystem->GetThreadContextById(dwThreadOSID, contextFlags, contextSize, context);
 #else
         ULONG ulThreadIDOrig;
@@ -4605,6 +4699,10 @@ public:
                                                    const BYTE * pBuffer,
                                                    ULONG32 bytesRequested)
     {
+        if (g_ExtData == NULL)
+        {
+            return E_UNEXPECTED;
+        }
         return g_ExtData->WriteVirtual(address, (PVOID)pBuffer, bytesRequested, NULL);
     }
 
@@ -4621,6 +4719,20 @@ public:
         return E_NOTIMPL;
     }
 
+#ifdef FEATURE_PAL
+    //
+    // ICorDebugDataTarget4
+    //
+    virtual HRESULT STDMETHODCALLTYPE VirtualUnwind(DWORD threadId, ULONG32 contextSize, PBYTE context)
+    {
+        if (g_ExtServices == NULL)
+        {
+            return E_UNEXPECTED;
+        }
+        return g_ExtServices->VirtualUnwind(threadId, contextSize, context);
+
+    }
+#endif // FEATURE_PAL
 
 protected:
     LONG m_ref;
@@ -4630,7 +4742,7 @@ HRESULT InitCorDebugInterfaceFromModule(ULONG64 ulBase, ICLRDebugging * pClrDebu
 {
     HRESULT hr;
 
-    ToRelease<IUnknown> pSOSDataTarget = new SOSDataTarget;
+    ToRelease<ICorDebugMutableDataTarget> pSOSDataTarget = new SOSDataTarget;
     pSOSDataTarget->AddRef();
 
     ToRelease<ICLRDebuggingLibraryProvider> pSOSLibraryProvider = new SOSLibraryProvider;
@@ -4708,7 +4820,7 @@ HRESULT InitCorDebugInterface()
     if(g_pCorDebugProcess != NULL)
     {
         // ICorDebugProcess4 is currently considered a private experimental interface on ICorDebug, it might go away so
-        // we need to be sure to handle its absense gracefully
+        // we need to be sure to handle its absence gracefully
         ToRelease<ICorDebugProcess4> pProcess4 = NULL;
         if(SUCCEEDED(g_pCorDebugProcess->QueryInterface(__uuidof(ICorDebugProcess4), (void**)&pProcess4)))
         {
@@ -4725,27 +4837,13 @@ HRESULT InitCorDebugInterface()
         UninitCorDebugInterface();
     }
 
-    // Ensure that CLR and DAC are already loaded
-    if ((hr = CheckEEDll()) != S_OK)
-    {
-        EENotLoadedMessage(hr);
-        return hr;
-    }
-    if ((hr = LoadClrDebugDll()) != S_OK)
-    {
-        DACMessage(hr);
-        return hr;
-    }
-
     // SOS now has a statically linked version of the loader code that is normally found in mscoree/mscoreei.dll
     // Its not much code and takes a big step towards 0 install dependencies
     // Need to pick the appropriate SKU of CLR to detect
 #if defined(FEATURE_CORESYSTEM)
     GUID skuId = CLR_ID_ONECORE_CLR;
-#elif defined(FEATURE_CORECLR)
-    GUID skuId = CLR_ID_CORECLR;
 #else
-    GUID skuId = CLR_ID_V4_DESKTOP;
+    GUID skuId = CLR_ID_CORECLR;
 #endif
     CLRDebuggingImpl* pDebuggingImpl = new CLRDebuggingImpl(skuId);
     hr = pDebuggingImpl->QueryInterface(IID_ICLRDebugging, (LPVOID *)&pClrDebugging);
@@ -5241,27 +5339,6 @@ void WhitespaceOut(int count)
         g_ExtControl->Output(DEBUG_OUTPUT_NORMAL, FixedIndentString);
 }
 
-HRESULT 
-OutputVaList(
-    ULONG mask,
-    PCSTR format,
-    va_list args)
-{
-#ifdef FEATURE_PAL
-    char str[1024];
-
-    // Try and format our string into a fixed buffer first and see if it fits
-    int length = _vsnprintf(str, sizeof(str), format, args);
-    if (length > 0)
-    {
-        return g_ExtControl->Output(mask, "%s", str);
-    }
-    return E_FAIL;
-#else
-    return g_ExtControl->OutputVaList(mask, format, args);
-#endif // FEATURE_PAL
-}
-
 void DMLOut(PCSTR format, ...)
 {
     if (Output::IsOutputSuppressed())
@@ -5270,7 +5347,7 @@ void DMLOut(PCSTR format, ...)
     va_list args;
     va_start(args, format);
     ExtOutIndent();
-    
+
 #ifndef FEATURE_PAL
     if (IsDMLEnabled() && !Output::IsDMLExposed())
     {
@@ -5279,7 +5356,7 @@ void DMLOut(PCSTR format, ...)
     else
 #endif
     {
-        OutputVaList(DEBUG_OUTPUT_NORMAL, format, args);
+        g_ExtControl->OutputVaList(DEBUG_OUTPUT_NORMAL, format, args);
     }
 
     va_end(args);
@@ -5309,7 +5386,7 @@ void ExtOut(PCSTR Format, ...)
     
     va_start(Args, Format);
     ExtOutIndent();
-    OutputVaList(DEBUG_OUTPUT_NORMAL, Format, Args);
+    g_ExtControl->OutputVaList(DEBUG_OUTPUT_NORMAL, Format, Args);
     va_end(Args);
 }
 
@@ -5321,7 +5398,7 @@ void ExtWarn(PCSTR Format, ...)
     va_list Args;
     
     va_start(Args, Format);
-    OutputVaList(DEBUG_OUTPUT_WARNING, Format, Args);
+    g_ExtControl->OutputVaList(DEBUG_OUTPUT_WARNING, Format, Args);
     va_end(Args);
 }
 
@@ -5330,7 +5407,7 @@ void ExtErr(PCSTR Format, ...)
     va_list Args;
     
     va_start(Args, Format);
-    OutputVaList(DEBUG_OUTPUT_ERROR, Format, Args);
+    g_ExtControl->OutputVaList(DEBUG_OUTPUT_ERROR, Format, Args);
     va_end(Args);
 }
 
@@ -5341,10 +5418,10 @@ void ExtDbgOut(PCSTR Format, ...)
     if (Output::g_bDbgOutput)
     {
         va_list Args;
-    
+
         va_start(Args, Format);
         ExtOutIndent();
-        OutputVaList(DEBUG_OUTPUT_NORMAL, Format, Args);
+        g_ExtControl->OutputVaList(DEBUG_OUTPUT_NORMAL, Format, Args);
         va_end(Args);
     }
 #endif
@@ -5370,6 +5447,7 @@ const char * const DMLFormats[] =
     "<exec cmd=\"!DumpRCW /d %s\">%s</exec>",       // DML_RCWrapper
     "<exec cmd=\"!DumpCCW /d %s\">%s</exec>",       // DML_CCWrapper
     "<exec cmd=\"!ClrStack -i %S %d\">%S</exec>",   // DML_ManagedVar
+    "<exec cmd=\"!DumpAsync -addr %s -tasks -completed -fields -stacks -roots\">%s</exec>", // DML_Async
 };
 
 void ConvertToLower(__out_ecount(len) char *buffer, size_t len)
@@ -5550,97 +5628,6 @@ NoOutputHolder::~NoOutputHolder()
 //
 
 // 
-// This function retrieves ImageInfo related to the module
-// containing the addressed passed in "Base".
-HRESULT
-GetImageFromBase(
-    ___in ULONG64 Base,
-    ___out ImageInfo* Image)
-{
-    ULONG modIdx = 0;
-    ULONG64 modBase = 0;
-    if (FAILED(g_ExtSymbols->GetModuleByOffset(Base, 0, &modIdx, &modBase)))
-    {
-        return E_FAIL;
-    }
-
-    Image->modBase = modBase;
-    return S_OK;
-}
-
-// 
-// Retrieve ImageInfo associated with the IXCLRDataModule instance
-// passed in, and the extent type requested.
-HRESULT
-GetClrModuleImages(
-    ___in IXCLRDataModule* Module,
-    ___in CLRDataModuleExtentType DesiredType,
-    ___out ImageInfo* FirstAdd)
-{
-    HRESULT Status;
-    CLRDATA_ENUM EnumExtents;
-
-    if (FirstAdd)
-    {
-        FirstAdd->modBase = 0;
-    }
-
-    if ((Status = Module->StartEnumExtents(&EnumExtents)) != S_OK)
-    {
-        return FAILED(Status) ? Status : S_OK;
-    }
-
-    CLRDATA_MODULE_EXTENT Extent;
-
-    while (Module->EnumExtent(&EnumExtents, &Extent) == S_OK)
-    {
-        if ((DesiredType == CLRDATA_MODULE_OTHER) || (DesiredType == Extent.type))
-        {
-            ImageInfo Image;
-
-            if (FAILED(Status = GetImageFromBase(Extent.base, &Image)))
-            {
-                break;
-            }
-
-            Status = S_OK;
-            if (FirstAdd)
-            {
-                *FirstAdd = Image;
-                break;
-            }
-        }
-    }
-
-    Module->EndEnumExtents(EnumExtents);
-    return Status;
-}
-
-// 
-// Retrieve ImageInfo associated with the IXCLRDataModule instance
-// passed in. First look for NGENed module, second for IL modules.
-HRESULT
-FindClrModuleImage(
-    ___in IXCLRDataModule* Module,
-    ___out ImageInfo* Image)
-{
-    HRESULT Status;
-    
-    // Prefer the ngen image, but look for the base image if necessary.
-    if ((Status = GetClrModuleImages(Module, CLRDATA_MODULE_PREJIT_FILE, Image)) == S_OK &&
-        Image->modBase != 0)
-    {
-        return S_OK;
-    }
-    if ((Status = GetClrModuleImages(Module, CLRDATA_MODULE_PE_FILE, Image)) == S_OK &&
-        Image->modBase == 0)
-    {
-        Status = E_NOINTERFACE;
-    }
-    return Status;
-}
-
-// 
 // Retrieves the IXCLRDataMethodInstance* instance associated with the
 // passed in native offset.
 HRESULT
@@ -5661,29 +5648,6 @@ GetClrMethodInstance(
 
     // Any alternate success is a true failure here.
     return (Status == S_OK || FAILED(Status)) ? Status : E_NOINTERFACE;
-}
-
-// 
-// Retrieves the Token and ImageInfo associated with a managed method
-// identified by the passed in IXCLRDataMethodInstance* instance.
-HRESULT
-GetMethodInstanceTokenAndScope(
-    ___in IXCLRDataMethodInstance* Method,
-    ___out mdMethodDef* MethodToken,
-    ___out ImageInfo* Image)
-{
-    HRESULT Status;
-    IXCLRDataModule* Module;
-
-    if ((Status = Method->GetTokenAndScope(MethodToken, &Module)) != S_OK)
-    {
-        return Status;
-    }
-
-    Status = FindClrModuleImage(Module, Image);
-
-    Module->Release();
-    return Status;
 }
 
 // 
@@ -5759,162 +5723,75 @@ GetLastMethodIlOffset(
 // represent an "IL offset".
 HRESULT
 ConvertNativeToIlOffset(
-    ___in ULONG64 Native,
-    __in_opt IXCLRDataMethodInstance* MethodInst,
-    ___out ImageInfo* Image,
-    ___out mdMethodDef* MethodToken,
-    ___out PULONG32 MethodOffs)
+    ___in ULONG64 native,
+    ___out IXCLRDataModule** ppModule,
+    ___out mdMethodDef* methodToken,
+    ___out PULONG32 methodOffs)
 {
+    ToRelease<IXCLRDataMethodInstance> pMethodInst(NULL);
     HRESULT Status;
 
-    if (!MethodInst)
+    if ((Status = GetClrMethodInstance(native, &pMethodInst)) != S_OK)
     {
-        if ((Status = GetClrMethodInstance(Native, &MethodInst)) != S_OK)
-        {
-            return Status;
-        }
-    }
-    else
-    {
-        MethodInst->AddRef();
+        return Status;
     }
 
-    if ((Status = MethodInst->GetILOffsetsByAddress(Native, 1, NULL, MethodOffs)) != S_OK)
+    if ((Status = pMethodInst->GetILOffsetsByAddress(native, 1, NULL, methodOffs)) != S_OK)
     {
-        *MethodOffs = 0;
+        *methodOffs = 0;
     }
     else
     {
-        switch((LONG)*MethodOffs)
+        switch((LONG)*methodOffs)
         {
         case CLRDATA_IL_OFFSET_NO_MAPPING:
-            MethodInst->Release();
             return E_NOINTERFACE;
             
         case CLRDATA_IL_OFFSET_PROLOG:
             // Treat all of the prologue as part of
             // the first source line.
-            *MethodOffs = 0;
+            *methodOffs = 0;
             break;
             
         case CLRDATA_IL_OFFSET_EPILOG:
             // Back up until we find the last real
             // IL offset.
-            if ((Status = GetLastMethodIlOffset(MethodInst, MethodOffs)) != S_OK)
+            if ((Status = GetLastMethodIlOffset(pMethodInst, methodOffs)) != S_OK)
             {
-                MethodInst->Release();
                 return Status;
             }
             break;
         }
     }
 
-    Status = GetMethodInstanceTokenAndScope(MethodInst, MethodToken, Image);
-
-    MethodInst->Release();
-
-    return Status;
+    return pMethodInst->GetTokenAndScope(methodToken, ppModule);
 }
-
 
 // Based on a native offset, passed in the first argument this function
 // identifies the corresponding source file name and line number.
 HRESULT
 GetLineByOffset(
-    ___in ULONG64 Offset,
+    ___in ULONG64 offset,
     ___out ULONG *pLinenum,
-    __out_ecount(cbFileName) LPSTR lpszFileName,
-    ___in ULONG cbFileName)
+    __out_ecount(cchFileName) WCHAR* pwszFileName,
+    ___in ULONG cchFileName)
 {
+    HRESULT Status = S_OK;
+    ULONG32 methodToken;
+    ULONG32 methodOffs;
 
-#ifdef FEATURE_PAL
-    return E_FAIL;
-#else
+    // Find the image, method token and IL offset that correspond to "offset"
+    ToRelease<IXCLRDataModule> pModule(NULL);
+    IfFailRet(ConvertNativeToIlOffset(offset, &pModule, &methodToken, &methodOffs));
 
-    HRESULT hr = S_OK;
-    ULONG64 displacement = 0;
+    ToRelease<IMetaDataImport> pMDImport(NULL);
+    IfFailRet(pModule->QueryInterface(IID_IMetaDataImport, (LPVOID *) &pMDImport));
 
-    // first let's try it the hard way, this will work with the public debuggers
-    {
-        ImageInfo Image = {0};
-        ULONG64 modBase = 0;
-        ULONG32 MethodToken;
-        ULONG32 MethodOffs;
-        ULONG64 IlOffset;
+    SymbolReader symbolReader;
+    IfFailRet(symbolReader.LoadSymbols(pMDImport, pModule));
 
-        ToRelease<IDebugSymbols3> spSym3(NULL);
-        if (FAILED(g_ExtSymbols->QueryInterface(__uuidof(IDebugSymbols3), (void**)&spSym3)))
-        {
-            hr = E_FAIL;
-            goto fallback;
-        }
-
-        // find the image, method token and IL offset that correspond
-        // to "Offset"
-        if ((hr = ConvertNativeToIlOffset(Offset, NULL, &Image,
-                                    &MethodToken, &MethodOffs)) != S_OK)
-        {
-            goto fallback;
-        }
-        modBase = Image.modBase;
-        DEBUG_MODULE_AND_ID id;
-        DEBUG_SYMBOL_ENTRY symInfo;
-        if (FAILED(spSym3->GetSymbolEntryByToken(modBase, MethodToken, &id))
-            || FAILED(spSym3->GetSymbolEntryInformation(&id, &symInfo)))
-        {
-            hr = E_FAIL;
-            goto fallback;
-        }
-
-        IlOffset = symInfo.Offset + MethodOffs;
-
-        //
-        // Source maps for managed code can end
-        // up with special 0xFEEFEE markers that
-        // indicate don't-stop points.  Try and
-        // filter those out.
-        //
-        for (ULONG SkipCount = 64; SkipCount > 0; SkipCount--)
-        {
-            if (FAILED(g_ExtSymbols->GetLineByOffset(
-                        IlOffset, 
-                        pLinenum,
-                        lpszFileName,
-                        cbFileName,
-                        NULL,
-                        &displacement)))
-            {
-                hr = E_FAIL;
-                goto fallback;
-            }
-
-            if (*pLinenum == 0xfeefee)
-            {
-                ++IlOffset;
-            }
-            else
-            {
-                return S_OK;
-            }
-        }
-
-        // Fall into the regular translation as a last-ditch effort.
-        Offset = IlOffset;
-    }
-
-fallback:
-    // 
-    return g_ExtSymbols->GetLineByOffset(
-                    Offset, 
-                    pLinenum,
-                    lpszFileName,
-                    cbFileName,
-                    NULL,
-                    &displacement);
-
-#endif // FEATURE_PAL
+    return symbolReader.GetLineByILOffset(methodToken, methodOffs, pLinenum, pwszFileName, cchFileName);
 }
-
 
 void TableOutput::ReInit(int numColumns, int defaultColumnWidth, Alignment alignmentDefault, int indent, int padding)
 {
@@ -6148,60 +6025,105 @@ HRESULT __stdcall PERvaMemoryReader::ReadExecutableAtRVA(DWORD relativeVirtualAd
 
 #endif // FEATURE_PAL
 
-HRESULT SymbolReader::LoadSymbols(IMetaDataImport * pMD, ICorDebugModule * pModule)
+HRESULT SymbolReader::LoadSymbols(___in IMetaDataImport* pMD, ___in ICorDebugModule* pModule)
 {
-#ifndef FEATURE_PAL
     HRESULT Status = S_OK;
-    if(m_pSymReader != NULL) return S_OK;
-    
     BOOL isDynamic = FALSE;
     BOOL isInMemory = FALSE;
     IfFailRet(pModule->IsDynamic(&isDynamic));
     IfFailRet(pModule->IsInMemory(&isInMemory));
 
-    if(isDynamic)
+    if (isDynamic)
     {
-        // Dynamic and in memory assemblies are a special case 
-        // which we will ignore for now
-        // now
-        ExtOut("SOS Warning: Loading symbols for dynamic assemblies is not yet supported\n");
+        // Dynamic and in memory assemblies are a special case which we will ignore for now
+        ExtWarn("SOS Warning: Loading symbols for dynamic assemblies is not yet supported\n");
         return E_FAIL;
     }
 
-    ULONG64 baseAddress = 0;
-    IfFailRet(pModule->GetBaseAddress(&baseAddress));
+    ULONG64 peAddress = 0;
+    ULONG32 peSize = 0;
+    IfFailRet(pModule->GetBaseAddress(&peAddress));
+    IfFailRet(pModule->GetSize(&peSize));
 
     ULONG32 len = 0; 
     WCHAR moduleName[MAX_LONGPATH];
     IfFailRet(pModule->GetName(_countof(moduleName), &len, moduleName));
 
-    return LoadSymbols(pMD, baseAddress, moduleName, isInMemory);
-#else
-    return E_FAIL;
+#ifndef FEATURE_PAL
+    if (SUCCEEDED(LoadSymbolsForWindowsPDB(pMD, peAddress, moduleName, isInMemory)))
+    {
+        return S_OK;
+    }
 #endif // FEATURE_PAL
+    return LoadSymbolsForPortablePDB(moduleName, isInMemory, isInMemory, peAddress, peSize, 0, 0);
 }
 
-HRESULT SymbolReader::LoadSymbols(IMetaDataImport * pMD, ULONG64 baseAddress, __in_z WCHAR* pModuleName, BOOL isInMemory)
+HRESULT SymbolReader::LoadSymbols(___in IMetaDataImport* pMD, ___in IXCLRDataModule* pModule)
 {
+    DacpGetModuleData moduleData;
+    HRESULT hr = moduleData.Request(pModule);
+    if (FAILED(hr))
+    {
+        ExtOut("LoadSymbols moduleData.Request FAILED 0x%08x\n", hr);
+        return hr;
+    }
+
+    if (moduleData.IsDynamic)
+    {
+        ExtWarn("SOS Warning: Loading symbols for dynamic assemblies is not yet supported\n");
+        return E_FAIL;
+    }
+
+    ArrayHolder<WCHAR> pModuleName = new WCHAR[MAX_LONGPATH + 1];
+    ULONG32 nameLen = 0;
+    hr = pModule->GetFileName(MAX_LONGPATH, &nameLen, pModuleName);
+    if (FAILED(hr))
+    {
+        ExtOut("LoadSymbols: IXCLRDataModule->GetFileName FAILED 0x%08x\n", hr);
+        return hr;
+    }
+
 #ifndef FEATURE_PAL
+    // TODO: in-memory windows PDB not supported
+    hr = LoadSymbolsForWindowsPDB(pMD, moduleData.LoadedPEAddress, pModuleName, moduleData.IsFileLayout);
+    if (SUCCEEDED(hr))
+    {
+        return hr;
+    }
+#endif // FEATURE_PAL
+
+    return LoadSymbolsForPortablePDB(
+        pModuleName, 
+        moduleData.IsInMemory,
+        moduleData.IsFileLayout,
+        moduleData.LoadedPEAddress,
+        moduleData.LoadedPESize, 
+        moduleData.InMemoryPdbAddress,
+        moduleData.InMemoryPdbSize);
+}
+
+#ifndef FEATURE_PAL
+
+HRESULT SymbolReader::LoadSymbolsForWindowsPDB(___in IMetaDataImport* pMD, ___in ULONG64 peAddress, __in_z WCHAR* pModuleName, ___in BOOL isFileLayout)
+{
     HRESULT Status = S_OK;
 
-    if(m_pSymReader != NULL) return S_OK;
+    if (m_pSymReader != NULL) 
+        return S_OK;
 
     IfFailRet(CoInitialize(NULL));
-
 
     // We now need a binder object that will take the module and return a 
     // reader object
     ToRelease<ISymUnmanagedBinder3> pSymBinder;
-    if(FAILED(Status = CreateInstanceCustom(CLSID_CorSymBinder_SxS, 
+    if (FAILED(Status = CreateInstanceCustom(CLSID_CorSymBinder_SxS, 
                         IID_ISymUnmanagedBinder3, 
-                        W("diasymreader.dll"),
+                        NATIVE_SYMBOL_READER_DLL,
                         cciLatestFx|cciDacColocated|cciDbgPath, 
                         (void**)&pSymBinder)))
     {
         ExtOut("SOS Error: Unable to CoCreateInstance class=CLSID_CorSymBinder_SxS, interface=IID_ISymUnmanagedBinder3, hr=0x%x\n", Status);
-        ExtOut("This usually means the installation of .Net Framework on your machine is missing or needs repair\n");
+        ExtOut("This usually means SOS was unable to locate a suitable version of DiaSymReader. The dll searched for was '%S'\n", NATIVE_SYMBOL_READER_DLL);
         return Status;
     }
 
@@ -6215,7 +6137,7 @@ HRESULT SymbolReader::LoadSymbols(IMetaDataImport * pMD, ULONG64 baseAddress, __
 
     ULONG pathSize = 0;
     Status = spSym3->GetSymbolPathWide(NULL, 0, &pathSize);
-    if(FAILED(Status)) //S_FALSE if the path doesn't fit, but if the path was size 0 perhaps we would get S_OK?
+    if (FAILED(Status)) //S_FALSE if the path doesn't fit, but if the path was size 0 perhaps we would get S_OK?
     {
         ExtOut("SOS Error: Unable to get symbol path length. IDebugSymbols3::GetSymbolPathWide HRESULT=0x%x.\n", Status);
         return Status;
@@ -6223,44 +6145,385 @@ HRESULT SymbolReader::LoadSymbols(IMetaDataImport * pMD, ULONG64 baseAddress, __
 
     ArrayHolder<WCHAR> symbolPath = new WCHAR[pathSize];
     Status = spSym3->GetSymbolPathWide(symbolPath, pathSize, NULL);
-    if(S_OK != Status)
+    if (S_OK != Status)
     {
         ExtOut("SOS Error: Unable to get symbol path. IDebugSymbols3::GetSymbolPathWide HRESULT=0x%x.\n", Status);
         return Status;
     }
 
-    // This should be about the right code to handle in-memory assemblies but after writing it all up I lost my repro case
-    // This path is blocked up above but it would probably be pretty easy to get this working if someone wanted it
     ToRelease<IUnknown> pCallback = NULL;
-    if(isInMemory)
+    if (isFileLayout)
     {
-        pCallback = (IUnknown*) new PEOffsetMemoryReader(TO_TADDR(baseAddress));
+        pCallback = (IUnknown*) new PEOffsetMemoryReader(TO_TADDR(peAddress));
     }
     else
     {
-        pCallback = (IUnknown*) new PERvaMemoryReader(TO_TADDR(baseAddress));
+        pCallback = (IUnknown*) new PERvaMemoryReader(TO_TADDR(peAddress));
     }
 
     // TODO: this should be better integrated with windbg's symbol lookup
-    Status = pSymBinder->GetReaderFromCallback(pMD, pModuleName, symbolPath, AllowRegistryAccess | AllowSymbolServerAccess | AllowOriginalPathAccess | AllowReferencePathAccess, pCallback, &m_pSymReader);
-    if(FAILED(Status) && m_pSymReader != NULL)
+    Status = pSymBinder->GetReaderFromCallback(pMD, pModuleName, symbolPath, 
+        AllowRegistryAccess | AllowSymbolServerAccess | AllowOriginalPathAccess | AllowReferencePathAccess, pCallback, &m_pSymReader);
+
+    if (FAILED(Status) && m_pSymReader != NULL)
     {
         m_pSymReader->Release();
         m_pSymReader = NULL;
     }
     return Status;
-#else
-    return E_FAIL;
-#endif // FEATURE_PAL
 }
 
-HRESULT SymbolReader::GetNamedLocalVariable(ISymUnmanagedScope * pScope, ICorDebugILFrame * pILFrame, mdMethodDef methodToken, ULONG localIndex, __inout_ecount(paramNameLen) WCHAR* paramName, ULONG paramNameLen, ICorDebugValue** ppValue)
+#endif // FEATURE_PAL
+
+//
+// Pass to managed helper code to read in-memory PEs/PDBs
+// Returns the number of bytes read.
+//
+int ReadMemoryForSymbols(ULONG64 address, char *buffer, int cb)
+{
+    ULONG read;
+    if (SafeReadMemory(TO_TADDR(address), (PVOID)buffer, cb, &read))
+    {
+        return read;
+    }
+    return 0;
+}
+
+HRESULT SymbolReader::LoadSymbolsForPortablePDB(__in_z WCHAR* pModuleName, ___in BOOL isInMemory, ___in BOOL isFileLayout,
+    ___in ULONG64 peAddress, ___in ULONG64 peSize, ___in ULONG64 inMemoryPdbAddress, ___in ULONG64 inMemoryPdbSize)
 {
     HRESULT Status = S_OK;
 
-    if(pScope == NULL)
+    if (loadSymbolsForModuleDelegate == nullptr)
     {
+        IfFailRet(PrepareSymbolReader());
+    }
+
+    // The module name needs to be null for in-memory PE's.
+    ArrayHolder<char> szModuleName = nullptr;
+    if (!isInMemory && pModuleName != nullptr)
+    {
+        szModuleName = new char[MAX_LONGPATH];
+        if (WideCharToMultiByte(CP_ACP, 0, pModuleName, (int)(_wcslen(pModuleName) + 1), szModuleName, MAX_LONGPATH, NULL, NULL) == 0)
+        {
+            return E_FAIL;
+        }
+    }
+
+    m_symbolReaderHandle = loadSymbolsForModuleDelegate(szModuleName, isFileLayout, peAddress, 
+        (int)peSize, inMemoryPdbAddress, (int)inMemoryPdbSize, ReadMemoryForSymbols);
+
+    if (m_symbolReaderHandle == 0)
+    {
+        return E_FAIL;
+    }
+
+    return Status;
+}
+
 #ifndef FEATURE_PAL
+
+void AddFilesFromDirectoryToTpaList(const char* directory, std::string& tpaList)
+{
+    const char * const tpaExtensions[] = {
+        "*.ni.dll",      // Probe for .ni.dll first so that it's preferred if ni and il coexist in the same dir
+        "*.dll",
+        "*.ni.exe",
+        "*.exe",
+    };
+
+    std::set<std::string> addedAssemblies;
+
+    // Walk the directory for each extension separately so that we first get files with .ni.dll extension,
+    // then files with .dll extension, etc.
+    for (int extIndex = 0; extIndex < sizeof(tpaExtensions) / sizeof(tpaExtensions[0]); extIndex++)
+    {
+        const char* ext = tpaExtensions[extIndex];
+        size_t extLength = strlen(ext);
+
+        std::string assemblyPath(directory);
+        assemblyPath.append(DIRECTORY_SEPARATOR_STR_A);
+        assemblyPath.append(tpaExtensions[extIndex]);
+
+        WIN32_FIND_DATAA data;
+        HANDLE findHandle = FindFirstFileA(assemblyPath.c_str(), &data);
+
+        if (findHandle != INVALID_HANDLE_VALUE) 
+        {
+            do
+            {
+                if (!(data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY))
+                {
+
+                    std::string filename(data.cFileName);
+                    size_t extPos = filename.length() - extLength;
+                    std::string filenameWithoutExt(filename.substr(0, extPos));
+
+                    // Make sure if we have an assembly with multiple extensions present,
+                    // we insert only one version of it.
+                    if (addedAssemblies.find(filenameWithoutExt) == addedAssemblies.end())
+                    {
+                        addedAssemblies.insert(filenameWithoutExt);
+
+                        tpaList.append(directory);
+                        tpaList.append(DIRECTORY_SEPARATOR_STR_A);
+                        tpaList.append(filename);
+                        tpaList.append(";");
+                    }
+                }
+            } 
+            while (0 != FindNextFileA(findHandle, &data));
+
+            FindClose(findHandle);
+        }
+    }
+}
+
+bool GetEntrypointExecutableAbsolutePath(std::string& entrypointExecutable)
+{
+    ArrayHolder<char> hostPath = new char[MAX_LONGPATH+1];
+    if (::GetModuleFileName(NULL, hostPath, MAX_LONGPATH) == 0)
+    {
+        return false;
+    }
+
+    entrypointExecutable.clear();
+    entrypointExecutable.append(hostPath);
+
+    return true;
+}
+
+#endif // FEATURE_PAL
+
+HRESULT SymbolReader::PrepareSymbolReader()
+{
+    static bool attemptedSymbolReaderPreparation = false;
+    if (attemptedSymbolReaderPreparation)
+    {
+        // If we already tried to set up the symbol reader, we won't try again.
+        return E_FAIL;
+    }
+
+    attemptedSymbolReaderPreparation = true;
+
+    std::string absolutePath;
+    std::string coreClrPath;
+    HRESULT Status;
+
+#ifdef FEATURE_PAL
+    coreClrPath = g_ExtServices->GetCoreClrDirectory();
+    if (!GetAbsolutePath(coreClrPath.c_str(), absolutePath))
+    {
+        ExtErr("Error: Failed to get coreclr absolute path\n");
+        return E_FAIL;
+    }
+    coreClrPath.append(DIRECTORY_SEPARATOR_STR_A);
+    coreClrPath.append(MAIN_CLR_DLL_NAME_A);
+#else
+    ULONG index;
+    Status = g_ExtSymbols->GetModuleByModuleName(MAIN_CLR_MODULE_NAME_A, 0, &index, NULL);
+    if (FAILED(Status))
+    {
+        ExtErr("Error: Can't find coreclr module\n");
+        return Status;
+    }
+    ArrayHolder<char> szModuleName = new char[MAX_LONGPATH + 1];
+    Status = g_ExtSymbols->GetModuleNames(index, 0, szModuleName, MAX_LONGPATH, NULL, NULL, 0, NULL, NULL, 0, NULL);
+    if (FAILED(Status))
+    {
+        ExtErr("Error: Failed to get coreclr module name\n");
+        return Status;
+    }
+    coreClrPath = szModuleName;
+
+    // Parse off the module name to get just the path
+    size_t pos = coreClrPath.rfind(DIRECTORY_SEPARATOR_CHAR_A);
+    if (pos == std::string::npos)
+    {
+        ExtErr("Error: Failed to parse coreclr module name\n");
+        return E_FAIL;
+    }
+    absolutePath.assign(coreClrPath, 0, pos);
+#endif // FEATURE_PAL
+
+    HMODULE coreclrLib = LoadLibraryA(coreClrPath.c_str());
+    if (coreclrLib == nullptr)
+    {
+        ExtErr("Error: Failed to load %s\n", coreClrPath.c_str());
+        return E_FAIL;
+    }
+
+    void *hostHandle;
+    unsigned int domainId;
+    coreclr_initialize_ptr initializeCoreCLR = (coreclr_initialize_ptr)GetProcAddress(coreclrLib, "coreclr_initialize");
+    if (initializeCoreCLR == nullptr)
+    {
+        ExtErr("Error: coreclr_initialize not found\n");
+        return E_FAIL;
+    }
+
+    std::string tpaList;
+    AddFilesFromDirectoryToTpaList(absolutePath.c_str(), tpaList);
+
+    const char *propertyKeys[] = {
+        "TRUSTED_PLATFORM_ASSEMBLIES", "APP_PATHS", "APP_NI_PATHS",
+        "NATIVE_DLL_SEARCH_DIRECTORIES", "AppDomainCompatSwitch"};
+
+    const char *propertyValues[] = {// TRUSTED_PLATFORM_ASSEMBLIES
+                                    tpaList.c_str(),
+                                    // APP_PATHS
+                                    absolutePath.c_str(),
+                                    // APP_NI_PATHS
+                                    absolutePath.c_str(),
+                                    // NATIVE_DLL_SEARCH_DIRECTORIES
+                                    absolutePath.c_str(),
+                                    // AppDomainCompatSwitch
+                                    "UseLatestBehaviorWhenTFMNotSpecified"};
+
+    std::string entryPointExecutablePath;
+    if (!GetEntrypointExecutableAbsolutePath(entryPointExecutablePath))
+    {
+        ExtErr("Could not get full path to current executable");
+        return E_FAIL;
+    }
+
+    Status = initializeCoreCLR(entryPointExecutablePath.c_str(), "sos", 
+        sizeof(propertyKeys) / sizeof(propertyKeys[0]), propertyKeys, propertyValues, &hostHandle, &domainId);
+
+    if (FAILED(Status))
+    {
+        ExtErr("Error: Fail to initialize CoreCLR %08x\n", Status);
+        return Status;
+    }
+
+    coreclr_create_delegate_ptr createDelegate = (coreclr_create_delegate_ptr)GetProcAddress(coreclrLib, "coreclr_create_delegate");
+    if (createDelegate == nullptr)
+    {
+        ExtErr("Error: coreclr_create_delegate not found\n");
+        return E_FAIL;
+    }
+
+    IfFailRet(createDelegate(hostHandle, domainId, SymbolReaderDllName, SymbolReaderClassName, "LoadSymbolsForModule", (void **)&loadSymbolsForModuleDelegate));
+    IfFailRet(createDelegate(hostHandle, domainId, SymbolReaderDllName, SymbolReaderClassName, "Dispose", (void **)&disposeDelegate));
+    IfFailRet(createDelegate(hostHandle, domainId, SymbolReaderDllName, SymbolReaderClassName, "ResolveSequencePoint", (void **)&resolveSequencePointDelegate));
+    IfFailRet(createDelegate(hostHandle, domainId, SymbolReaderDllName, SymbolReaderClassName, "GetLocalVariableName", (void **)&getLocalVariableNameDelegate));
+    IfFailRet(createDelegate(hostHandle, domainId, SymbolReaderDllName, SymbolReaderClassName, "GetLineByILOffset", (void **)&getLineByILOffsetDelegate));
+
+    return Status;
+}
+
+HRESULT SymbolReader::GetLineByILOffset(___in mdMethodDef methodToken, ___in ULONG64 ilOffset,
+    ___out ULONG *pLinenum, __out_ecount(cchFileName) WCHAR* pwszFileName, ___in ULONG cchFileName)
+{
+    HRESULT Status = S_OK;
+
+    if (m_symbolReaderHandle != 0)
+    {
+        _ASSERTE(getLineByILOffsetDelegate != nullptr);
+
+        BSTR bstrFileName = SysAllocStringLen(0, MAX_LONGPATH);
+        if (bstrFileName == nullptr)
+        {
+            return E_OUTOFMEMORY;
+        }
+        // Source lines with 0xFEEFEE markers are filtered out on the managed side.
+        if ((getLineByILOffsetDelegate(m_symbolReaderHandle, methodToken, ilOffset, pLinenum, &bstrFileName) == FALSE) || (*pLinenum == 0))
+        {
+            SysFreeString(bstrFileName);
+            return E_FAIL;
+        }
+        wcscpy_s(pwszFileName, cchFileName, bstrFileName);
+        SysFreeString(bstrFileName);
+        return S_OK;
+    }
+
+#ifndef FEATURE_PAL
+    if (m_pSymReader == NULL)
+        return E_FAIL;
+
+    ToRelease<ISymUnmanagedMethod> pSymMethod(NULL);
+    IfFailRet(m_pSymReader->GetMethod(methodToken, &pSymMethod));
+
+    ULONG32 seqPointCount = 0;
+    IfFailRet(pSymMethod->GetSequencePointCount(&seqPointCount));
+
+    if (seqPointCount == 0)
+        return E_FAIL;
+
+    // allocate memory for the objects to be fetched
+    ArrayHolder<ULONG32> offsets(new ULONG32[seqPointCount]);
+    ArrayHolder<ULONG32> lines(new ULONG32[seqPointCount]);
+    ArrayHolder<ULONG32> columns(new ULONG32[seqPointCount]);
+    ArrayHolder<ULONG32> endlines(new ULONG32[seqPointCount]);
+    ArrayHolder<ULONG32> endcolumns(new ULONG32[seqPointCount]);
+    ArrayHolder<ToRelease<ISymUnmanagedDocument>> documents(new ToRelease<ISymUnmanagedDocument>[seqPointCount]);
+
+    ULONG32 realSeqPointCount = 0;
+    IfFailRet(pSymMethod->GetSequencePoints(seqPointCount, &realSeqPointCount, offsets, &(documents[0]), lines, columns, endlines, endcolumns));
+
+    const ULONG32 HiddenLine = 0x00feefee;
+    int bestSoFar = -1;
+
+    for (int i = 0; i < (int)realSeqPointCount; i++)
+    {
+        if (offsets[i] > ilOffset)
+            break;
+
+        if (lines[i] != HiddenLine)
+            bestSoFar = i;
+    }
+
+    if (bestSoFar != -1)
+    {
+        ULONG32 cchNeeded = 0;
+        IfFailRet(documents[bestSoFar]->GetURL(cchFileName, &cchNeeded, pwszFileName));
+
+        *pLinenum = lines[bestSoFar];
+        return S_OK;
+    }
+#endif // FEATURE_PAL
+
+    return E_FAIL;
+}
+
+HRESULT SymbolReader::GetNamedLocalVariable(___in ISymUnmanagedScope * pScope, ___in ICorDebugILFrame * pILFrame, ___in mdMethodDef methodToken, 
+    ___in ULONG localIndex, __out_ecount(paramNameLen) WCHAR* paramName, ___in ULONG paramNameLen, ICorDebugValue** ppValue)
+{
+    HRESULT Status = S_OK;
+
+    if (m_symbolReaderHandle != 0)
+    {
+        _ASSERTE(getLocalVariableNameDelegate != nullptr);
+
+        BSTR wszParamName = SysAllocStringLen(0, mdNameLen);
+        if (wszParamName == NULL)
+        {
+            return E_OUTOFMEMORY;
+        }
+
+        if (getLocalVariableNameDelegate(m_symbolReaderHandle, methodToken, localIndex, &wszParamName) == FALSE)
+        {
+            SysFreeString(wszParamName);
+            return E_FAIL;
+        }
+
+        wcscpy_s(paramName, paramNameLen, wszParamName);
+        SysFreeString(wszParamName);
+
+        if (FAILED(pILFrame->GetLocalVariable(localIndex, ppValue)) || (*ppValue == NULL))
+        {
+            *ppValue = NULL;
+            return E_FAIL;
+        }
+        return S_OK;
+    }
+
+#ifndef FEATURE_PAL
+    if (m_pSymReader == NULL)
+        return E_FAIL;
+
+    if (pScope == NULL)
+    {
         ToRelease<ISymUnmanagedMethod> pSymMethod;
         IfFailRet(m_pSymReader->GetMethod(methodToken, &pSymMethod));
 
@@ -6268,9 +6531,6 @@ HRESULT SymbolReader::GetNamedLocalVariable(ISymUnmanagedScope * pScope, ICorDeb
         IfFailRet(pSymMethod->GetRootScope(&pScope));
 
         return GetNamedLocalVariable(pScope, pILFrame, methodToken, localIndex, paramName, paramNameLen, ppValue);
-#else
-        return E_FAIL;
-#endif // FEATURE_PAL
     }
     else
     {
@@ -6280,19 +6540,19 @@ HRESULT SymbolReader::GetNamedLocalVariable(ISymUnmanagedScope * pScope, ICorDeb
         ArrayHolder<ISymUnmanagedVariable*> pLocals = new ISymUnmanagedVariable*[numVars];
         IfFailRet(pScope->GetLocals(numVars, &numVars, pLocals));
 
-        for(ULONG i = 0; i < numVars; i++)
+        for (ULONG i = 0; i < numVars; i++)
         {
             ULONG32 varIndexInMethod = 0;
-            if(SUCCEEDED(pLocals[i]->GetAddressField1(&varIndexInMethod)))
+            if (SUCCEEDED(pLocals[i]->GetAddressField1(&varIndexInMethod)))
             {
-                if(varIndexInMethod != localIndex)
+                if (varIndexInMethod != localIndex)
                     continue;
 
-                ULONG32 nameLen = 0; 
-                if(FAILED(pLocals[i]->GetName(paramNameLen, &nameLen, paramName)))
+                ULONG32 nameLen = 0;
+                if (FAILED(pLocals[i]->GetName(paramNameLen, &nameLen, paramName)))
                         swprintf_s(paramName, paramNameLen, W("local_%d\0"), localIndex);
 
-                if(SUCCEEDED(pILFrame->GetLocalVariable(varIndexInMethod, ppValue)) && (*ppValue != NULL))
+                if (SUCCEEDED(pILFrame->GetLocalVariable(varIndexInMethod, ppValue)) && (*ppValue != NULL))
                 {
                     for(ULONG j = 0; j < numVars; j++) pLocals[j]->Release();
                     return S_OK;
@@ -6312,22 +6572,24 @@ HRESULT SymbolReader::GetNamedLocalVariable(ISymUnmanagedScope * pScope, ICorDeb
         ArrayHolder<ISymUnmanagedScope*> pChildren = new ISymUnmanagedScope*[numChildren];
         IfFailRet(pScope->GetChildren(numChildren, &numChildren, pChildren));
 
-        for(ULONG i = 0; i < numChildren; i++)
+        for (ULONG i = 0; i < numChildren; i++)
         {
-            if(SUCCEEDED(GetNamedLocalVariable(pChildren[i], pILFrame, methodToken, localIndex, paramName, paramNameLen, ppValue)))
+            if (SUCCEEDED(GetNamedLocalVariable(pChildren[i], pILFrame, methodToken, localIndex, paramName, paramNameLen, ppValue)))
             {
-                for(ULONG j = 0; j < numChildren; j++) pChildren[j]->Release();
+                for (ULONG j = 0; j < numChildren; j++) pChildren[j]->Release();
                 return S_OK;
             }
         }
 
-        for(ULONG j = 0; j < numChildren; j++) pChildren[j]->Release();
-
+        for (ULONG j = 0; j < numChildren; j++) pChildren[j]->Release();
     }
+#endif // FEATURE_PAL
+
     return E_FAIL;
 }
 
-HRESULT SymbolReader::GetNamedLocalVariable(ICorDebugFrame * pFrame, ULONG localIndex, __inout_ecount(paramNameLen) WCHAR* paramName, ULONG paramNameLen, ICorDebugValue** ppValue)
+HRESULT SymbolReader::GetNamedLocalVariable(___in ICorDebugFrame * pFrame, ___in ULONG localIndex, __out_ecount(paramNameLen) WCHAR* paramName, 
+    ___in ULONG paramNameLen, ___out ICorDebugValue** ppValue)
 {
     HRESULT Status = S_OK;
 
@@ -6350,10 +6612,30 @@ HRESULT SymbolReader::GetNamedLocalVariable(ICorDebugFrame * pFrame, ULONG local
     return GetNamedLocalVariable(NULL, pILFrame, methodDef, localIndex, paramName, paramNameLen, ppValue);
 }
 
-HRESULT SymbolReader::ResolveSequencePoint(__in_z WCHAR* pFilename, ULONG32 lineNumber, mdMethodDef* pToken, ULONG32* pIlOffset)
+HRESULT SymbolReader::ResolveSequencePoint(__in_z WCHAR* pFilename, ___in ULONG32 lineNumber, ___in TADDR mod, ___out mdMethodDef* pToken, ___out ULONG32* pIlOffset)
 {
-#ifndef FEATURE_PAL
     HRESULT Status = S_OK;
+
+    if (m_symbolReaderHandle != 0)
+    {
+        _ASSERTE(resolveSequencePointDelegate != nullptr);
+
+        char szName[mdNameLen];
+        if (WideCharToMultiByte(CP_ACP, 0, pFilename, (int)(_wcslen(pFilename) + 1), szName, mdNameLen, NULL, NULL) == 0)
+        { 
+            return E_FAIL;
+        }
+        if (resolveSequencePointDelegate(m_symbolReaderHandle, szName, lineNumber, pToken, pIlOffset) == FALSE)
+        {
+            return E_FAIL;
+        }
+        return S_OK;
+    }
+
+#ifndef FEATURE_PAL
+    if (m_pSymReader == NULL)
+        return E_FAIL;
+
     ULONG32 cDocs = 0;
     ULONG32 cDocsNeeded = 0;
     ArrayHolder<ToRelease<ISymUnmanagedDocument>> pDocs = NULL;
@@ -6365,7 +6647,7 @@ HRESULT SymbolReader::ResolveSequencePoint(__in_z WCHAR* pFilename, ULONG32 line
 
     ULONG32 filenameLen = (ULONG32) _wcslen(pFilename);
 
-    for(ULONG32 i = 0; i < cDocs; i++)
+    for (ULONG32 i = 0; i < cDocs; i++)
     {
         ULONG32 cchUrl = 0;
         ULONG32 cchUrlNeeded = 0;
@@ -6376,18 +6658,18 @@ HRESULT SymbolReader::ResolveSequencePoint(__in_z WCHAR* pFilename, ULONG32 line
         IfFailRet(pDocs[i]->GetURL(cchUrl, &cchUrlNeeded, pUrl));
 
         // If the URL is exactly as long as the filename then compare the two names directly
-        if(cchUrl-1 == filenameLen)
+        if (cchUrl-1 == filenameLen)
         {
-            if(0!=_wcsicmp(pUrl, pFilename))
+            if (0!=_wcsicmp(pUrl, pFilename))
                 continue;
         }
         // does the URL suffix match [back]slash + filename?
-        else if(cchUrl-1 > filenameLen)
+        else if (cchUrl-1 > filenameLen)
         {
             WCHAR* slashLocation = pUrl + (cchUrl - filenameLen - 2);
-            if(*slashLocation != L'\\' && *slashLocation != L'/')
+            if (*slashLocation != L'\\' && *slashLocation != L'/')
                 continue;
-            if(0 != _wcsicmp(slashLocation+1, pFilename))
+            if (0 != _wcsicmp(slashLocation+1, pFilename))
                 continue;
         }
         // URL is too short to match
@@ -6395,7 +6677,7 @@ HRESULT SymbolReader::ResolveSequencePoint(__in_z WCHAR* pFilename, ULONG32 line
             continue;
 
         ULONG32 closestLine = 0;
-        if(FAILED(pDocs[i]->FindClosestLine(lineNumber, &closestLine)))
+        if (FAILED(pDocs[i]->FindClosestLine(lineNumber, &closestLine)))
             continue;
 
         ToRelease<ISymUnmanagedMethod> pSymUnmanagedMethod;
@@ -6411,10 +6693,40 @@ HRESULT SymbolReader::ResolveSequencePoint(__in_z WCHAR* pFilename, ULONG32 line
         return S_OK;
     }
 #endif // FEATURE_PAL
+
     return E_FAIL;
 }
 
-WString GetFrameFromAddress(TADDR frameAddr, IXCLRDataStackWalk *pStackWalk)
+static void AddAssemblyName(WString& methodOutput, CLRDATA_ADDRESS mdesc)
+{
+    DacpMethodDescData mdescData;
+    if (SUCCEEDED(mdescData.Request(g_sos, mdesc)))
+    {
+        DacpModuleData dmd;
+        if (SUCCEEDED(dmd.Request(g_sos, mdescData.ModulePtr)))
+        {
+            ToRelease<IXCLRDataModule> pModule;
+            if (SUCCEEDED(g_sos->GetModule(mdescData.ModulePtr, &pModule)))
+            {
+                ArrayHolder<WCHAR> wszFileName = new WCHAR[MAX_LONGPATH + 1];
+                ULONG32 nameLen = 0;
+                if (SUCCEEDED(pModule->GetFileName(MAX_LONGPATH, &nameLen, wszFileName)))
+                {
+                    if (wszFileName[0] != W('\0'))
+                    {
+                        WCHAR *pJustName = _wcsrchr(wszFileName, DIRECTORY_SEPARATOR_CHAR_W);
+                        if (pJustName == NULL)
+                            pJustName = wszFileName - 1;
+                        methodOutput += (pJustName + 1);
+                        methodOutput += W("!");
+                    }
+                }
+            }
+        }
+    }
+}
+
+WString GetFrameFromAddress(TADDR frameAddr, IXCLRDataStackWalk *pStackWalk, BOOL bAssemblyName)
 {
     TADDR vtAddr;
     MOVE(vtAddr, frameAddr);
@@ -6422,7 +6734,7 @@ WString GetFrameFromAddress(TADDR frameAddr, IXCLRDataStackWalk *pStackWalk)
     WString frameOutput;
     frameOutput += W("[");
 
-    if (SUCCEEDED(g_sos->GetFrameName(vtAddr, mdNameLen, g_mdName, NULL)))
+    if (SUCCEEDED(g_sos->GetFrameName(TO_CDADDR(vtAddr), mdNameLen, g_mdName, NULL)))
         frameOutput += g_mdName;
     else
         frameOutput += W("Frame");
@@ -6434,9 +6746,18 @@ WString GetFrameFromAddress(TADDR frameAddr, IXCLRDataStackWalk *pStackWalk)
     if (SUCCEEDED(g_sos->GetMethodDescPtrFromFrame(frameAddr, &mdesc)))
     {
         if (SUCCEEDED(g_sos->GetMethodDescName(mdesc, mdNameLen, g_mdName, NULL)))
+        {
+            if (bAssemblyName)
+            {
+                AddAssemblyName(frameOutput, mdesc);
+            }
+
             frameOutput += g_mdName;
+        }
         else
+        {
             frameOutput += W("<unknown method>");
+        }
     }
     else if (pStackWalk)
     {
@@ -6460,9 +6781,8 @@ WString GetFrameFromAddress(TADDR frameAddr, IXCLRDataStackWalk *pStackWalk)
     return frameOutput;
 }
 
-WString MethodNameFromIP(CLRDATA_ADDRESS ip, BOOL bSuppressLines)
+WString MethodNameFromIP(CLRDATA_ADDRESS ip, BOOL bSuppressLines, BOOL bAssemblyName, BOOL bDisplacement)
 {
-    ArrayHolder<char> filename = new char[MAX_LONGPATH+1];
     ULONG linenum;
     WString methodOutput;
     CLRDATA_ADDRESS mdesc = 0;
@@ -6476,17 +6796,35 @@ WString MethodNameFromIP(CLRDATA_ADDRESS ip, BOOL bSuppressLines)
         DacpMethodDescData mdescData;
         if (SUCCEEDED(g_sos->GetMethodDescName(mdesc, mdNameLen, g_mdName, NULL)))
         {
+            if (bAssemblyName)
+            {
+                AddAssemblyName(methodOutput, mdesc);
+            }
+
             methodOutput += g_mdName;
+
+            if (bDisplacement)
+            {
+                if (SUCCEEDED(mdescData.Request(g_sos, mdesc)))
+                {
+                    ULONG64 disp = (ip - mdescData.NativeCodeAddr);
+                    if (disp)
+                    {
+                        methodOutput += W(" + ");
+                        methodOutput += Decimal(disp);
+                    }
+                }
+            }
         }
         else if (SUCCEEDED(mdescData.Request(g_sos, mdesc)))
         {
             DacpModuleData dmd;
             BOOL bModuleNameWorked = FALSE;
             ULONG64 addrInModule = ip;
-            if (dmd.Request(g_sos, mdescData.ModulePtr) == S_OK)
+            if (SUCCEEDED(dmd.Request(g_sos, mdescData.ModulePtr)))
             {
                 CLRDATA_ADDRESS peFileBase = 0;
-                if (g_sos->GetPEFileBase(dmd.File, &peFileBase) == S_OK)
+                if (SUCCEEDED(g_sos->GetPEFileBase(dmd.File, &peFileBase)))
                 {
                     if (peFileBase)
                     {
@@ -6496,22 +6834,13 @@ WString MethodNameFromIP(CLRDATA_ADDRESS ip, BOOL bSuppressLines)
             }
             ULONG Index;
             ULONG64 moduleBase;
-            if (g_ExtSymbols->GetModuleByOffset(UL64_TO_CDA(addrInModule), 0, &Index, 
-                &moduleBase) == S_OK)
+            if (SUCCEEDED(g_ExtSymbols->GetModuleByOffset(UL64_TO_CDA(addrInModule), 0, &Index, &moduleBase)))
             {                                    
-                CHAR ModuleName[MAX_LONGPATH+1];
+                ArrayHolder<char> szModuleName = new char[MAX_LONGPATH+1];
 
-                if (g_ExtSymbols->GetModuleNames (Index, moduleBase,
-                    NULL, 0, NULL,
-                    ModuleName, MAX_LONGPATH, NULL,
-                    NULL, 0, NULL) == S_OK)
+                if (SUCCEEDED(g_ExtSymbols->GetModuleNames(Index, moduleBase, NULL, 0, NULL, szModuleName, MAX_LONGPATH, NULL, NULL, 0, NULL)))
                 {
-                    MultiByteToWideChar (CP_ACP, 
-                            0, 
-                            ModuleName, 
-                            -1, 
-                            g_mdName, 
-                            _countof(g_mdName));
+                    MultiByteToWideChar (CP_ACP, 0, szModuleName, MAX_LONGPATH, g_mdName, _countof(g_mdName));
                     methodOutput += g_mdName;
                     methodOutput += W("!");
                 }
@@ -6522,15 +6851,12 @@ WString MethodNameFromIP(CLRDATA_ADDRESS ip, BOOL bSuppressLines)
         {
             methodOutput = W("<unknown>");
         }
-            
+
+        ArrayHolder<WCHAR> wszFileName = new WCHAR[MAX_LONGPATH];
         if (!bSuppressLines &&
-            SUCCEEDED(GetLineByOffset(TO_CDADDR(ip), &linenum, filename, MAX_LONGPATH+1)))
+            SUCCEEDED(GetLineByOffset(TO_CDADDR(ip), &linenum, wszFileName, MAX_LONGPATH)))
         {
-            int len = MultiByteToWideChar(CP_ACP, 0, filename, -1, NULL, 0);
-            ArrayHolder<WCHAR> wfilename = new WCHAR[len];
-            MultiByteToWideChar(CP_ACP, 0, filename, -1, wfilename, len);
-            
-            methodOutput += WString(W(" [")) + wfilename + W(" @ ") + Decimal(linenum) + W("]");
+            methodOutput += WString(W(" [")) + wszFileName + W(" @ ") + Decimal(linenum) + W("]");
         }
     }
     

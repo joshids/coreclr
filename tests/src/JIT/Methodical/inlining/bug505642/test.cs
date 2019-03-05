@@ -1,10 +1,11 @@
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 /*
  * Some comments about the test:
  * Expected: The code runs and completes successfully.
- * Acutal: The application hangs when it is run.
+ * Actual: The application hangs when it is run.
  * The csharp compiler seems to be generating the same IL in both the cases.
  *
  * Some comments about the bug:

@@ -4,8 +4,25 @@ project(PALTESTSUITE)
 
 include_directories(${PALTESTSUITE_SOURCE_DIR}/common)
 
-add_compile_options(-Wno-incompatible-pointer-types-discards-qualifiers)
-add_compile_options(-Wno-int-to-void-pointer-cast)
+# All test will link against these libraries:
+# pthread and m are part of the Android C library (bionic),
+# so we don't need to link them seperately
+if(NOT CLR_CMAKE_PLATFORM_ANDROID)
+  list(APPEND COMMON_TEST_LIBRARIES pthread)
+  list(APPEND COMMON_TEST_LIBRARIES m)
+endif()
+
+list(APPEND COMMON_TEST_LIBRARIES coreclrpal)
+
+if (CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+  add_compile_options(-Wno-incompatible-pointer-types-discards-qualifiers)
+  add_compile_options(-Wno-int-to-void-pointer-cast)
+elseif (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+  add_compile_options(-Wno-sign-compare)
+  add_compile_options(-Wno-narrowing)
+  SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fpermissive" )
+  add_compile_options(-Wno-int-to-pointer-cast)
+endif()
 
 # TODO: make these tests compile
 # add_subdirectory(composite)
@@ -22,3 +39,6 @@ add_subdirectory(pal_specific)
 add_subdirectory(samples)
 add_subdirectory(threading)
 
+if(FEATURE_EVENT_TRACE)
+  add_subdirectory(${GENERATED_EVENTING_DIR}/eventprovider/tests ${CMAKE_CURRENT_BINARY_DIR}/eventprovider)
+endif(FEATURE_EVENT_TRACE)

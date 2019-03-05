@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 //
 // This file declares the types that constitute the interface between the
@@ -17,13 +16,14 @@
 // GC encoder.  It is distinct from CodeGenInterface so that it can be
 // included in the Compiler object, and avoid an extra indirection when
 // accessed from members of Compiler.
-// 
+//
 
 #ifndef _CODEGEN_INTERFACE_H_
 #define _CODEGEN_INTERFACE_H_
 
 #include "regset.h"
 #include "jitgcinfo.h"
+#include "treelifeupdater.h"
 
 // Forward reference types
 
@@ -36,153 +36,166 @@ class emitter;
 
 struct RegState
 {
-    unsigned            rsCurRegArgNum;             // current argument register (for caller)
-    unsigned            rsCalleeRegArgNum;          // total number of incoming register arguments
-    regMaskTP           rsCalleeRegArgMaskLiveIn;   // mask of register arguments (live on entry to method)
-    bool                rsIsFloat;
-    unsigned            rsMaxRegArgNum;             // maximum register argument number + 1 (that is, exclusive of end of range)
+    regMaskTP rsCalleeRegArgMaskLiveIn; // mask of register arguments (live on entry to method)
+    unsigned  rsCalleeRegArgCount;      // total number of incoming register arguments of this kind (int or float)
+    bool      rsIsFloat;                // true for float argument registers, false for integer argument registers
 };
 
 //-------------------- CodeGenInterface ---------------------------------
 // interface to hide the full CodeGen implementation from rest of Compiler
 
-CodeGenInterface *getCodeGenerator(Compiler *comp);
+CodeGenInterface* getCodeGenerator(Compiler* comp);
 
 class CodeGenInterface
 {
     friend class emitter;
 
 public:
-    CodeGenInterface(Compiler *theCompiler);
-    virtual void        genGenerateCode     (void * * codePtr, ULONG * nativeSizeOfCode) = 0;
+    CodeGenInterface(Compiler* theCompiler);
+    virtual void genGenerateCode(void** codePtr, ULONG* nativeSizeOfCode) = 0;
 
-#ifndef LEGACY_BACKEND
-    // genSpillVar is called by compUpdateLifeVar in the RyuJIT backend case.
+    // genSpillVar is called by compUpdateLifeVar.
     // TODO-Cleanup: We should handle the spill directly in CodeGen, rather than
     // calling it from compUpdateLifeVar.  Then this can be non-virtual.
 
-    virtual void        genSpillVar         (GenTreePtr tree) = 0;
-#endif // !LEGACY_BACKEND
+    virtual void genSpillVar(GenTree* tree) = 0;
 
     //-------------------------------------------------------------------------
     //  The following property indicates whether to align loops.
     //  (Used to avoid effects of loop alignment when diagnosing perf issues.)
-    __declspec(property(get=doAlignLoops,put=setAlignLoops)) bool   genAlignLoops;
-    bool doAlignLoops()                     { return m_genAlignLoops; }
-    void setAlignLoops(bool value)          { m_genAlignLoops = value; }
+    __declspec(property(get = doAlignLoops, put = setAlignLoops)) bool genAlignLoops;
+    bool doAlignLoops()
+    {
+        return m_genAlignLoops;
+    }
+    void setAlignLoops(bool value)
+    {
+        m_genAlignLoops = value;
+    }
 
     // TODO-Cleanup: Abstract out the part of this that finds the addressing mode, and
     // move it to Lower
-    virtual bool        genCreateAddrMode(GenTreePtr    addr,
-                                          int           mode,
-                                          bool          fold,
-                                          regMaskTP     regMask,
-                                          bool        * revPtr,
-                                          GenTreePtr  * rv1Ptr,
-                                          GenTreePtr  * rv2Ptr,
+    virtual bool genCreateAddrMode(GenTree*  addr,
+                                   bool      fold,
+                                   bool*     revPtr,
+                                   GenTree** rv1Ptr,
+                                   GenTree** rv2Ptr,
 #if SCALED_ADDR_MODES
-                                          unsigned    * mulPtr,
-#endif
-                                          unsigned    * cnsPtr,
-                                          bool          nogen = false) = 0;
+                                   unsigned* mulPtr,
+#endif // SCALED_ADDR_MODES
+                                   ssize_t* cnsPtr) = 0;
 
-    void                genCalcFrameSize ();
+    GCInfo gcInfo;
 
-    GCInfo              gcInfo;
-
-    RegSet              regSet;
-    RegState            intRegState;
-    RegState            floatRegState;
-
-    // TODO-Cleanup: The only reason that regTracker needs to live in CodeGenInterface is that
-    // in RegSet::rsUnspillOneReg, it needs to mark the new register as "trash"
-    RegTracker          regTracker;
-public:
-    void                trashReg(regNumber reg) { regTracker.rsTrackRegTrash(reg); }
+    RegSet   regSet;
+    RegState intRegState;
+    RegState floatRegState;
 
 protected:
-    Compiler*           compiler;
-    bool                m_genAlignLoops;
+    Compiler* compiler;
+    bool      m_genAlignLoops;
 
 private:
-    static const
-    BYTE                instInfo[INS_count];
+#if defined(_TARGET_XARCH_)
+    static const insFlags instInfo[INS_count];
+#elif defined(_TARGET_ARM_) || defined(_TARGET_ARM64_)
+    static const BYTE instInfo[INS_count];
+#else
+#error Unsupported target architecture
+#endif
 
-    #define INST_FP     0x01                // is it a FP instruction?
+#define INST_FP 0x01 // is it a FP instruction?
 public:
-    static
-    bool                instIsFP        (instruction    ins);
+    static bool instIsFP(instruction ins);
 
     //-------------------------------------------------------------------------
     // Liveness-related fields & methods
 public:
-    void                genUpdateRegLife    (const LclVarDsc * varDsc,
-                                             bool isBorn,
-                                             bool isDying
-                                             DEBUGARG( GenTreePtr     tree));
-#ifndef LEGACY_BACKEND
-    void                genUpdateVarReg     (LclVarDsc *   varDsc,
-                                             GenTreePtr    tree);
-#endif // !LEGACY_BACKEND
+    void genUpdateRegLife(const LclVarDsc* varDsc, bool isBorn, bool isDying DEBUGARG(GenTree* tree));
+    void genUpdateVarReg(LclVarDsc* varDsc, GenTree* tree);
 
 protected:
 #ifdef DEBUG
-    VARSET_TP           genTempOldLife;
-    bool                genTempLiveChg;
+    VARSET_TP genTempOldLife;
+    bool      genTempLiveChg;
 #endif
 
-    VARSET_TP           genLastLiveSet;     // A one element map (genLastLiveSet-> genLastLiveMask)
-    regMaskTP           genLastLiveMask;    // these two are used in genLiveMask
+    VARSET_TP genLastLiveSet;  // A one element map (genLastLiveSet-> genLastLiveMask)
+    regMaskTP genLastLiveMask; // these two are used in genLiveMask
 
+    regMaskTP genGetRegMask(const LclVarDsc* varDsc);
+    regMaskTP genGetRegMask(GenTree* tree);
 
-    regMaskTP           genGetRegMask       (const LclVarDsc * varDsc);
-    regMaskTP           genGetRegMask       (GenTreePtr tree);
+    void genUpdateLife(GenTree* tree);
+    void genUpdateLife(VARSET_VALARG_TP newLife);
 
-    void                genUpdateLife       (GenTreePtr     tree);
-    void                genUpdateLife       (VARSET_VALARG_TP newLife);
+    TreeLifeUpdater<true>* treeLifeUpdater;
 
-    regMaskTP           genLiveMask         (GenTreePtr     tree);
-    regMaskTP           genLiveMask         (VARSET_VALARG_TP liveSet);
-
-
-
+public:
+    bool genUseOptimizedWriteBarriers(GCInfo::WriteBarrierForm wbf);
+    bool genUseOptimizedWriteBarriers(GenTree* tgt, GenTree* assignVal);
+    CorInfoHelpFunc genWriteBarrierHelperForWriteBarrierForm(GenTree* tgt, GCInfo::WriteBarrierForm wbf);
 
     // The following property indicates whether the current method sets up
     // an explicit stack frame or not.
 private:
-    PhasedVar<bool>     m_cgFramePointerUsed;
+    PhasedVar<bool> m_cgFramePointerUsed;
+
 public:
-    bool                isFramePointerUsed() const                { return m_cgFramePointerUsed; }
-    void                setFramePointerUsed(bool value)           { m_cgFramePointerUsed = value; }
-    void                resetFramePointerUsedWritePhase()         { m_cgFramePointerUsed.ResetWritePhase(); }
+    bool isFramePointerUsed() const
+    {
+        return m_cgFramePointerUsed;
+    }
+    void setFramePointerUsed(bool value)
+    {
+        m_cgFramePointerUsed = value;
+    }
+    void resetFramePointerUsedWritePhase()
+    {
+        m_cgFramePointerUsed.ResetWritePhase();
+    }
 
     // The following property indicates whether the current method requires
     // an explicit frame. Does not prohibit double alignment of the stack.
 private:
-    PhasedVar<bool>     m_cgFrameRequired;
-public:
-    bool                isFrameRequired() const         { return m_cgFrameRequired; }
-    void                setFrameRequired(bool value)    { m_cgFrameRequired = value; }
+    PhasedVar<bool> m_cgFrameRequired;
 
 public:
-    regNumber           getFramePointerReg()            { if (isFramePointerUsed())
-                                                              return REG_FPBASE;
-                                                          else
-                                                              return REG_SPBASE; }
+    bool isFrameRequired() const
+    {
+        return m_cgFrameRequired;
+    }
+    void setFrameRequired(bool value)
+    {
+        m_cgFrameRequired = value;
+    }
 
-    int                 genCallerSPtoFPdelta();
-    int                 genCallerSPtoInitialSPdelta();
-    int                 genSPtoFPdelta();
-    int                 genTotalFrameSize();
+public:
+    int genCallerSPtoFPdelta();
+    int genCallerSPtoInitialSPdelta();
+    int genSPtoFPdelta();
+    int genTotalFrameSize();
 
-    regNumber           genGetThisArgReg    (GenTreePtr     call);
+#ifdef _TARGET_ARM64_
+    virtual void SetSaveFpLrWithAllCalleeSavedRegisters(bool value) = 0;
+    virtual bool IsSaveFpLrWithAllCalleeSavedRegisters()            = 0;
+#endif // _TARGET_ARM64_
+
+    regNumber genGetThisArgReg(GenTreeCall* call) const;
 
 #ifdef _TARGET_XARCH_
-    bool                genAddrShouldUsePCRel(size_t addr);
+#ifdef _TARGET_AMD64_
+    // There are no reloc hints on x86
+    unsigned short genAddrRelocTypeHint(size_t addr);
+#endif
+    bool genDataIndirAddrCanBeEncodedAsPCRelOffset(size_t addr);
+    bool genCodeIndirAddrCanBeEncodedAsPCRelOffset(size_t addr);
+    bool genCodeIndirAddrCanBeEncodedAsZeroRelOffset(size_t addr);
+    bool genCodeIndirAddrNeedsReloc(size_t addr);
+    bool genCodeAddrNeedsReloc(size_t addr);
 #endif
 
-
-    // If both isFramePointerRequired() and isFrameRequired() are false, the method is eligible 
+    // If both isFramePointerRequired() and isFrameRequired() are false, the method is eligible
     // for Frame-Pointer-Omission (FPO).
 
     // The following property indicates whether the current method requires
@@ -190,13 +203,31 @@ public:
     // accessible relative to the Frame Pointer. Prohibits double alignment
     // of the stack.
 private:
-    PhasedVar<bool>     m_cgFramePointerRequired;
-public:
-    bool                isFramePointerRequired() const                { return m_cgFramePointerRequired; }
-    void                setFramePointerRequired(bool value)           { m_cgFramePointerRequired = value; }
-    void                setFramePointerRequiredEH(bool value);
+    PhasedVar<bool> m_cgFramePointerRequired;
 
-    void                setFramePointerRequiredGCInfo(bool value)
+public:
+    bool isFramePointerRequired() const
+    {
+        return m_cgFramePointerRequired;
+    }
+
+    void setFramePointerRequired(bool value)
+    {
+        m_cgFramePointerRequired = value;
+    }
+
+    //------------------------------------------------------------------------
+    // resetWritePhaseForFramePointerRequired: Return m_cgFramePointerRequired into the write phase.
+    // It is used only before the first phase, that locks this value, currently it is LSRA.
+    // Use it if you want to skip checks that set this value to true if the value is already true.
+    void resetWritePhaseForFramePointerRequired()
+    {
+        m_cgFramePointerRequired.ResetWritePhase();
+    }
+
+    void setFramePointerRequiredEH(bool value);
+
+    void setFramePointerRequiredGCInfo(bool value)
     {
 #ifdef JIT32_GCENCODER
         m_cgFramePointerRequired = value;
@@ -204,146 +235,134 @@ public:
     }
 
 #if DOUBLE_ALIGN
-// The following property indicates whether we going to double-align the frame.
-// Arguments are accessed relative to the Frame Pointer (EBP), and
-// locals are accessed relative to the Stack Pointer (ESP).
+    // The following property indicates whether we going to double-align the frame.
+    // Arguments are accessed relative to the Frame Pointer (EBP), and
+    // locals are accessed relative to the Stack Pointer (ESP).
 public:
-    bool                doDoubleAlign()                  { return m_cgDoubleAlign; }
-    void                setDoubleAlign(bool value)       { m_cgDoubleAlign = value; }
-    bool                doubleAlignOrFramePointerUsed()      { return isFramePointerUsed() || doDoubleAlign(); }
+    bool doDoubleAlign() const
+    {
+        return m_cgDoubleAlign;
+    }
+    void setDoubleAlign(bool value)
+    {
+        m_cgDoubleAlign = value;
+    }
+    bool doubleAlignOrFramePointerUsed() const
+    {
+        return isFramePointerUsed() || doDoubleAlign();
+    }
+
 private:
-    bool                m_cgDoubleAlign;
+    bool m_cgDoubleAlign;
 #else // !DOUBLE_ALIGN
+
 public:
-    bool                doubleAlignOrFramePointerUsed()      { return isFramePointerUsed(); }
+    bool doubleAlignOrFramePointerUsed() const
+    {
+        return isFramePointerUsed();
+    }
+
 #endif // !DOUBLE_ALIGN
 
-
-#ifdef  DEBUG
+#ifdef DEBUG
     // The following is used to make sure the value of 'genInterruptible' isn't
     // changed after it's been used by any logic that depends on its value.
 public:
-    bool                isGCTypeFixed() { return genInterruptibleUsed; }
+    bool isGCTypeFixed()
+    {
+        return genInterruptibleUsed;
+    }
+
 protected:
-    bool                genInterruptibleUsed;
+    bool genInterruptibleUsed;
 #endif
 
 public:
+    unsigned InferStructOpSizeAlign(GenTree* op, unsigned* alignmentWB);
+    unsigned InferOpSizeAlign(GenTree* op, unsigned* alignmentWB);
 
-#if FEATURE_STACK_FP_X87
-    FlatFPStateX87      compCurFPState;
-    unsigned            genFPregCnt;        // count of current FP reg. vars (including dead but unpopped ones)
-
-    void                SetRegVarFloat                          (regNumber reg, var_types type, LclVarDsc* varDsc);
-
-    void                inst_FN         (instruction    ins, unsigned stk);
-
-    //  Keeps track of the current level of the FP coprocessor stack
-    //  (excluding FP reg. vars).
-    //  Do not use directly, instead use the processor agnostic accessor
-    //  methods below
-    //
-    unsigned            genFPstkLevel;
-
-    void                genResetFPstkLevel    (unsigned newValue = 0);
-    unsigned            genGetFPstkLevel      ();
-    FlatFPStateX87*     FlatFPAllocFPState    (FlatFPStateX87* pInitFrom = 0);
-
-    void                genIncrementFPstkLevel(unsigned inc = 1);
-    void                genDecrementFPstkLevel(unsigned dec = 1);
-
-    static const char*  regVarNameStackFP                      (regNumber reg);
-
-    // FlatFPStateX87_ functions are the actual verbs to do stuff
-    // like doing a transition, loading   register, etc. It's also
-    // responsible for emitting the x87 code to do so. We keep
-    // them in Compiler because we don't want to store a pointer to the
-    // emitter.
-    void            FlatFPX87_MoveToTOS                     (FlatFPStateX87* pState, unsigned iVirtual, bool bEmitCode = true);
-    void            FlatFPX87_SwapStack                     (FlatFPStateX87* pState, unsigned i, unsigned j, bool bEmitCode = true);
-
-#endif // FEATURE_STACK_FP_X87
-
-#ifndef LEGACY_BACKEND
-    regNumber           genGetAssignedReg   (GenTreePtr        tree);
-#endif // !LEGACY_BACKEND
-
-#ifdef LEGACY_BACKEND
-    // Changes GT_LCL_VAR nodes to GT_REG_VAR nodes if possible.
-    bool                genMarkLclVar    (GenTreePtr    tree);
-
-    void                genBashLclVar       (GenTreePtr     tree,
-                                             unsigned       varNum,
-                                             LclVarDsc*     varDsc);
-#endif // LEGACY_BACKEND
-
-public:
-    unsigned            InferStructOpSizeAlign  (GenTreePtr     op,
-                                                 unsigned *     alignmentWB);
-    unsigned            InferOpSizeAlign        (GenTreePtr     op,
-                                                 unsigned *     alignmentWB);
-
-    void                genMarkTreeInReg        (GenTreePtr tree, regNumber reg);
-    void                genMarkTreeInRegPair    (GenTreePtr tree, regPairNo regPair);
+    void genMarkTreeInReg(GenTree* tree, regNumber reg);
 
     // Methods to abstract target information
 
-    bool                validImmForInstr        (instruction ins, ssize_t val, insFlags flags = INS_FLAGS_DONT_CARE);
-    bool                validDispForLdSt        (ssize_t    disp, var_types  type);
-    bool                validImmForAdd          (ssize_t     imm, insFlags flags);
-    bool                validImmForAlu          (ssize_t     imm);
-    bool                validImmForMov          (ssize_t     imm);
-    bool                validImmForBL           (ssize_t     addr);
+    bool validImmForInstr(instruction ins, target_ssize_t val, insFlags flags = INS_FLAGS_DONT_CARE);
+    bool validDispForLdSt(target_ssize_t disp, var_types type);
+    bool validImmForAdd(target_ssize_t imm, insFlags flags);
+    bool validImmForAlu(target_ssize_t imm);
+    bool validImmForMov(target_ssize_t imm);
+    bool validImmForBL(ssize_t addr);
 
-    instruction         ins_Load                (var_types   srcType, bool aligned = false);
-    instruction         ins_Store               (var_types   dstType, bool aligned = false);
-    static instruction         ins_FloatLoad           (var_types type=TYP_DOUBLE);
+    instruction ins_Load(var_types srcType, bool aligned = false);
+    instruction ins_Store(var_types dstType, bool aligned = false);
+    static instruction ins_FloatLoad(var_types type = TYP_DOUBLE);
 
     // Methods for spilling - used by RegSet
-    void                spillReg                (var_types type, TempDsc* tmp, regNumber reg);
-    void                reloadReg               (var_types type, TempDsc* tmp, regNumber reg);
-    void                reloadFloatReg          (var_types type, TempDsc* tmp, regNumber reg);
+    void spillReg(var_types type, TempDsc* tmp, regNumber reg);
+    void reloadReg(var_types type, TempDsc* tmp, regNumber reg);
 
-#ifdef LEGACY_BACKEND
-    void                SpillFloat              (regNumber reg, bool bIsCall = false);
-#endif // LEGACY_BACKEND
+    // The following method is used by xarch emitter for handling contained tree temps.
+    TempDsc* getSpillTempDsc(GenTree* tree);
 
 public:
-    emitter*            getEmitter()                { return m_cgEmitter; }
+    emitter* getEmitter()
+    {
+        return m_cgEmitter;
+    }
+
 protected:
-    emitter*            m_cgEmitter;
+    emitter* m_cgEmitter;
 
 #ifdef LATE_DISASM
 public:
-    DisAssembler&       getDisAssembler()           { return m_cgDisAsm; }
+    DisAssembler& getDisAssembler()
+    {
+        return m_cgDisAsm;
+    }
+
 protected:
-    DisAssembler        m_cgDisAsm;
+    DisAssembler m_cgDisAsm;
 #endif // LATE_DISASM
 
 public:
-
 #ifdef DEBUG
-    void                setVerbose(bool value)      { verbose = value; }
-    bool                verbose;
-#ifdef LEGACY_BACKEND
-    // Stress mode
-    int                     genStressFloat                  ();
-    regMaskTP               genStressLockedMaskFloat        ();
-#endif // LEGACY_BACKEND
+    void setVerbose(bool value)
+    {
+        verbose = value;
+    }
+    bool verbose;
 #endif // DEBUG
-
-
-
 
     // The following is set to true if we've determined that the current method
     // is to be fully interruptible.
     //
 public:
-    __declspec(property(get = getInterruptible, put=setInterruptible)) bool genInterruptible;
-    bool                getInterruptible()                  { return m_cgInterruptible; }
-    void                setInterruptible(bool value)        { m_cgInterruptible = value; }
+    __declspec(property(get = getInterruptible, put = setInterruptible)) bool genInterruptible;
+    bool getInterruptible()
+    {
+        return m_cgInterruptible;
+    }
+    void setInterruptible(bool value)
+    {
+        m_cgInterruptible = value;
+    }
+
+#ifdef _TARGET_ARMARCH_
+    __declspec(property(get = getHasTailCalls, put = setHasTailCalls)) bool hasTailCalls;
+    bool getHasTailCalls()
+    {
+        return m_cgHasTailCalls;
+    }
+    void setHasTailCalls(bool value)
+    {
+        m_cgHasTailCalls = value;
+    }
+#endif // _TARGET_ARMARCH_
+
 private:
-    bool                m_cgInterruptible;
+    bool m_cgInterruptible;
+#ifdef _TARGET_ARMARCH_
+    bool m_cgHasTailCalls;
+#endif // _TARGET_ARMARCH_
 
     //  The following will be set to true if we've determined that we need to
     //  generate a full-blown pointer register map for the current method.
@@ -352,33 +371,172 @@ private:
     //        for fully interruptible methods)
     //
 public:
-    __declspec(property(get = doFullPtrRegMap, put=setFullPtrRegMap)) bool genFullPtrRegMap;
-    bool                doFullPtrRegMap()               { return m_cgFullPtrRegMap; }
-    void                setFullPtrRegMap(bool value)    { m_cgFullPtrRegMap = value; }
-private:
-    bool                m_cgFullPtrRegMap;
+    __declspec(property(get = doFullPtrRegMap, put = setFullPtrRegMap)) bool genFullPtrRegMap;
+    bool doFullPtrRegMap()
+    {
+        return m_cgFullPtrRegMap;
+    }
+    void setFullPtrRegMap(bool value)
+    {
+        m_cgFullPtrRegMap = value;
+    }
 
-#ifdef DEBUGGING_SUPPORT
+private:
+    bool m_cgFullPtrRegMap;
+
 public:
-    virtual void        siUpdate        () = 0;
-#endif // DEBUGGING_SUPPORT
+    virtual void siUpdate() = 0;
+
+    /* These are the different addressing modes used to access a local var.
+     * The JIT has to report the location of the locals back to the EE
+     * for debugging purposes.
+     */
+
+    enum siVarLocType
+    {
+        VLT_REG,
+        VLT_REG_BYREF, // this type is currently only used for value types on X64
+        VLT_REG_FP,
+        VLT_STK,
+        VLT_STK_BYREF, // this type is currently only used for value types on X64
+        VLT_REG_REG,
+        VLT_REG_STK,
+        VLT_STK_REG,
+        VLT_STK2,
+        VLT_FPSTK,
+        VLT_FIXED_VA,
+
+        VLT_COUNT,
+        VLT_INVALID
+    };
+
+    struct siVarLoc
+    {
+        siVarLocType vlType;
+
+        union {
+            // VLT_REG/VLT_REG_FP -- Any pointer-sized enregistered value (TYP_INT, TYP_REF, etc)
+            // eg. EAX
+            // VLT_REG_BYREF -- the specified register contains the address of the variable
+            // eg. [EAX]
+
+            struct
+            {
+                regNumber vlrReg;
+            } vlReg;
+
+            // VLT_STK       -- Any 32 bit value which is on the stack
+            // eg. [ESP+0x20], or [EBP-0x28]
+            // VLT_STK_BYREF -- the specified stack location contains the address of the variable
+            // eg. mov EAX, [ESP+0x20]; [EAX]
+
+            struct
+            {
+                regNumber     vlsBaseReg;
+                NATIVE_OFFSET vlsOffset;
+            } vlStk;
+
+            // VLT_REG_REG -- TYP_LONG/TYP_DOUBLE with both DWords enregistered
+            // eg. RBM_EAXEDX
+
+            struct
+            {
+                regNumber vlrrReg1;
+                regNumber vlrrReg2;
+            } vlRegReg;
+
+            // VLT_REG_STK -- Partly enregistered TYP_LONG/TYP_DOUBLE
+            // eg { LowerDWord=EAX UpperDWord=[ESP+0x8] }
+
+            struct
+            {
+                regNumber vlrsReg;
+
+                struct
+                {
+                    regNumber     vlrssBaseReg;
+                    NATIVE_OFFSET vlrssOffset;
+                } vlrsStk;
+            } vlRegStk;
+
+            // VLT_STK_REG -- Partly enregistered TYP_LONG/TYP_DOUBLE
+            // eg { LowerDWord=[ESP+0x8] UpperDWord=EAX }
+
+            struct
+            {
+                struct
+                {
+                    regNumber     vlsrsBaseReg;
+                    NATIVE_OFFSET vlsrsOffset;
+                } vlsrStk;
+
+                regNumber vlsrReg;
+            } vlStkReg;
+
+            // VLT_STK2 -- Any 64 bit value which is on the stack, in 2 successsive DWords
+            // eg 2 DWords at [ESP+0x10]
+
+            struct
+            {
+                regNumber     vls2BaseReg;
+                NATIVE_OFFSET vls2Offset;
+            } vlStk2;
+
+            // VLT_FPSTK -- enregisterd TYP_DOUBLE (on the FP stack)
+            // eg. ST(3). Actually it is ST("FPstkHeight - vpFpStk")
+
+            struct
+            {
+                unsigned vlfReg;
+            } vlFPstk;
+
+            // VLT_FIXED_VA -- fixed argument of a varargs function.
+            // The argument location depends on the size of the variable
+            // arguments (...). Inspecting the VARARGS_HANDLE indicates the
+            // location of the first arg. This argument can then be accessed
+            // relative to the position of the first arg
+
+            struct
+            {
+                unsigned vlfvOffset;
+            } vlFixedVarArg;
+
+            // VLT_MEMORY
+
+            struct
+            {
+                void* rpValue; // pointer to the in-process
+                               // location of the value.
+            } vlMemory;
+        };
+
+        // Helper functions
+
+        bool vlIsInReg(regNumber reg);
+        bool vlIsOnStk(regNumber reg, signed offset);
+
+        siVarLoc(const LclVarDsc* varDsc, regNumber baseReg, int offset, bool isFramePointerUsed);
+        siVarLoc(){};
+
+    private:
+        // Fill "siVarLoc" properties indicating the register position of the variable
+        // using "LclVarDsc" and "baseReg"/"offset" if it has a part in the stack (x64 bit float or long).
+        void siFillRegisterVarLoc(
+            const LclVarDsc* varDsc, var_types type, regNumber baseReg, int offset, bool isFramePointerUsed);
+
+        // Fill "siVarLoc" properties indicating the register position of the variable
+        // using "LclVarDsc" and "baseReg"/"offset" if it is a variable with part in a register and
+        // part in thestack
+        void siFillStackVarLoc(
+            const LclVarDsc* varDsc, var_types type, regNumber baseReg, int offset, bool isFramePointerUsed);
+    };
 
 #ifdef LATE_DISASM
 public:
+    virtual const char* siRegVarName(size_t offs, size_t size, unsigned reg) = 0;
 
-    virtual
-    const char*         siRegVarName    (size_t offs,
-                                         size_t size,
-                                         unsigned reg) = 0;
-
-    virtual
-    const char*         siStackVarName  (size_t offs,
-                                         size_t size,
-                                         unsigned reg,
-                                         unsigned stkOffs) = 0;
+    virtual const char* siStackVarName(size_t offs, size_t size, unsigned reg, unsigned stkOffs) = 0;
 #endif // LATE_DISASM
-
 };
-
 
 #endif // _CODEGEN_INTERFACE_H_

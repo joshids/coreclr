@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //
 // typectxt.cpp
 //
@@ -24,7 +23,6 @@
 void SigTypeContext::InitTypeContext(MethodDesc *md, Instantiation exactClassInst, Instantiation exactMethodInst, SigTypeContext *pRes)
 {
     LIMITED_METHOD_CONTRACT;
-    STATIC_CONTRACT_SO_TOLERANT;
     MethodTable *pMT = md->GetMethodTable();
 
     if (pMT->IsArray())
@@ -44,7 +42,6 @@ void SigTypeContext::InitTypeContext(MethodDesc *md, SigTypeContext *pRes)
         NOTHROW;
         GC_NOTRIGGER;
         FORBID_FAULT;
-        SO_TOLERANT;
         SUPPORTS_DAC;
  
         PRECONDITION(CheckPointer(md));
@@ -68,7 +65,6 @@ void SigTypeContext::InitTypeContext(MethodDesc *md, TypeHandle declaringType, S
         NOTHROW;
         GC_NOTRIGGER;
         FORBID_FAULT;
-        SO_TOLERANT;
         SUPPORTS_DAC;
  
         PRECONDITION(CheckPointer(md));
@@ -138,7 +134,6 @@ void SigTypeContext::InitTypeContext(MethodDesc *md, TypeHandle declaringType, I
         NOTHROW;
         GC_NOTRIGGER;
         FORBID_FAULT;
-        SO_TOLERANT;
  
         PRECONDITION(CheckPointer(md));
     } CONTRACTL_END;
@@ -182,7 +177,6 @@ void SigTypeContext::InitTypeContext(FieldDesc *pFD, TypeHandle declaringType, S
         NOTHROW;
         GC_NOTRIGGER;
         FORBID_FAULT;
-        SO_TOLERANT;
  
         PRECONDITION(CheckPointer(declaringType, NULL_OK));
         PRECONDITION(CheckPointer(pFD));
@@ -198,7 +192,6 @@ void SigTypeContext::InitTypeContext(TypeHandle th, SigTypeContext *pRes)
         NOTHROW;
         GC_NOTRIGGER;
         FORBID_FAULT;
-        SO_TOLERANT;
     } CONTRACTL_END;
 
     if (th.IsNull())
@@ -222,7 +215,6 @@ const SigTypeContext * SigTypeContext::GetOptionalTypeContext(MethodDesc *md, Ty
     {
         NOTHROW;
         GC_NOTRIGGER;
-        SO_TOLERANT;
         MODE_ANY;
     }
     CONTRACTL_END;
@@ -247,7 +239,6 @@ const SigTypeContext * SigTypeContext::GetOptionalTypeContext(TypeHandle th, Sig
     {
         NOTHROW;
         GC_NOTRIGGER;
-        SO_TOLERANT;
         MODE_ANY;
     }
     CONTRACTL_END;
@@ -273,7 +264,6 @@ BOOL SigTypeContext::IsValidTypeOnlyInstantiationOf(const SigTypeContext *pCtxTy
     {
         NOTHROW;
         GC_NOTRIGGER;
-        SO_TOLERANT;
         MODE_ANY;
     }
     CONTRACTL_END;

@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //
 // ProfilingHelper.inl
 // 
@@ -39,7 +38,6 @@ FORCEINLINE SetCallbackStateFlagsHolder::~SetCallbackStateFlagsHolder()
     {
         NOTHROW;
         GC_NOTRIGGER;
-        SO_TOLERANT;
         MODE_ANY;
     }
     CONTRACTL_END;
@@ -113,7 +111,6 @@ inline void ProfilingAPIUtility::LogNoInterfaceError(REFIID iidRequested, LPCWST
     {
         THROWS;
         GC_TRIGGERS;
-        SO_INTOLERANT;
         MODE_ANY;
     }
     CONTRACTL_END;
@@ -135,7 +132,7 @@ inline void ProfilingAPIUtility::LogNoInterfaceError(REFIID iidRequested, LPCWST
 // ProfilingAPIUtility::ShouldInjectProfAPIFault
 //
 // Description: 
-//    Determines whether COMPLUS_ProfAPIFault is set to a bitmask value
+//    Determines whether COMPlus_ProfAPIFault is set to a bitmask value
 //    with the specified flag set
 //
 // Return Value:
@@ -237,7 +234,6 @@ FORCEINLINE void ProfilingAPIUtility::IncEvacuationCounter(Thread * pThread)
         FORBID_FAULT;
         MODE_ANY;
         CANNOT_TAKE_LOCK;
-        SO_NOT_MAINLINE;
     } 
     CONTRACTL_END;
 
@@ -264,7 +260,6 @@ FORCEINLINE void ProfilingAPIUtility::DecEvacuationCounter(Thread * pThread)
         FORBID_FAULT;
         MODE_ANY;
         CANNOT_TAKE_LOCK;
-        SO_NOT_MAINLINE;
     } 
     CONTRACTL_END;
 

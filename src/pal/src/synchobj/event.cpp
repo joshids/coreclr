@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 /*++
 
@@ -31,23 +30,21 @@ using namespace CorUnix;
 /* ------------------- Definitions ------------------------------*/
 SET_DEFAULT_DEBUG_CHANNEL(SYNC);
 
-enum
-{
-    c_cchMaxEvent = MAX_LONGPATH + 1
-};
-
 CObjectType CorUnix::otManualResetEvent(
                 otiManualResetEvent,
                 NULL,   // No cleanup routine
                 NULL,   // No initialization routine
                 0,      // No immutable data
+                NULL,   // No immutable data copy routine
+                NULL,   // No immutable data cleanup routine
                 0,      // No process local data
+                NULL,   // No process local data cleanup routine
                 0,      // No shared data
                 EVENT_ALL_ACCESS, // Currently ignored (no Win32 security)
                 CObjectType::SecuritySupported,
                 CObjectType::SecurityInfoNotPersisted,
-                CObjectType::ObjectCanHaveName,
-                CObjectType::CrossProcessDuplicationAllowed,
+                CObjectType::UnnamedObject,
+                CObjectType::LocalDuplicationOnly,
                 CObjectType::WaitableObject,
                 CObjectType::ObjectCanBeUnsignaled,
                 CObjectType::ThreadReleaseHasNoSideEffects,
@@ -59,13 +56,16 @@ CObjectType CorUnix::otAutoResetEvent(
                 NULL,   // No cleanup routine
                 NULL,   // No initialization routine
                 0,      // No immutable data
+                NULL,   // No immutable data copy routine
+                NULL,   // No immutable data cleanup routine
                 0,      // No process local data
+                NULL,   // No process local data cleanup routine
                 0,      // No shared data
                 EVENT_ALL_ACCESS, // Currently ignored (no Win32 security)
                 CObjectType::SecuritySupported,
                 CObjectType::SecurityInfoNotPersisted,
-                CObjectType::ObjectCanHaveName,
-                CObjectType::CrossProcessDuplicationAllowed,
+                CObjectType::UnnamedObject,
+                CObjectType::LocalDuplicationOnly,
                 CObjectType::WaitableObject,
                 CObjectType::ObjectCanBeUnsignaled,
                 CObjectType::ThreadReleaseAltersSignalCount,
@@ -191,6 +191,36 @@ CreateEventW(
     LOGEXIT("CreateEventW returns HANDLE %p\n", hEvent);
     PERF_EXIT(CreateEventW);
     return hEvent;
+}
+
+/*++
+Function:
+  CreateEventExW
+
+Note:
+  lpEventAttributes and dwDesiredAccess are currently ignored:
+  -- Win32 object security not supported
+  -- handles to event objects are not inheritable
+  -- Access rights are not supported
+
+Parameters:  
+  See MSDN doc.
+--*/
+
+HANDLE
+PALAPI
+CreateEventExW(
+    IN LPSECURITY_ATTRIBUTES lpEventAttributes,
+    IN LPCWSTR lpName,
+    IN DWORD dwFlags,
+    IN DWORD dwDesiredAccess)
+{
+    return
+        CreateEventW(
+            lpEventAttributes,
+            (dwFlags & CREATE_EVENT_MANUAL_RESET) != 0,
+            (dwFlags & CREATE_EVENT_INITIAL_SET) != 0,
+            lpName);
 }
 
 /*++
@@ -513,83 +543,3 @@ OpenEventWExit:
 
     return hEvent;
 }
-
-/*++
-Function:
-  InternalOpenEvent
-
-Note:
-  dwDesiredAccess is currently ignored (no Win32 object security support)
-  bInheritHandle is currently ignored (handles to events are not inheritable)
-
-Parameters:
-  pthr -- thread data for calling thread
-  phEvent -- on success, receives the allocated event handle
-  
-  See MSDN docs on OpenEvent for all other parameters.
---*/
-
-PAL_ERROR
-CorUnix::InternalOpenEvent(
-    CPalThread *pthr,
-    DWORD dwDesiredAccess,
-    BOOL bInheritHandle,
-    LPCWSTR lpName,
-    HANDLE *phEvent
-    )
-{
-    PAL_ERROR palError = NO_ERROR;
-    IPalObject *pobjEvent = NULL;
-    CPalString sObjectName(lpName);
-
-    _ASSERTE(NULL != pthr);
-    _ASSERTE(NULL != lpName);
-    _ASSERTE(NULL != phEvent);
-
-    ENTRY("InternalOpenEvent(pthr=%p, dwDesiredAccess=%#x, bInheritHandle=%d, "
-        "lpName=%p, phEvent=%p)\n",
-        pthr,
-        dwDesiredAccess,
-        bInheritHandle,
-        lpName,
-        phEvent
-        );
-
-    palError = g_pObjectManager->LocateObject(
-        pthr,
-        &sObjectName,
-        &aotEvent,
-        &pobjEvent
-        );
-
-    if (NO_ERROR != palError)
-    {
-        goto InternalOpenEventExit;
-    }
-
-    palError = g_pObjectManager->ObtainHandleForObject(
-        pthr,
-        pobjEvent,
-        dwDesiredAccess,
-        bInheritHandle,
-        NULL,
-        phEvent
-        );
-
-    if (NO_ERROR != palError)
-    {
-        goto InternalOpenEventExit;
-    }
-
-InternalOpenEventExit:
-
-    if (NULL != pobjEvent)
-    {
-        pobjEvent->ReleaseReference(pthr);
-    }
-
-    LOGEXIT("InternalOpenEvent returns %d\n", palError);
-    
-    return palError;
-}
-

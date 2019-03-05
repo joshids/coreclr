@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 /*++
 
@@ -95,11 +94,6 @@ namespace CorUnix
         );
 
     PAL_ERROR
-    InitializeGlobalThreadData(
-        void
-        );
-
-    PAL_ERROR
     CreateThreadData(
         CPalThread **ppThread
         );
@@ -115,27 +109,15 @@ namespace CorUnix
     InitializeEndingThreadsData(
         void
         );
+
+    BOOL
+    GetThreadTimesInternal(
+        IN HANDLE hThread,
+        OUT LPFILETIME lpKernelTime,
+        OUT LPFILETIME lpUserTime);
         
 #ifdef FEATURE_PAL_SXS
 #if HAVE_MACH_EXCEPTIONS
-    // Structure used to record all Mach exception handlers registered on a given thread at a specific point
-    // in time.
-    struct CThreadMachExceptionHandlerNode
-    {
-        // Maximum number of exception ports we hook.  Must be the count
-        // of all bits set in the exception masks defined in machexception.h.
-        static const int s_nPortsMax = 6;
-
-        // Saved exception ports, exactly as returned by
-        // thread_swap_exception_ports.
-        int m_nPorts;
-        exception_mask_t m_masks[s_nPortsMax];
-        exception_handler_t m_handlers[s_nPortsMax];
-        exception_behavior_t m_behaviors[s_nPortsMax];
-        thread_state_flavor_t m_flavors[s_nPortsMax];
-        
-        CThreadMachExceptionHandlerNode() : m_nPorts(-1) {}
-    };
 
     // Structure used to return data about a single handler to a caller.
     struct MachExceptionHandler
@@ -146,37 +128,35 @@ namespace CorUnix
         thread_state_flavor_t m_flavor;
     };
 
-    // Class abstracting previousy registered Mach exception handlers for a thread.
-    class CThreadMachExceptionHandlers
+    // Class abstracting previously registered Mach exception handlers for a thread.
+    struct CThreadMachExceptionHandlers
     {
     public:
-        // Returns a pointer to the handler node that should be initialized next. The first time this is
-        // called for a thread the bottom node will be returned. Thereafter the top node will be returned.
-        // Also returns the Mach exception port that should be registered.
-        CThreadMachExceptionHandlerNode *GetNodeForInitialization(mach_port_t *pExceptionPort);
+        // Maximum number of exception ports we hook.  Must be the count
+        // of all bits set in the exception masks defined in machexception.h.
+        static const int s_nPortsMax = 6;
 
-        // Returns a pointer to the handler node for cleanup. This will always be the bottom node. This isn't
-        // really the right algorithm (because there isn't one). There are lots of reasonable scenarios where
-        // we will break chaining by removing our handler from a thread (by registering two handler ports we
-        // can support a lot more chaining scenarios but we can't pull the same sort of trick when
-        // unregistering, in particular we have two sets of chain back handlers and no way to reach into other
-        // components and alter what their chain-back information is).
-        CThreadMachExceptionHandlerNode *GetNodeForCleanup() { return &m_bottom; }
+        // Saved exception ports, exactly as returned by
+        // thread_swap_exception_ports.
+        mach_msg_type_number_t m_nPorts;
+        exception_mask_t m_masks[s_nPortsMax];
+        exception_handler_t m_handlers[s_nPortsMax];
+        exception_behavior_t m_behaviors[s_nPortsMax];
+        thread_state_flavor_t m_flavors[s_nPortsMax];
+        
+        CThreadMachExceptionHandlers() : 
+            m_nPorts(-1)
+        {
+        }
 
         // Get handler details for a given type of exception. If successful the structure pointed at by
-        // pHandler is filled in and true is returned. Otherwise false is returned. The fTopException argument
-        // indicates whether the handlers found at the time of a call to ICLRRuntimeHost2::RegisterMacEHPort()
-        // should be searched (if not, or a handler is not found there, we'll fallback to looking at the
-        // handlers discovered at the point when the CLR first saw this thread).
-        bool GetHandler(exception_type_t eException, bool fTopException, MachExceptionHandler *pHandler);
+        // pHandler is filled in and true is returned. Otherwise false is returned.
+        bool GetHandler(exception_type_t eException, MachExceptionHandler *pHandler);
 
     private:
         // Look for a handler for the given exception within the given handler node. Return its index if
         // successful or -1 otherwise.
-        int GetIndexOfHandler(exception_mask_t bmExceptionMask, CThreadMachExceptionHandlerNode *pNode);
-
-        CThreadMachExceptionHandlerNode m_top;
-        CThreadMachExceptionHandlerNode m_bottom;
+        int GetIndexOfHandler(exception_mask_t bmExceptionMask);
     };
 #endif // HAVE_MACH_EXCEPTIONS
 #endif // FEATURE_PAL_SXS
@@ -227,7 +207,7 @@ namespace CorUnix
     {
         friend
             PAL_ERROR
-            CorUnix::InternalCreateThread(
+            InternalCreateThread(
                 CPalThread *,
                 LPSECURITY_ATTRIBUTES,
                 DWORD,
@@ -258,12 +238,6 @@ namespace CorUnix
 
         friend
             PAL_ERROR
-            InitializeGlobalThreadData(
-                void
-                );
-
-        friend
-            PAL_ERROR
             CreateThreadData(
                 CPalThread **ppThread
                 );
@@ -275,7 +249,7 @@ namespace CorUnix
                 CPalThread *pNewThread,
                 HANDLE *phThread
                 );
-        
+
     private:
 
         CPalThread *m_pNext;
@@ -318,6 +292,10 @@ namespace CorUnix
         mach_port_t m_machPortSelf;
 #endif 
 
+        // > 0 when there is an exception holder which causes h/w
+        // exceptions to be sent down the C++ exception chain.
+        int m_hardwareExceptionHolderCount;
+
         //
         // Start info
         //
@@ -346,13 +324,8 @@ namespace CorUnix
         void* m_stackBase;
         // Limit address of the stack of this thread
         void* m_stackLimit;
-
-        // The default stack size of a newly created thread (currently 256KB)
-        // when the dwStackSize paramter of PAL_CreateThread()
-        // is zero. This value can be set by setting the
-        // environment variable PAL_THREAD_DEFAULT_STACK_SIZE
-        // (the value should be in bytes and in hex).
-        static DWORD s_dwDefaultThreadStackSize; 
+        // Signal handler's alternate stack to help with stack overflow
+        void* m_alternateStack;
 
         //
         // The thread entry routine (called from InternalCreateThread)
@@ -406,6 +379,7 @@ namespace CorUnix
 #if HAVE_MACH_THREADS
             m_machPortSelf(0),
 #endif            
+            m_hardwareExceptionHolderCount(0),
             m_lpStartAddress(NULL),
             m_lpStartParameter(NULL),
             m_bCreateSuspended(FALSE),
@@ -415,7 +389,8 @@ namespace CorUnix
             m_fStartStatus(FALSE),
             m_fStartStatusSet(FALSE),
             m_stackBase(NULL),
-            m_stackLimit(NULL)
+            m_stackLimit(NULL),
+            m_alternateStack(NULL)
 #ifdef FEATURE_PAL_SXS
           , m_fInPal(TRUE)
 #endif // FEATURE_PAL_SXS
@@ -572,6 +547,24 @@ namespace CorUnix
         };
 #endif
 
+        bool 
+        IsHardwareExceptionsEnabled()
+        {
+            return m_hardwareExceptionHolderCount > 0;
+        }
+
+        inline void
+        IncrementHardwareExceptionHolderCount()
+        {
+            ++m_hardwareExceptionHolderCount;
+        }
+
+        inline void
+        DecrementHardwareExceptionHolderCount()
+        {
+            --m_hardwareExceptionHolderCount;
+        }
+
         LPTHREAD_START_ROUTINE
         GetStartAddress(
             void
@@ -644,6 +637,18 @@ namespace CorUnix
             m_pNext = pNext;
         };
 
+#if !HAVE_MACH_EXCEPTIONS
+        BOOL
+        EnsureSignalAlternateStack(
+            void
+            );
+
+        void 
+        FreeSignalAlternateStack(
+            void
+            );
+#endif // !HAVE_MACH_EXCEPTIONS
+
         void
         AddThreadReference(
             void
@@ -654,17 +659,31 @@ namespace CorUnix
             void
             );
 
-        // Get base address of this thread's stack
-        // Can be called only for the current thread.
+        // Get base address of the current thread's stack
+        static
         void *
         GetStackBase(
             void
             );
 
-        // Get limit address of this thread's stack
+        // Get cached base address of this thread's stack
         // Can be called only for the current thread.
         void *
+        GetCachedStackBase(
+            void
+            );
+
+        // Get limit address of the current thread's stack
+        static
+        void *
         GetStackLimit(
+            void
+            );
+
+        // Get cached limit address of this thread's stack
+        // Can be called only for the current thread.
+        void *
+        GetCachedStackLimit(
             void
             );
         
@@ -808,7 +827,7 @@ Abstract:
   linux we need to use gettid(). 
 
 --*/
-#if defined(__LINUX__)
+#if defined(__linux__)
 #define THREADSilentGetCurrentThreadId() (SIZE_T)syscall(SYS_gettid)
 #elif defined(__APPLE__)
 inline SIZE_T THREADSilentGetCurrentThreadId() {
@@ -816,6 +835,16 @@ inline SIZE_T THREADSilentGetCurrentThreadId() {
     pthread_threadid_np(pthread_self(), &tid);
     return (SIZE_T)tid;
 }
+#elif defined(__FreeBSD__)
+#include <sys/thr.h>
+inline SIZE_T THREADSilentGetCurrentThreadId() {
+    long tid;
+    thr_self(&tid);
+    return (SIZE_T)tid;
+}
+#elif defined(__NetBSD__)
+#include <lwp.h>
+#define THREADSilentGetCurrentThreadId() (SIZE_T)_lwp_self()
 #else
 #define THREADSilentGetCurrentThreadId() (SIZE_T)pthread_self()
 #endif

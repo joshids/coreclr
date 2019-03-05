@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 // 
 // CRST.H
 //
@@ -106,27 +105,25 @@ extern DWORD g_fEEShutDown;
 // Total count of Crst lock  of the type (Shutdown) that are currently in use
 extern Volatile<LONG> g_ShutdownCrstUsageCount;
 extern Volatile<LONG> g_fForbidEnterEE;
-extern bool g_fFinalizerRunOnShutDown;
 
 // The CRST.
 class CrstBase
 {
-#ifndef CLR_STANDALONE_BINDER
-
 // The following classes and methods violate the requirement that Crst usage be
 // exception-safe, or they satisfy that requirement using techniques other than
 // Holder objects:
 friend class Thread;
 friend class ThreadStore;
 friend class ThreadSuspend;
-friend class ListLock;
-friend class ListLockEntry;
+template <typename ELEMENT>
+friend class ListLockBase;
+template <typename ELEMENT>
+friend class ListLockEntryBase;
 //friend class CExecutionEngine;
 friend struct SavedExceptionInfo;
 friend void EEEnterCriticalSection(CRITSEC_COOKIE cookie);
 friend void EELeaveCriticalSection(CRITSEC_COOKIE cookie);
-friend class ReJitPublishMethodHolder;
-friend class ReJitPublishMethodTableHolder;
+friend class CodeVersionManager;
 
 friend class Debugger;
 friend class Crst;
@@ -186,13 +183,13 @@ private:
     void SpinEnter();
 
 #ifndef DACCESS_COMPILE
-    DEBUG_NOINLINE static void AcquireLock(CrstBase *c) PUB {
+    DEBUG_NOINLINE static void AcquireLock(CrstBase *c) {
         WRAPPER_NO_CONTRACT;
         ANNOTATION_SPECIAL_HOLDER_CALLER_NEEDS_DYNAMIC_CONTRACT;
         c->Enter(); 
     }
 
-    DEBUG_NOINLINE static void ReleaseLock(CrstBase *c) PUB { 
+    DEBUG_NOINLINE static void ReleaseLock(CrstBase *c) {
         WRAPPER_NO_CONTRACT;
         ANNOTATION_SPECIAL_HOLDER_CALLER_NEEDS_DYNAMIC_CONTRACT;
         c->Leave(); 
@@ -205,8 +202,8 @@ private:
     // Argument: 
     //     input: c - the lock to be checked. 
     // Note: Throws
-    static void AcquireLock(CrstBase * c) PUB
-    { 
+    static void AcquireLock(CrstBase * c)
+    {
         SUPPORTS_DAC;
         if (c->GetEnterCount() != 0) 
         {
@@ -214,8 +211,8 @@ private:
         }
     };
 
-    static void ReleaseLock(CrstBase *c) PUB
-    { 
+    static void ReleaseLock(CrstBase *c)
+    {
         SUPPORTS_DAC;
     };
 #endif // DACCESS_COMPILE
@@ -261,14 +258,14 @@ public:
 #ifdef CROSSGEN_COMPILE
         return TRUE;
 #else
-        return m_holderthreadid.IsSameThread();
+        return m_holderthreadid.IsCurrentThread();
 #endif
     }
     
     CrstBase *GetThreadsOwnedCrsts();
     void SetThreadsOwnedCrsts(CrstBase *pCrst);
 
-    __declspec(noinline) EEThreadId GetHolderThreadId()
+    NOINLINE EEThreadId GetHolderThreadId()
     {
         LIMITED_METHOD_CONTRACT;
         return m_holderthreadid;
@@ -299,13 +296,8 @@ protected:
     void DebugDestroy();
 #endif
 
-#endif // CLR_STANDALONE_BINDER
-
     union {
         CRITICAL_SECTION    m_criticalsection;
-#ifdef FEATURE_INCLUDE_ALL_INTERFACES
-        IHostCrst          *m_pHostCrst;
-#endif // FEATURE_INCLUDE_ALL_INTERFACES
     };
 
     typedef enum
@@ -336,8 +328,6 @@ protected:
     void                PreEnter ();
     void                PreLeave  ();
 #endif //_DEBUG
-    
-#ifndef CLR_STANDALONE_BINDER
     
 private:
 
@@ -401,35 +391,28 @@ private:
         inline ~CrstHolder()
         {
             WRAPPER_NO_CONTRACT;
-
-            VALIDATE_HOLDER_STACK_CONSUMPTION_FOR_TYPE(HSV_ValidateMinimumStackReq);
             ReleaseLock(m_pCrst);
         }
     };
 
     // Note that the holders for CRSTs are used in extremely low stack conditions. Because of this, they 
     // aren't allowed to use more than HOLDER_CODE_MINIMUM_STACK_LIMIT pages of stack.
-    typedef DacHolder<CrstBase *, CrstBase::AcquireLock, CrstBase::ReleaseLock, 0, CompareDefault, HSV_ValidateMinimumStackReq> CrstHolderWithState;
+    typedef DacHolder<CrstBase *, CrstBase::AcquireLock, CrstBase::ReleaseLock, 0, CompareDefault> CrstHolderWithState;
 
     // We have some situations where we're already holding a lock, and we need to release and reacquire the lock across a window.
     // This is a dangerous construct because the backout code can block.
     // Generally, it's better to use a regular CrstHolder, and then use the Release() / Acquire() methods on it.
     // This just exists to convert legacy OS Critical Section patterns over to holders.
-    typedef DacHolder<CrstBase *, CrstBase::ReleaseLock, CrstBase::AcquireLock, 0, CompareDefault, HSV_ValidateMinimumStackReq> UnsafeCrstInverseHolder;
-
-#endif // CLR_STANDALONE_BINDER
+    typedef DacHolder<CrstBase *, CrstBase::ReleaseLock, CrstBase::AcquireLock, 0, CompareDefault> UnsafeCrstInverseHolder;
 };
 
-#ifndef CLR_STANDALONE_BINDER
 typedef CrstBase::CrstHolder CrstHolder;
 typedef CrstBase::CrstHolderWithState CrstHolderWithState;
-#endif // CLR_STANDALONE_BINDER
 
 
 // The CRST.
 class Crst : public CrstBase
 {
-#ifndef CLR_STANDALONE_BINDER
 public:
     void *operator new(size_t size)
     {
@@ -478,8 +461,6 @@ public:
     Crst() {
         LIMITED_METHOD_CONTRACT;
     }
-
-#endif // CLR_STANDALONE_BINDER
 };
 
 typedef DPTR(Crst) PTR_Crst;
@@ -488,7 +469,6 @@ typedef DPTR(Crst) PTR_Crst;
    initialized memory */
 class CrstStatic : public CrstBase
 {
-#ifndef CLR_STANDALONE_BINDER
 public:
     VOID Init(CrstType crstType, CrstFlags flags = CRST_DEFAULT)
     {
@@ -523,13 +503,11 @@ public:
 
         return fSuccess;
     }
-#endif // CLR_STANDALONE_BINDER
 };
 
 /* to be used as regular variable when a explicit call to Init method is needed */
 class CrstExplicitInit : public CrstStatic
 {
-#ifndef CLR_STANDALONE_BINDER
 public:
     CrstExplicitInit() {
         m_dwFlags = 0;
@@ -539,10 +517,8 @@ public:
         Destroy();
 #endif
     }   
-#endif // CLR_STANDALONE_BINDER
 };
 
-#ifndef CLR_STANDALONE_BINDER
 __inline BOOL IsOwnerOfCrst(LPVOID lock)
 {
     WRAPPER_NO_CONTRACT;
@@ -556,12 +532,8 @@ __inline BOOL IsOwnerOfCrst(LPVOID lock)
 #endif
 }
 
-#endif // CLR_STANDALONE_BINDER
-
 #ifdef TEST_DATA_CONSISTENCY
 // used for test purposes. Determines if a crst is held. 
 void DebugTryCrst(CrstBase * pLock);
 #endif
 #endif // __crst_h__
-
-

@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 // precode.cpp
 //
 
@@ -14,6 +13,10 @@
 
 #ifdef FEATURE_PREJIT
 #include "compile.h"
+#endif
+
+#ifdef FEATURE_PERFMAP
+#include "perfmap.h"
 #endif
 
 //==========================================================================================
@@ -29,9 +32,6 @@ BOOL Precode::IsValidType(PrecodeType t)
 #ifdef HAS_NDIRECT_IMPORT_PRECODE
     case PRECODE_NDIRECT_IMPORT:
 #endif // HAS_NDIRECT_IMPORT_PRECODE
-#ifdef HAS_REMOTING_PRECODE
-    case PRECODE_REMOTING:
-#endif // HAS_REMOTING_PRECODE
 #ifdef HAS_FIXUP_PRECODE
     case PRECODE_FIXUP:
 #endif // HAS_FIXUP_PRECODE
@@ -57,10 +57,6 @@ SIZE_T Precode::SizeOf(PrecodeType t)
     case PRECODE_NDIRECT_IMPORT:
         return sizeof(NDirectImportPrecode);
 #endif // HAS_NDIRECT_IMPORT_PRECODE
-#ifdef HAS_REMOTING_PRECODE
-    case PRECODE_REMOTING:
-        return sizeof(RemotingPrecode);
-#endif // HAS_REMOTING_PRECODE
 #ifdef HAS_FIXUP_PRECODE
     case PRECODE_FIXUP:
         return sizeof(FixupPrecode);
@@ -91,11 +87,6 @@ PCODE Precode::GetTarget()
     case PRECODE_STUB:
         target = AsStubPrecode()->GetTarget();
         break;
-#ifdef HAS_REMOTING_PRECODE
-    case PRECODE_REMOTING:
-        target = AsRemotingPrecode()->GetTarget();
-        break;
-#endif // HAS_REMOTING_PRECODE
 #ifdef HAS_FIXUP_PRECODE
     case PRECODE_FIXUP:
         target = AsFixupPrecode()->GetTarget();
@@ -119,7 +110,6 @@ MethodDesc* Precode::GetMethodDesc(BOOL fSpeculative /*= FALSE*/)
     CONTRACTL {
         NOTHROW;
         GC_NOTRIGGER;
-        SO_TOLERANT;
         SUPPORTS_DAC;
     } CONTRACTL_END;
 
@@ -136,11 +126,6 @@ MethodDesc* Precode::GetMethodDesc(BOOL fSpeculative /*= FALSE*/)
         pMD = AsNDirectImportPrecode()->GetMethodDesc();
         break;
 #endif // HAS_NDIRECT_IMPORT_PRECODE
-#ifdef HAS_REMOTING_PRECODE
-    case PRECODE_REMOTING:
-        pMD = AsRemotingPrecode()->GetMethodDesc();
-        break;
-#endif // HAS_REMOTING_PRECODE
 #ifdef HAS_FIXUP_PRECODE
     case PRECODE_FIXUP:
         pMD = AsFixupPrecode()->GetMethodDesc();
@@ -181,7 +166,6 @@ BOOL Precode::IsCorrectMethodDesc(MethodDesc *  pMD)
     {
         NOTHROW;
         GC_NOTRIGGER;
-        SO_TOLERANT;
         MODE_ANY;
     }
     CONTRACTL_END;
@@ -212,7 +196,6 @@ BOOL Precode::IsPointingToPrestub(PCODE target)
     {
         NOTHROW;
         GC_NOTRIGGER;
-        SO_TOLERANT;
         MODE_ANY;
     }
     CONTRACTL_END;
@@ -248,7 +231,6 @@ PCODE Precode::TryToSkipFixupPrecode(PCODE addr)
     CONTRACTL {
         NOTHROW;
         GC_NOTRIGGER;
-        SO_TOLERANT;
     } CONTRACTL_END;
 
     PCODE pTarget = NULL;
@@ -301,18 +283,54 @@ Precode* Precode::GetPrecodeForTemporaryEntryPoint(TADDR temporaryEntryPoints, i
     return PTR_Precode(temporaryEntryPoints + index * oneSize);
 }
 
-SIZE_T Precode::SizeOfTemporaryEntryPoints(PrecodeType t, int count)
+SIZE_T Precode::SizeOfTemporaryEntryPoints(PrecodeType t, bool preallocateJumpStubs, int count)
 {
     WRAPPER_NO_CONTRACT;
     SUPPORTS_DAC;
+
 #ifdef HAS_FIXUP_PRECODE_CHUNKS
     if (t == PRECODE_FIXUP)
     {
-        return count * (sizeof(FixupPrecode) + sizeof(PCODE)) + sizeof(PTR_MethodDesc);
+        SIZE_T size = count * sizeof(FixupPrecode) + sizeof(PTR_MethodDesc);
+
+#ifdef FIXUP_PRECODE_PREALLOCATE_DYNAMIC_METHOD_JUMP_STUBS
+        if (preallocateJumpStubs)
+        {
+            // For dynamic methods, space for jump stubs is allocated along with the precodes as part of the temporary entry
+            // points block. The first jump stub begins immediately after the PTR_MethodDesc. Aside from a jump stub per
+            // precode, an additional shared precode fixup jump stub is also allocated (see
+            // GetDynamicMethodPrecodeFixupJumpStub()).
+            size += ((SIZE_T)count + 1) * BACK_TO_BACK_JUMP_ALLOCATE_SIZE;
+        }
+#else // !FIXUP_PRECODE_PREALLOCATE_DYNAMIC_METHOD_JUMP_STUBS
+        _ASSERTE(!preallocateJumpStubs);
+#endif // FIXUP_PRECODE_PREALLOCATE_DYNAMIC_METHOD_JUMP_STUBS
+
+        return size;
+    }
+    else
+    {
+        _ASSERTE(!preallocateJumpStubs);
     }
 #endif
     SIZE_T oneSize = SizeOfTemporaryEntryPoint(t);
     return count * oneSize;
+}
+
+SIZE_T Precode::SizeOfTemporaryEntryPoints(TADDR temporaryEntryPoints, int count)
+{
+    WRAPPER_NO_CONTRACT;
+    SUPPORTS_DAC;
+
+    PrecodeType precodeType = PTR_Precode(temporaryEntryPoints)->GetType();
+#ifdef FIXUP_PRECODE_PREALLOCATE_DYNAMIC_METHOD_JUMP_STUBS
+    bool preallocateJumpStubs =
+        precodeType == PRECODE_FIXUP &&
+        ((PTR_MethodDesc)((PTR_FixupPrecode)temporaryEntryPoints)->GetMethodDesc())->IsLCGMethod();
+#else // !FIXUP_PRECODE_PREALLOCATE_DYNAMIC_METHOD_JUMP_STUBS
+    bool preallocateJumpStubs = false;
+#endif // FIXUP_PRECODE_PREALLOCATE_DYNAMIC_METHOD_JUMP_STUBS
+    return SizeOfTemporaryEntryPoints(precodeType, preallocateJumpStubs, count);
 }
 
 #ifndef DACCESS_COMPILE
@@ -365,11 +383,6 @@ void Precode::Init(PrecodeType t, MethodDesc* pMD, LoaderAllocator *pLoaderAlloc
         ((NDirectImportPrecode*)this)->Init(pMD, pLoaderAllocator);
         break;
 #endif // HAS_NDIRECT_IMPORT_PRECODE
-#ifdef HAS_REMOTING_PRECODE
-    case PRECODE_REMOTING:
-        ((RemotingPrecode*)this)->Init(pMD, pLoaderAllocator);
-        break;
-#endif // HAS_REMOTING_PRECODE
 #ifdef HAS_FIXUP_PRECODE
     case PRECODE_FIXUP:
         ((FixupPrecode*)this)->Init(pMD, pLoaderAllocator);
@@ -388,14 +401,41 @@ void Precode::Init(PrecodeType t, MethodDesc* pMD, LoaderAllocator *pLoaderAlloc
     _ASSERTE(IsValidType(GetType()));
 }
 
-BOOL Precode::SetTargetInterlocked(PCODE target)
+void Precode::ResetTargetInterlocked()
 {
     WRAPPER_NO_CONTRACT;
+
+    PrecodeType precodeType = GetType();
+    switch (precodeType)
+    {
+        case PRECODE_STUB:
+            AsStubPrecode()->ResetTargetInterlocked();
+            break;
+
+#ifdef HAS_FIXUP_PRECODE
+        case PRECODE_FIXUP:
+            AsFixupPrecode()->ResetTargetInterlocked();
+            break;
+#endif // HAS_FIXUP_PRECODE
+
+        default:
+            UnexpectedPrecodeType("Precode::ResetTargetInterlocked", precodeType);
+            break;
+    }
+
+    // Although executable code is modified on x86/x64, a FlushInstructionCache() is not necessary on those platforms due to the
+    // interlocked operation above (see ClrFlushInstructionCache())
+}
+
+BOOL Precode::SetTargetInterlocked(PCODE target, BOOL fOnlyRedirectFromPrestub)
+{
+    WRAPPER_NO_CONTRACT;
+    _ASSERTE(!IsPointingToPrestub(target));
 
     PCODE expected = GetTarget();
     BOOL ret = FALSE;
 
-    if (!IsPointingToPrestub(expected))
+    if (fOnlyRedirectFromPrestub && !IsPointingToPrestub(expected))
         return FALSE;
 
     g_IBCLogger.LogMethodPrecodeWriteAccess(GetMethodDesc());
@@ -406,12 +446,6 @@ BOOL Precode::SetTargetInterlocked(PCODE target)
     case PRECODE_STUB:
         ret = AsStubPrecode()->SetTargetInterlocked(target, expected);
         break;
-
-#ifdef HAS_REMOTING_PRECODE
-    case PRECODE_REMOTING:
-        ret = AsRemotingPrecode()->SetTargetInterlocked(target, expected);
-        break;
-#endif // HAS_REMOTING_PRECODE
 
 #ifdef HAS_FIXUP_PRECODE
     case PRECODE_FIXUP:
@@ -430,17 +464,9 @@ BOOL Precode::SetTargetInterlocked(PCODE target)
         break;
     }
 
-    //
-    // SetTargetInterlocked does not modify code on ARM so the flush instruction cache is
-    // not necessary.
-    //
-#if !defined(_TARGET_ARM_)
-    if (ret) {
-        FlushInstructionCache(GetCurrentProcess(),this,SizeOf());
-    }
-#endif
+    // Although executable code is modified on x86/x64, a FlushInstructionCache() is not necessary on those platforms due to the
+    // interlocked operation above (see ClrFlushInstructionCache())
 
-    _ASSERTE(!IsPointingToPrestub());
     return ret;
 }
 
@@ -449,8 +475,8 @@ void Precode::Reset()
     WRAPPER_NO_CONTRACT;
 
     MethodDesc* pMD = GetMethodDesc();
-    Init(GetType(), pMD, pMD->GetLoaderAllocatorForCode());
-    FlushInstructionCache(GetCurrentProcess(),this,SizeOf());
+    Init(GetType(), pMD, pMD->GetLoaderAllocator());
+    ClrFlushInstructionCache(this, SizeOf());
 }
 
 /* static */ 
@@ -464,22 +490,70 @@ TADDR Precode::AllocateTemporaryEntryPoints(MethodDescChunk *  pChunk,
 
     int count = pChunk->GetCount();
 
+    // Determine eligibility for tiered compilation
+#ifdef HAS_COMPACT_ENTRYPOINTS
+    bool hasMethodDescVersionableWithPrecode = false;
+#endif
+    {
+        MethodDesc *pMD = pChunk->GetFirstMethodDesc();
+        for (int i = 0; i < count; ++i)
+        {
+            if (pMD->DetermineAndSetIsEligibleForTieredCompilation())
+            {
+                _ASSERTE(pMD->IsEligibleForTieredCompilation());
+                _ASSERTE(!pMD->IsVersionableWithPrecode() || pMD->RequiresStableEntryPoint());
+            }
+
+#ifdef HAS_COMPACT_ENTRYPOINTS
+            if (pMD->IsVersionableWithPrecode())
+            {
+                _ASSERTE(pMD->RequiresStableEntryPoint());
+                hasMethodDescVersionableWithPrecode = true;
+            }
+#endif
+
+            pMD = (MethodDesc *)(dac_cast<TADDR>(pMD) + pMD->SizeOf());
+        }
+    }
+
     PrecodeType t = PRECODE_STUB;
+    bool preallocateJumpStubs = false;
 
 #ifdef HAS_FIXUP_PRECODE
     // Default to faster fixup precode if possible
     if (!pFirstMD->RequiresMethodDescCallingConvention(count > 1))
     {
         t = PRECODE_FIXUP;
+
+#ifdef FIXUP_PRECODE_PREALLOCATE_DYNAMIC_METHOD_JUMP_STUBS
+        if (pFirstMD->IsLCGMethod())
+        {
+            preallocateJumpStubs = true;
+        }
+#endif // FIXUP_PRECODE_PREALLOCATE_DYNAMIC_METHOD_JUMP_STUBS
+    }
+    else
+    {
+        _ASSERTE(!pFirstMD->IsLCGMethod());
     }
 #endif // HAS_FIXUP_PRECODE
 
-    SIZE_T totalSize = SizeOfTemporaryEntryPoints(t, count);
+    SIZE_T totalSize = SizeOfTemporaryEntryPoints(t, preallocateJumpStubs, count);
 
 #ifdef HAS_COMPACT_ENTRYPOINTS
     // Note that these are just best guesses to save memory. If we guessed wrong,
     // we will allocate a new exact type of precode in GetOrCreatePrecode.
-    BOOL fForcedPrecode = pFirstMD->RequiresStableEntryPoint(count > 1);
+    BOOL fForcedPrecode = hasMethodDescVersionableWithPrecode || pFirstMD->RequiresStableEntryPoint(count > 1);
+
+#ifdef _TARGET_ARM_
+    if (pFirstMD->RequiresMethodDescCallingConvention(count > 1)
+        || count >= MethodDescChunk::GetCompactEntryPointMaxCount ())
+    {
+        // We do not pass method desc on scratch register
+        fForcedPrecode = TRUE;
+    }
+#endif // _TARGET_ARM_
+
     if (!fForcedPrecode && (totalSize > MethodDescChunk::SizeOfCompactEntryPoints(count)))
         return NULL;
 #endif
@@ -489,11 +563,31 @@ TADDR Precode::AllocateTemporaryEntryPoints(MethodDescChunk *  pChunk,
 #ifdef HAS_FIXUP_PRECODE_CHUNKS
     if (t == PRECODE_FIXUP)
     {
+#ifdef FIXUP_PRECODE_PREALLOCATE_DYNAMIC_METHOD_JUMP_STUBS
+        PCODE precodeFixupJumpStub = NULL;
+        if (preallocateJumpStubs)
+        {
+            // Emit the jump for the precode fixup jump stub now. This jump stub immediately follows the MethodDesc (see
+            // GetDynamicMethodPrecodeFixupJumpStub()).
+            precodeFixupJumpStub = temporaryEntryPoints + count * sizeof(FixupPrecode) + sizeof(PTR_MethodDesc);
+#ifndef CROSSGEN_COMPILE
+            emitBackToBackJump((LPBYTE)precodeFixupJumpStub, (LPVOID)GetEEFuncEntryPoint(PrecodeFixupThunk));
+#endif // !CROSSGEN_COMPILE
+        }
+#endif // FIXUP_PRECODE_PREALLOCATE_DYNAMIC_METHOD_JUMP_STUBS
+
         TADDR entryPoint = temporaryEntryPoints;
         MethodDesc * pMD = pChunk->GetFirstMethodDesc();
         for (int i = 0; i < count; i++)
         {
             ((FixupPrecode *)entryPoint)->Init(pMD, pLoaderAllocator, pMD->GetMethodDescIndex(), (count - 1) - i);
+
+#ifdef FIXUP_PRECODE_PREALLOCATE_DYNAMIC_METHOD_JUMP_STUBS
+            _ASSERTE(
+                !preallocateJumpStubs ||
+                !pMD->IsLCGMethod() ||
+                ((FixupPrecode *)entryPoint)->GetDynamicMethodPrecodeFixupJumpStub() == precodeFixupJumpStub);
+#endif // FIXUP_PRECODE_PREALLOCATE_DYNAMIC_METHOD_JUMP_STUBS
 
             _ASSERTE((Precode *)entryPoint == GetPrecodeForTemporaryEntryPoint(temporaryEntryPoints, i));
             entryPoint += sizeof(FixupPrecode);
@@ -501,6 +595,9 @@ TADDR Precode::AllocateTemporaryEntryPoints(MethodDescChunk *  pChunk,
             pMD = (MethodDesc *)(dac_cast<TADDR>(pMD) + pMD->SizeOf());
         }
 
+#ifdef FEATURE_PERFMAP
+        PerfMap::LogStubs(__FUNCTION__, "PRECODE_FIXUP", (PCODE)temporaryEntryPoints, count * sizeof(FixupPrecode));
+#endif
         ClrFlushInstructionCache((LPVOID)temporaryEntryPoints, count * sizeof(FixupPrecode));
 
         return temporaryEntryPoints;
@@ -519,6 +616,10 @@ TADDR Precode::AllocateTemporaryEntryPoints(MethodDescChunk *  pChunk,
 
         pMD = (MethodDesc *)(dac_cast<TADDR>(pMD) + pMD->SizeOf());
     }
+
+#ifdef FEATURE_PERFMAP
+    PerfMap::LogStubs(__FUNCTION__, "PRECODE_STUB", (PCODE)temporaryEntryPoints, count * oneSize);
+#endif
 
     ClrFlushInstructionCache((LPVOID)temporaryEntryPoints, count * oneSize);
 
@@ -572,7 +673,7 @@ void Precode::Save(DataImage *image)
 #endif
 
 #if defined(_TARGET_X86_) || defined(_TARGET_AMD64_)
-    // StubPrecode and RemotingPrecode may have straddlers (relocations crossing pages) on x86 and x64. We need 
+    // StubPrecode may have straddlers (relocations crossing pages) on x86 and x64. We need 
     // to insert padding to eliminate it. To do that, we need to save these using custom ZapNode that can only
     // be implemented in dataimage.cpp or zapper due to factoring of the header files.
     BOOL fIsPrebound = IsPrebound(image);
@@ -620,11 +721,6 @@ void Precode::Fixup(DataImage *image, MethodDesc * pMD)
         AsNDirectImportPrecode()->Fixup(image);
         break;
 #endif // HAS_NDIRECT_IMPORT_PRECODE
-#ifdef HAS_REMOTING_PRECODE
-    case PRECODE_REMOTING:
-        AsRemotingPrecode()->Fixup(image, pCodeNode);
-        break;
-#endif // HAS_REMOTING_PRECODE
 #ifdef HAS_FIXUP_PRECODE
     case PRECODE_FIXUP:
         AsFixupPrecode()->Fixup(image, pMD);
@@ -641,19 +737,7 @@ BOOL Precode::IsPrebound(DataImage *image)
 {
     WRAPPER_NO_CONTRACT;
 
-#ifdef HAS_REMOTING_PRECODE
-    // This will make sure that when IBC logging is on, the precode goes thru prestub.
-    if (GetAppDomain()->ToCompilationDomain()->m_fForceInstrument)
-        return FALSE;
-
-    if (GetType() != PRECODE_REMOTING)
-        return FALSE;
-
-    // Prebind the remoting precode if possible
-    return image->CanDirectCall(GetMethodDesc(), CORINFO_ACCESS_THIS);
-#else
     return FALSE;
-#endif
 }
 
 void Precode::SaveChunk::Save(DataImage* image, MethodDesc * pMD)

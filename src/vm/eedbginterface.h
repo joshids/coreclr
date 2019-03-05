@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //
 // COM+99 EE to Debugger Interface Header
 //
@@ -75,8 +74,6 @@ public:
 
 #ifndef DACCESS_COMPILE
 
-    virtual void SetEEThreadPtr(VOID* newPtr) = 0;
-
     virtual StackWalkAction StackWalkFramesEx(Thread* pThread,
                                               PREGDISPLAY pRD,
                                               PSTACKWALKFRAMESCALLBACK pCallback,
@@ -127,21 +124,26 @@ public:
 
     virtual T_CONTEXT *GetThreadFilterContext(Thread *thread) = 0;
 
-    virtual VOID *GetThreadDebuggerWord(Thread *thread) = 0;
+#ifdef FEATURE_INTEROP_DEBUGGING
+    virtual VOID *GetThreadDebuggerWord() = 0;
 
-    virtual void SetThreadDebuggerWord(Thread *thread,
-                                       VOID *dw) = 0;
+    virtual void SetThreadDebuggerWord(VOID *dw) = 0;
+#endif
 
     virtual BOOL IsManagedNativeCode(const BYTE *address) = 0;
 
 #endif // #ifndef DACCESS_COMPILE
 
+    virtual PCODE GetNativeCodeStartAddress(PCODE address) = 0;
+
     virtual MethodDesc *GetNativeCodeMethodDesc(const PCODE address) = 0;
 
 #ifndef DACCESS_COMPILE
 
+#ifndef USE_GC_INFO_DECODER
     virtual BOOL IsInPrologOrEpilog(const BYTE *address,
                                     size_t* prologSize) = 0;
+#endif
 
     // Determine whether certain native offsets of the specified function are within
     // an exception filter or handler.
@@ -163,7 +165,7 @@ public:
 
     virtual size_t GetFunctionSize(MethodDesc *pFD) = 0;
 
-    virtual const PCODE GetFunctionAddress(MethodDesc *pFD) = 0;
+    virtual PCODE GetFunctionAddress(MethodDesc *pFD) = 0;
 
 #ifndef DACCESS_COMPILE
 
@@ -279,12 +281,10 @@ public:
    virtual void GetRuntimeOffsets(SIZE_T *pTLSIndex,
                                   SIZE_T *pTLSIsSpecialIndex,
                                   SIZE_T *pTLSCantStopIndex,
-                                  SIZE_T *pTLSIndexOfPredefs,
                                   SIZE_T *pEEThreadStateOffset,
                                   SIZE_T *pEEThreadStateNCOffset,
                                   SIZE_T *pEEThreadPGCDisabledOffset,
                                   DWORD  *pEEThreadPGCDisabledValue,
-                                  SIZE_T *pEEThreadDebuggerWordOffset,
                                   SIZE_T *pEEThreadFrameOffset,
                                   SIZE_T *pEEThreadMaxNeededSize,
                                   DWORD  *pEEThreadSteppingStateMask,
@@ -372,6 +372,10 @@ public:
 #ifdef _DEBUG
     virtual void ObjectRefFlush(Thread *pThread) = 0;
 #endif
+#endif
+
+#ifndef DACCESS_COMPILE
+    virtual BOOL AdjustContextForWriteBarrierForDebugger(CONTEXT* context) = 0;
 #endif
 };
 

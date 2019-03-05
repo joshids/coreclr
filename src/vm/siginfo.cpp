@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //
 // siginfo.cpp
 //
@@ -15,16 +14,16 @@
 #include "clsload.hpp"
 #include "vars.hpp"
 #include "excep.h"
-#include "gc.h"
+#include "gcheaputilities.h"
 #include "field.h"
 #include "eeconfig.h"
 #include "runtimehandles.h" // for SignatureNative
-#include "security.h" // for CanSkipVerification
 #include "winwrap.h"
 #include <formattype.h>
 #include "sigbuilder.h"
 #include "../md/compiler/custattr.h"
 #include <corhlprpriv.h>
+#include "argdestination.h"
 
 /*******************************************************************/
 const CorTypeInfo::CorTypeInfoEntry CorTypeInfo::info[ELEMENT_TYPE_MAX] = 
@@ -79,54 +78,54 @@ const ElementTypeInfo gElementTypeInfo[] = {
 // 
 // Note: This table is very similar to the one in file:corTypeInfo.h with these exceptions:
 //  reg column is missing in corTypeInfo.h
-//  ELEMENT_TYPE_VAR, ELEMENT_TYPE_GENERICINST, ELEMENT_TYPE_MVAR ... size -1 vs. sizeof(void*) in corTypeInfo.h
+//  ELEMENT_TYPE_VAR, ELEMENT_TYPE_GENERICINST, ELEMENT_TYPE_MVAR ... size -1 vs. TARGET_POINTER_SIZE in corTypeInfo.h
 //  ELEMENT_TYPE_CMOD_REQD, ELEMENT_TYPE_CMOD_OPT, ELEMENT_TYPE_INTERNAL ... size -1 vs. 0 in corTypeInfo.h
 //  ELEMENT_TYPE_INTERNAL ... GC type is TYPE_GC_NONE vs. TYPE_GC_OTHER in corTypeInfo.h
 // 
-//                    name                         cbsize           gc             reg
-DEFINEELEMENTTYPEINFO(ELEMENT_TYPE_END,            -1,              TYPE_GC_NONE,  0)
-DEFINEELEMENTTYPEINFO(ELEMENT_TYPE_VOID,           0,               TYPE_GC_NONE,  0)
-DEFINEELEMENTTYPEINFO(ELEMENT_TYPE_BOOLEAN,        1,               TYPE_GC_NONE,  1)
-DEFINEELEMENTTYPEINFO(ELEMENT_TYPE_CHAR,           2,               TYPE_GC_NONE,  1)
+//                    name                         cbsize                gc             reg
+DEFINEELEMENTTYPEINFO(ELEMENT_TYPE_END,            -1,                   TYPE_GC_NONE,  0)
+DEFINEELEMENTTYPEINFO(ELEMENT_TYPE_VOID,           0,                    TYPE_GC_NONE,  0)
+DEFINEELEMENTTYPEINFO(ELEMENT_TYPE_BOOLEAN,        1,                    TYPE_GC_NONE,  1)
+DEFINEELEMENTTYPEINFO(ELEMENT_TYPE_CHAR,           2,                    TYPE_GC_NONE,  1)
 
-DEFINEELEMENTTYPEINFO(ELEMENT_TYPE_I1,             1,               TYPE_GC_NONE,  1)
-DEFINEELEMENTTYPEINFO(ELEMENT_TYPE_U1,             1,               TYPE_GC_NONE,  1)
-DEFINEELEMENTTYPEINFO(ELEMENT_TYPE_I2,             2,               TYPE_GC_NONE,  1)
-DEFINEELEMENTTYPEINFO(ELEMENT_TYPE_U2,             2,               TYPE_GC_NONE,  1)
+DEFINEELEMENTTYPEINFO(ELEMENT_TYPE_I1,             1,                    TYPE_GC_NONE,  1)
+DEFINEELEMENTTYPEINFO(ELEMENT_TYPE_U1,             1,                    TYPE_GC_NONE,  1)
+DEFINEELEMENTTYPEINFO(ELEMENT_TYPE_I2,             2,                    TYPE_GC_NONE,  1)
+DEFINEELEMENTTYPEINFO(ELEMENT_TYPE_U2,             2,                    TYPE_GC_NONE,  1)
 
-DEFINEELEMENTTYPEINFO(ELEMENT_TYPE_I4,             4,               TYPE_GC_NONE,  1)
-DEFINEELEMENTTYPEINFO(ELEMENT_TYPE_U4,             4,               TYPE_GC_NONE,  1)
-DEFINEELEMENTTYPEINFO(ELEMENT_TYPE_I8,             8,               TYPE_GC_NONE,  0)
-DEFINEELEMENTTYPEINFO(ELEMENT_TYPE_U8,             8,               TYPE_GC_NONE,  0)
+DEFINEELEMENTTYPEINFO(ELEMENT_TYPE_I4,             4,                    TYPE_GC_NONE,  1)
+DEFINEELEMENTTYPEINFO(ELEMENT_TYPE_U4,             4,                    TYPE_GC_NONE,  1)
+DEFINEELEMENTTYPEINFO(ELEMENT_TYPE_I8,             8,                    TYPE_GC_NONE,  0)
+DEFINEELEMENTTYPEINFO(ELEMENT_TYPE_U8,             8,                    TYPE_GC_NONE,  0)
 
-DEFINEELEMENTTYPEINFO(ELEMENT_TYPE_R4,             4,               TYPE_GC_NONE,  0)
-DEFINEELEMENTTYPEINFO(ELEMENT_TYPE_R8,             8,               TYPE_GC_NONE,  0)
-DEFINEELEMENTTYPEINFO(ELEMENT_TYPE_STRING,         sizeof(LPVOID),  TYPE_GC_REF,   1)
-DEFINEELEMENTTYPEINFO(ELEMENT_TYPE_PTR,            sizeof(LPVOID),  TYPE_GC_NONE,  1)
+DEFINEELEMENTTYPEINFO(ELEMENT_TYPE_R4,             4,                    TYPE_GC_NONE,  0)
+DEFINEELEMENTTYPEINFO(ELEMENT_TYPE_R8,             8,                    TYPE_GC_NONE,  0)
+DEFINEELEMENTTYPEINFO(ELEMENT_TYPE_STRING,         TARGET_POINTER_SIZE,  TYPE_GC_REF,   1)
+DEFINEELEMENTTYPEINFO(ELEMENT_TYPE_PTR,            TARGET_POINTER_SIZE,  TYPE_GC_NONE,  1)
 
-DEFINEELEMENTTYPEINFO(ELEMENT_TYPE_BYREF,          sizeof(LPVOID),  TYPE_GC_BYREF, 1)
-DEFINEELEMENTTYPEINFO(ELEMENT_TYPE_VALUETYPE,      -1,              TYPE_GC_OTHER, 0)
-DEFINEELEMENTTYPEINFO(ELEMENT_TYPE_CLASS,          sizeof(LPVOID),  TYPE_GC_REF,   1)
-DEFINEELEMENTTYPEINFO(ELEMENT_TYPE_VAR,            -1,              TYPE_GC_OTHER, 1)
+DEFINEELEMENTTYPEINFO(ELEMENT_TYPE_BYREF,          TARGET_POINTER_SIZE,  TYPE_GC_BYREF, 1)
+DEFINEELEMENTTYPEINFO(ELEMENT_TYPE_VALUETYPE,      -1,                   TYPE_GC_OTHER, 0)
+DEFINEELEMENTTYPEINFO(ELEMENT_TYPE_CLASS,          TARGET_POINTER_SIZE,  TYPE_GC_REF,   1)
+DEFINEELEMENTTYPEINFO(ELEMENT_TYPE_VAR,            -1,                   TYPE_GC_OTHER, 1)
 
-DEFINEELEMENTTYPEINFO(ELEMENT_TYPE_ARRAY,          sizeof(LPVOID),  TYPE_GC_REF,   1)
+DEFINEELEMENTTYPEINFO(ELEMENT_TYPE_ARRAY,          TARGET_POINTER_SIZE,  TYPE_GC_REF,   1)
 
-DEFINEELEMENTTYPEINFO(ELEMENT_TYPE_GENERICINST,    -1,              TYPE_GC_OTHER, 0)
+DEFINEELEMENTTYPEINFO(ELEMENT_TYPE_GENERICINST,    -1,                   TYPE_GC_OTHER, 0)
 
-DEFINEELEMENTTYPEINFO(ELEMENT_TYPE_TYPEDBYREF,     sizeof(LPVOID)*2,TYPE_GC_BYREF, 0)
-DEFINEELEMENTTYPEINFO(ELEMENT_TYPE_VALUEARRAY_UNSUPPORTED, -1,      TYPE_GC_NONE,  0)
-DEFINEELEMENTTYPEINFO(ELEMENT_TYPE_I,              sizeof(LPVOID),  TYPE_GC_NONE,  1)
-DEFINEELEMENTTYPEINFO(ELEMENT_TYPE_U,              sizeof(LPVOID),  TYPE_GC_NONE,  1)
-DEFINEELEMENTTYPEINFO(ELEMENT_TYPE_R_UNSUPPORTED,  -1,              TYPE_GC_NONE,  0)
+DEFINEELEMENTTYPEINFO(ELEMENT_TYPE_TYPEDBYREF,     TARGET_POINTER_SIZE*2,TYPE_GC_BYREF, 0)
+DEFINEELEMENTTYPEINFO(ELEMENT_TYPE_VALUEARRAY_UNSUPPORTED, -1,           TYPE_GC_NONE,  0)
+DEFINEELEMENTTYPEINFO(ELEMENT_TYPE_I,              TARGET_POINTER_SIZE,  TYPE_GC_NONE,  1)
+DEFINEELEMENTTYPEINFO(ELEMENT_TYPE_U,              TARGET_POINTER_SIZE,  TYPE_GC_NONE,  1)
+DEFINEELEMENTTYPEINFO(ELEMENT_TYPE_R_UNSUPPORTED,  -1,                   TYPE_GC_NONE,  0)
 
-DEFINEELEMENTTYPEINFO(ELEMENT_TYPE_FNPTR,          sizeof(LPVOID),  TYPE_GC_NONE,  1)
-DEFINEELEMENTTYPEINFO(ELEMENT_TYPE_OBJECT,         sizeof(LPVOID),  TYPE_GC_REF,   1)
-DEFINEELEMENTTYPEINFO(ELEMENT_TYPE_SZARRAY,        sizeof(LPVOID),  TYPE_GC_REF,   1)
+DEFINEELEMENTTYPEINFO(ELEMENT_TYPE_FNPTR,          TARGET_POINTER_SIZE,  TYPE_GC_NONE,  1)
+DEFINEELEMENTTYPEINFO(ELEMENT_TYPE_OBJECT,         TARGET_POINTER_SIZE,  TYPE_GC_REF,   1)
+DEFINEELEMENTTYPEINFO(ELEMENT_TYPE_SZARRAY,        TARGET_POINTER_SIZE,  TYPE_GC_REF,   1)
 
-DEFINEELEMENTTYPEINFO(ELEMENT_TYPE_MVAR,           -1,              TYPE_GC_OTHER, 1)
-DEFINEELEMENTTYPEINFO(ELEMENT_TYPE_CMOD_REQD,      -1,              TYPE_GC_NONE,  1)
-DEFINEELEMENTTYPEINFO(ELEMENT_TYPE_CMOD_OPT,       -1,              TYPE_GC_NONE,  1)
-DEFINEELEMENTTYPEINFO(ELEMENT_TYPE_INTERNAL,       -1,              TYPE_GC_NONE,  0)
+DEFINEELEMENTTYPEINFO(ELEMENT_TYPE_MVAR,           -1,                   TYPE_GC_OTHER, 1)
+DEFINEELEMENTTYPEINFO(ELEMENT_TYPE_CMOD_REQD,      -1,                   TYPE_GC_NONE,  1)
+DEFINEELEMENTTYPEINFO(ELEMENT_TYPE_CMOD_OPT,       -1,                   TYPE_GC_NONE,  1)
+DEFINEELEMENTTYPEINFO(ELEMENT_TYPE_INTERNAL,       -1,                   TYPE_GC_NONE,  0)
 };
 
 unsigned GetSizeForCorElementType(CorElementType etyp)
@@ -1091,9 +1090,6 @@ TypeHandle SigPointer::GetTypeHandleThrowing(
     }
     else
     {
-        // This function is recursive, so it must have an interior probe
-        INTERIOR_STACK_PROBE_FOR_NOTHROW_CHECK_THREAD(10, NO_FORBIDGC_LOADER_USE_ThrowSO(););
-
 #ifdef _DEBUG_IMPL
         // This verifies that we won't try and load a type
         // if FORBIDGC_LOADER_USE_ENABLED is true.
@@ -1199,7 +1195,8 @@ TypeHandle SigPointer::GetTypeHandleThrowing(
             
             PREFIX_ASSUME(pZapSigContext != NULL);
             pModule = pZapSigContext->GetZapSigModule()->GetModuleFromIndex(ix);
-            if (pModule != NULL)
+
+            if ((pModule != NULL) && pModule->IsInCurrentVersionBubble())
             {
                 thRet = psig.GetTypeHandleThrowing(pModule, 
                                                    pTypeContext, 
@@ -1208,6 +1205,12 @@ TypeHandle SigPointer::GetTypeHandleThrowing(
                                                    dropGenericArgumentLevel,
                                                    pSubst, 
                                                    pZapSigContext);
+            }
+            else
+            {
+                // For ReadyToRunCompilation we return a null TypeHandle when we reference a non-local module
+                //
+                thRet = TypeHandle();
             }
 #else
             DacNotImpl();
@@ -1345,10 +1348,6 @@ TypeHandle SigPointer::GetTypeHandleThrowing(
             if (!ClrSafeInt<DWORD>::multiply(ntypars, sizeof(TypeHandle), dwAllocaSize))
                 ThrowHR(COR_E_OVERFLOW);
 
-            if ((dwAllocaSize/PAGE_SIZE+1) >= 2)
-            {
-                DO_INTERIOR_STACK_PROBE_FOR_NOTHROW_CHECK_THREAD((10+dwAllocaSize/PAGE_SIZE+1), NO_FORBIDGC_LOADER_USE_ThrowSO(););
-            }
             TypeHandle *thisinst = (TypeHandle*) _alloca(dwAllocaSize);
 
             // Finally we gather up the type arguments themselves, loading at the level specified for generic arguments
@@ -1463,11 +1462,7 @@ TypeHandle SigPointer::GetTypeHandleThrowing(
                
                 if (IsNilToken(typeToken))
                 {
-                    SString * fullTypeName = pOrigModule->IBCErrorNameString();
-                    fullTypeName->Clear();
-                    pOrigModule->LookupIbcTypeToken(pModule, ibcToken, fullTypeName);
-
-                    THROW_BAD_FORMAT(BFA_MISSING_IBC_EXTERNAL_TYPE, pOrigModule);
+                    COMPlusThrow(kTypeLoadException, IDS_IBC_MISSING_EXTERNAL_TYPE);
                 }
             }
 #endif
@@ -1528,12 +1523,11 @@ TypeHandle SigPointer::GetTypeHandleThrowing(
                 
                     if (typFromSigIsClass != typLoadedIsClass)
                     {
-                        if((pModule->GetMDImport()->GetMetadataStreamVersion() != MD_STREAM_VER_1X)
-                            || !Security::CanSkipVerification(pModule->GetDomainAssembly()))
+                        if (pModule->GetMDImport()->GetMetadataStreamVersion() != MD_STREAM_VER_1X)
                         {
-                                pOrigModule->GetAssembly()->ThrowTypeLoadException(pModule->GetMDImport(),
-                                                                                   typeToken, 
-                                                                                   BFA_CLASSLOAD_VALUETYPEMISMATCH);
+                            pOrigModule->GetAssembly()->ThrowTypeLoadException(pModule->GetMDImport(),
+                                                                                typeToken, 
+                                                                                BFA_CLASSLOAD_VALUETYPEMISMATCH);
                         }
                     }
                 }
@@ -1630,11 +1624,6 @@ TypeHandle SigPointer::GetTypeHandleThrowing(
                 {
                     ThrowHR(COR_E_OVERFLOW);
                 }
-                
-                if ((cAllocaSize/PAGE_SIZE+1) >= 2)
-                {
-                    DO_INTERIOR_STACK_PROBE_FOR_NOTHROW_CHECK_THREAD((10+cAllocaSize/PAGE_SIZE+1), NO_FORBIDGC_LOADER_USE_ThrowSO(););
-                }
 
                 TypeHandle *retAndArgTypes = (TypeHandle*) _alloca(cAllocaSize);
                 bool fReturnTypeOrParameterNotLoaded = false;
@@ -1710,7 +1699,6 @@ TypeHandle SigPointer::GetTypeHandleThrowing(
                 THROW_BAD_FORMAT(BFA_BAD_COMPLUS_SIG, pOrigModule);
     }
 
-    END_INTERIOR_STACK_PROBE;
     }
     
     RETURN thRet;
@@ -1769,11 +1757,7 @@ TypeHandle SigPointer::GetGenericInstType(Module *        pModule,
 
             if (IsNilToken(typeToken))
             {
-                SString * fullTypeName = pOrigModule->IBCErrorNameString();
-                fullTypeName->Clear();
-                pOrigModule->LookupIbcTypeToken(pModule, ibcToken, fullTypeName);
-
-                THROW_BAD_FORMAT(BFA_MISSING_IBC_EXTERNAL_TYPE, pOrigModule);
+                COMPlusThrow(kTypeLoadException, IDS_IBC_MISSING_EXTERNAL_TYPE);
             }
         }
 #endif
@@ -2392,7 +2376,6 @@ CorElementType SigPointer::PeekElemTypeNormalized(Module* pModule, const SigType
         if (FORBIDGC_LOADER_USE_ENABLED()) GC_NOTRIGGER; else GC_TRIGGERS;
         if (FORBIDGC_LOADER_USE_ENABLED()) FORBID_FAULT; else { INJECT_FAULT(COMPlusThrowOM()); }
         MODE_ANY;
-        SO_TOLERANT;
         SUPPORTS_DAC;
     }
     CONTRACTL_END
@@ -2402,7 +2385,6 @@ CorElementType SigPointer::PeekElemTypeNormalized(Module* pModule, const SigType
 
     if (type == ELEMENT_TYPE_VALUETYPE)
     {
-        BEGIN_SO_INTOLERANT_CODE(GetThread());
         {
             // Everett C++ compiler can generate a TypeRef with RS=0
             // without respective TypeDef for unmanaged valuetypes,
@@ -2419,7 +2401,6 @@ CorElementType SigPointer::PeekElemTypeNormalized(Module* pModule, const SigType
             if (pthValueType != NULL)
                 *pthValueType = th;
         }
-        END_SO_INTOLERANT_CODE;
     }
 
     return(type);
@@ -2439,7 +2420,6 @@ SigPointer::PeekElemTypeClosed(
         GC_NOTRIGGER;
         FORBID_FAULT;
         MODE_ANY;
-        SO_TOLERANT;
         SUPPORTS_DAC;
     }
     CONTRACTL_END
@@ -2525,7 +2505,6 @@ mdTypeRef SigPointer::PeekValueTypeTokenClosed(Module *pModule, const SigTypeCon
         PRECONDITION(PeekElemTypeClosed(NULL, pTypeContext) == ELEMENT_TYPE_VALUETYPE);
         FORBID_FAULT;
         MODE_ANY;
-        SO_TOLERANT;
     }
     CONTRACTL_END
 
@@ -2798,7 +2777,11 @@ HRESULT TypeIdentifierData::Init(Module *pModule, mdToken tk)
     else
     {
         // no TypeIdentifierAttribute -> the assembly must be a type library
-        bool has_eq = !pModule->GetAssembly()->IsDynamic() && pModule->GetAssembly()->IsPIAOrImportedFromTypeLib();
+        bool has_eq = !pModule->GetAssembly()->IsDynamic();
+
+#ifdef FEATURE_COMINTEROP
+        has_eq = has_eq && pModule->GetAssembly()->IsPIAOrImportedFromTypeLib();
+#endif // FEATURE_COMINTEROP
 
         if (!has_eq)
         {
@@ -2901,33 +2884,6 @@ BOOL TypeIdentifierData::IsEqual(const TypeIdentifierData & data) const
     return (memcmp(m_pchIdentifierNamespace, data.m_pchIdentifierName, m_cbIdentifierNamespace) == 0) &&
            (data.m_pchIdentifierName[m_cbIdentifierNamespace] == NAMESPACE_SEPARATOR_CHAR) &&
            (memcmp(m_pchIdentifierName, data.m_pchIdentifierName + m_cbIdentifierNamespace + 1, m_cbIdentifierName) == 0);
-}
-
-#endif //FEATURE_TYPEEQUIVALENCE
-#ifdef FEATURE_COMINTEROP
-
-//---------------------------------------------------------------------------------------
-// 
-static CorElementType GetFieldSigElementType(PCCOR_SIGNATURE pSig, DWORD cbSig)
-{
-    CONTRACTL
-    {
-        THROWS;
-        GC_NOTRIGGER;
-        MODE_ANY;
-    }
-    CONTRACTL_END
-
-    SigPointer sigptr(pSig, cbSig);
-    
-    ULONG data;
-    IfFailThrow(sigptr.GetCallingConv(&data));
-    _ASSERTE(data == IMAGE_CEE_CS_CALLCONV_FIELD);
-
-    CorElementType etype;
-    IfFailThrow(sigptr.GetElemType(&etype));
-
-    return etype;
 }
 
 //---------------------------------------------------------------------------------------
@@ -3076,7 +3032,7 @@ static BOOL CompareDelegatesForEquivalence(mdToken tk1, mdToken tk2, Module *pMo
     return MetaSig::CompareMethodSigs(pSig1, cbSig1, pModule1, NULL, pSig2, cbSig2, pModule2, NULL, pVisited);
 }
 
-#endif // FEATURE_COMINTEROP
+#endif // FEATURE_TYPEEQUIVALENCE
 #endif // #ifndef DACCESS_COMPILE
 
 #ifndef DACCESS_COMPILE
@@ -3089,7 +3045,6 @@ BOOL IsTypeDefExternallyVisible(mdToken tk, Module *pModule, DWORD dwAttrClass)
         NOTHROW;
         MODE_ANY;
         GC_NOTRIGGER;
-        SO_INTOLERANT;
     }
     CONTRACTL_END;
 
@@ -3181,7 +3136,12 @@ BOOL IsTypeDefEquivalent(mdToken tk, Module *pModule)
     // 1. Type is within assembly marked with ImportedFromTypeLibAttribute or PrimaryInteropAssemblyAttribute
     if (hr != S_OK)
     {
-        bool has_eq = !pModule->GetAssembly()->IsDynamic() && pModule->GetAssembly()->IsPIAOrImportedFromTypeLib();
+        // no TypeIdentifierAttribute -> the assembly must be a type library
+        bool has_eq = !pModule->GetAssembly()->IsDynamic();
+
+#ifdef FEATURE_COMINTEROP
+        has_eq = has_eq && pModule->GetAssembly()->IsPIAOrImportedFromTypeLib();
+#endif // FEATURE_COMINTEROP
 
         if (!has_eq)
             return FALSE;
@@ -3241,10 +3201,6 @@ BOOL IsTypeDefEquivalent(mdToken tk, Module *pModule)
         // its module might be not fully initialized in this domain
         // take care of that possibility
         pModule->EnsureAllocated();
-
-        // 5. Type is in a fully trusted assembly
-        if (!pModule->GetSecurityDescriptor()->IsFullyTrusted())
-            return FALSE;
 
         // 6. If type is nested, nesting type must be equivalent.
         if (IsTdNested(dwAttrType))
@@ -3371,14 +3327,6 @@ BOOL CompareTypeDefsForEquivalence(mdToken tk1, mdToken tk2, Module *pModule1, M
     }
 
     // *************************************************************************
-    // 2c. the two types cannot be equivalent across IntrospectionOnly/Non-introspection boundaries
-    // *************************************************************************
-    if (!!pModule1->GetAssembly()->IsIntrospectionOnly() != !!pModule2->GetAssembly()->IsIntrospectionOnly())
-    {
-        return FALSE;
-    }
-
-    // *************************************************************************
     // 3. type is an interface, struct, enum, or delegate
     // *************************************************************************
     if (IsTdInterface(dwAttrType1))
@@ -3441,7 +3389,7 @@ BOOL CompareTypeDefsForEquivalence(mdToken tk1, mdToken tk2, Module *pModule1, M
     }
     return TRUE;
 
-#else //!defined(DACCESS_COMPILE) && defined(FEATURE_COMINTEROP)
+#else //!defined(DACCESS_COMPILE) && defined(FEATURE_TYPEEQUIVALENCE)
 
 #ifdef DACCESS_COMPILE
     // We shouldn't execute this code in dac builds.
@@ -3823,12 +3771,6 @@ MetaSig::CompareElementType(
                     return FALSE;
                 }
             }
-
-#ifdef _DEBUG
-            // Shouldn't get here.
-            _ASSERTE(FALSE);
-            return FALSE;
-#endif
         }
         else
         {
@@ -4921,7 +4863,7 @@ BOOL MetaSig::CompareMethodConstraints(const Substitution *pSubst1,
 void PromoteCarefully(promote_func   fn, 
                       PTR_PTR_Object ppObj, 
                       ScanContext*   sc, 
-                      DWORD          flags /* = GC_CALL_INTERIOR*/ )
+                      uint32_t       flags /* = GC_CALL_INTERIOR*/ )
 {
     LIMITED_METHOD_CONTRACT;
 
@@ -4936,12 +4878,24 @@ void PromoteCarefully(promote_func   fn,
     assert(flags & GC_CALL_INTERIOR);
 
 #if !defined(DACCESS_COMPILE)
+
+    //
+    // Sanity check the stack scan limit
+    //
+    assert(sc->stack_limit != 0);
+
     // Note that the base is at a higher address than the limit, since the stack
     // grows downwards.
-    if (sc->thread_under_crawl->IsAddressInStack(*ppObj))
+    // To check whether the object is in the stack or not, we also need to check the sc->stack_limit.
+    // The reason is that on Unix, the stack size can be unlimited. In such case, the system can
+    // shrink the current reserved stack space. That causes the real limit of the stack to move up and 
+    // the range can be reused for other purposes. But the sc->stack_limit is stable during the scan.
+    // Even on Windows, we care just about the stack above the stack_limit.
+    if ((sc->thread_under_crawl->IsAddressInStack(*ppObj)) && (PTR_TO_TADDR(*ppObj) >= sc->stack_limit))
     {
         return;
     }
+
 #endif // !defined(DACCESS_COMPILE)
 
     (*fn) (ppObj, sc, flags);
@@ -4950,7 +4904,19 @@ void PromoteCarefully(promote_func   fn,
 void ReportPointersFromValueType(promote_func *fn, ScanContext *sc, PTR_MethodTable pMT, PTR_VOID pSrc)
 {
     WRAPPER_NO_CONTRACT;
-    
+
+    if (pMT->IsByRefLike())
+    {
+        FindByRefPointerOffsetsInByRefLikeObject(
+            pMT,
+            0 /* baseOffset */,
+            [&](SIZE_T pointerOffset)
+            {
+                PTR_PTR_Object fieldRef = dac_cast<PTR_PTR_Object>(PTR_BYTE(pSrc) + pointerOffset);
+                (*fn)(fieldRef, sc, GC_CALL_INTERIOR);
+            });
+    }
+
     if (!pMT->ContainsPointers())
         return;
     
@@ -4964,23 +4930,43 @@ void ReportPointersFromValueType(promote_func *fn, ScanContext *sc, PTR_MethodTa
     {
         // offset to embedded references in this series must be
         // adjusted by the VTable pointer, when in the unboxed state.
-        size_t offset = cur->GetSeriesOffset() - sizeof(void*);
+        size_t offset = cur->GetSeriesOffset() - TARGET_POINTER_SIZE;
         PTR_OBJECTREF srcPtr = dac_cast<PTR_OBJECTREF>(PTR_BYTE(pSrc) + offset);
         PTR_OBJECTREF srcPtrStop = dac_cast<PTR_OBJECTREF>(PTR_BYTE(srcPtr) + cur->GetSeriesSize() + size);         
         while (srcPtr < srcPtrStop)                                         
         {   
             (*fn)(dac_cast<PTR_PTR_Object>(srcPtr), sc, 0);
-            srcPtr++;
+            srcPtr = (PTR_OBJECTREF)(PTR_BYTE(srcPtr) + TARGET_POINTER_SIZE);
         }                                                               
         cur--;                                                              
     } while (cur >= last);
+}
+
+void ReportPointersFromValueTypeArg(promote_func *fn, ScanContext *sc, PTR_MethodTable pMT, ArgDestination *pSrc)
+{
+    WRAPPER_NO_CONTRACT;
+
+    if (!pMT->ContainsPointers() && !pMT->IsByRefLike())
+    {
+        return;
+    }
+
+#if defined(UNIX_AMD64_ABI)    
+    if (pSrc->IsStructPassedInRegs())
+    {
+        pSrc->ReportPointersFromStructInRegisters(fn, sc, pMT->GetNumInstanceFieldBytes());
+        return;
+    }
+#endif // UNIX_AMD64_ABI
+
+    ReportPointersFromValueType(fn, sc, pMT, pSrc->GetDestinationAddress());
 }
 
 //------------------------------------------------------------------
 // Perform type-specific GC promotion on the value (based upon the
 // last type retrieved by NextArg()).
 //------------------------------------------------------------------
-VOID MetaSig::GcScanRoots(PTR_VOID pValue,
+VOID MetaSig::GcScanRoots(ArgDestination *pValue,
                           promote_func *fn,
                           ScanContext* sc,
                           promote_carefully_func *fnc)
@@ -4997,7 +4983,7 @@ VOID MetaSig::GcScanRoots(PTR_VOID pValue,
     CONTRACTL_END
 
 
-    PTR_PTR_Object pArgPtr = (PTR_PTR_Object)pValue;
+    PTR_PTR_Object pArgPtr = (PTR_PTR_Object)pValue->GetDestinationAddress();
     if (fnc == NULL)
         fnc = &PromoteCarefully;
 
@@ -5083,7 +5069,7 @@ VOID MetaSig::GcScanRoots(PTR_VOID pValue,
                 }
 #endif // ENREGISTERED_PARAMTYPE_MAXSIZE
 
-                ReportPointersFromValueType(fn, sc, pMT, pArgPtr);
+                ReportPointersFromValueTypeArg(fn, sc, pMT, pValue);
             }
             break;
 

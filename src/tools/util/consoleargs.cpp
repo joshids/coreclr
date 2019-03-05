@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 #include <stdio.h>
 #include "consoleargs.h"
@@ -373,7 +372,7 @@ void ConsoleArgs::SetErrorMessage(__in LPCWSTR pwzMessage)
     {
         delete[] m_lastErrorMessage;
     }
-    m_errorOccured = true;
+    m_errorOccurred = true;
     m_lastErrorMessage = new WCHAR[wcslen(pwzMessage) + 1];
     if (m_lastErrorMessage == nullptr)
     {
@@ -665,7 +664,7 @@ LEADINGWHITE:
         argLast = &listArgNew->next;
     }
 
-    delete szTemp;
+    delete[] szTemp;
 
 }
 
@@ -709,7 +708,7 @@ bool ConsoleArgs::ExpandResponseFiles(__in int argc, __deref_in_ecount(argc) con
 
     // Process Response Files
     ProcessResponseArgs();
-    if (m_errorOccured)
+    if (m_errorOccurred)
         return false;
 
     // Now convert to an argc/argv form for remaining processing.
@@ -739,7 +738,7 @@ bool ConsoleArgs::ExpandResponseFiles(__in int argc, __deref_in_ecount(argc) con
 
     *pargc2 = newArgc;
     *pppargv2 = m_rgArgs;
-    return !m_errorOccured;
+    return !m_errorOccurred;
 }
 
 //
@@ -885,7 +884,7 @@ void ConsoleArgs::ProcessResponseArgs()
     WCHAR szFilename[MAX_LONGPATH];
 
     for (WStrList * listCurArg = m_listArgs;
-         listCurArg != NULL && !m_errorOccured;
+         listCurArg != NULL && !m_errorOccurred;
          listCurArg = listCurArg->next)
     {
         WCHAR * szArg = listCurArg->arg;

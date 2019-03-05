@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 /*++
 
@@ -26,31 +25,19 @@ extern "C"
 {
 #endif // __cplusplus
 
-#define PAL_SHLIB_PREFIX "lib"
-
-#if __APPLE__
-#define PAL_SHLIB_SUFFIX ".dylib"
-#elif _AIX
-#define PAL_SHLIB_SUFFIX ".a"
-#elif _HPUX_
-#define PAL_SHLIB_SUFFIX ".sl"
-#else
-#define PAL_SHLIB_SUFFIX ".so"
-#endif
-
-typedef BOOL (__stdcall *PDLLMAIN)(HINSTANCE, DWORD, LPVOID);   /* entry point of module */
-typedef HINSTANCE (PALAPI *PREGISTER_MODULE)(LPCSTR);           /* used to create the HINSTANCE for above DLLMain entry point */
-typedef VOID (PALAPI *PUNREGISTER_MODULE)(HINSTANCE);           /* used to cleanup the HINSTANCE for above DLLMain entry point */
+typedef BOOL (PALAPI_NOEXPORT *PDLLMAIN)(HINSTANCE, DWORD, LPVOID);   /* entry point of module */
+typedef HINSTANCE (PALAPI_NOEXPORT *PREGISTER_MODULE)(LPCSTR);           /* used to create the HINSTANCE for above DLLMain entry point */
+typedef VOID (PALAPI_NOEXPORT *PUNREGISTER_MODULE)(HINSTANCE);           /* used to cleanup the HINSTANCE for above DLLMain entry point */
 
 typedef struct _MODSTRUCT
 {
-    HMODULE self;           /* circular reference to this module */
-    void *dl_handle;        /* handle returned by dlopen() */
-    HINSTANCE hinstance;    /* handle returned by PAL_RegisterLibrary */
-    LPWSTR lib_name;        /* full path of module */
-    INT refcount;           /* reference count */
-                            /* -1 means infinite reference count - module is never released */
-    BOOL threadLibCalls;    /* TRUE for DLL_THREAD_ATTACH/DETACH notifications enabled, FALSE if they are disabled */
+    HMODULE self;                     /* circular reference to this module */
+    NATIVE_LIBRARY_HANDLE dl_handle;  /* handle returned by dlopen() */
+    HINSTANCE hinstance;              /* handle returned by PAL_RegisterLibrary */
+    LPWSTR lib_name;                  /* full path of module */
+    INT refcount;                     /* reference count */
+                                      /* -1 means infinite reference count - module is never released */
+    BOOL threadLibCalls;              /* TRUE for DLL_THREAD_ATTACH/DETACH notifications enabled, FALSE if they are disabled */
 
 #if RETURNS_NEW_HANDLES_ON_REPEAT_DLOPEN
     ino_t inode;
@@ -95,19 +82,6 @@ Return value :
 
 --*/
 BOOL LOADSetExeName(LPWSTR name);
-
-/*++
-Function :
-    LOADFreeModules
-
-    Release all resources held by the module manager (including dlopen handles)
-
-Parameters:
-    BOOL bTerminateUnconditionally: If TRUE, this will avoid calling any DllMains
-
-    (no return value)
---*/
-void LOADFreeModules(BOOL bTerminateUnconditionally);
 
 /*++
 Function :

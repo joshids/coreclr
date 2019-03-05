@@ -1,12 +1,9 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 // ---------------------------------------------------------------------------
 // zapsig.h
-// 
-// Copyright (c) Microsoft 2002
 // ---------------------------------------------------------------------------
 //
 // This module contains helper functions used to encode and manipulate
@@ -21,29 +18,15 @@
 
 #include "common.h"
 
-#ifdef BINDER
-#include "typehandle.h"
-#endif
-
-//define function pointer type: EncodeModuleCallback
-//
-#ifdef BINDER
-typedef DWORD (*EncodeModuleCallback)(void* pModuleContext, MdilModule *pReferencedModule);
-#else
+typedef DWORD(*ENCODEMODULE_CALLBACK)(LPVOID pModuleContext, CORINFO_MODULE_HANDLE moduleHandle);
 typedef DWORD (*EncodeModuleCallback)(void* pModuleContext, Module *pReferencedModule);
-#endif
 enum {
     // return value when EncodeModule fails
     ENCODE_MODULE_FAILED         = 0xffffffff,
 };
 
-//define function pointer type: TokenDefinitionCallback
-//
-#ifdef BINDER
-typedef void (*TokenDefinitionCallback)(void* pModuleContext, MdilModule *pReferencedModule, DWORD index, mdToken* refToken);
-#else
+typedef void(*DEFINETOKEN_CALLBACK)(LPVOID pModuleContext, CORINFO_MODULE_HANDLE moduleHandle, DWORD index, mdTypeRef* token);
 typedef void (*TokenDefinitionCallback)(void* pModuleContext, Module *pReferencedModule, DWORD index, mdToken* refToken);
-#endif
 
 class ZapSig
 {
@@ -57,11 +40,7 @@ public:
     
     struct Context
     {
-#ifdef BINDER
-        MdilModule *   pInfoModule;              // The tokens in this ZapSig are expressed relative to context.pInfoModule         
-#else
         Module *        pInfoModule;              // The tokens in this ZapSig are expressed relative to context.pInfoModule         
-#endif
         void *          pModuleContext;           // This is a code:Module* when we are resolving Ngen fixups or doing an Ibc Profiling run
                                                   // and is a code:ZapImportTable* when we are running ngen      
         ExternalTokens  externalTokens;           // When we see a ELEMENT_TYPE_MODULE_ZAPSIG this tells us what type of token follows.
@@ -69,11 +48,7 @@ public:
         Module * GetZapSigModule() const        { return (Module*) pModuleContext; }
         
         Context(
-#ifdef BINDER
-                MdilModule* _pInfoModule,
-#else
                 Module* _pInfoModule,
-#endif
                 void* _pModuleContext, ExternalTokens _externalTokens)
             : pInfoModule(_pInfoModule),
               pModuleContext(_pModuleContext),
@@ -81,11 +56,7 @@ public:
         { LIMITED_METHOD_CONTRACT; _ASSERTE(externalTokens != IllegalValue); }
 
         Context(
-#ifdef BINDER
-                MdilModule* _pInfoModule,
-#else
                 Module* _pInfoModule,
-#endif
                 Module* _pZapSigModule)
             : pInfoModule(_pInfoModule),
               pModuleContext((void*) _pZapSigModule),
@@ -96,11 +67,7 @@ public:
 public:
 
     ZapSig(
-#ifdef BINDER
-           MdilModule *            _pInfoModule, 
-#else
            Module *                _pInfoModule, 
-#endif
            void *                  _pModuleContext,
            ExternalTokens          _externalTokens,
            EncodeModuleCallback    _pfnEncodeModule,
@@ -132,11 +99,7 @@ public:
     // Compare a type handle with a signature whose tokens are resolved with respect to pModule
     // pZapSigContext is used to resolve ELEMENT_TYPE_MODULE_ZAPSIG encodings
     static BOOL CompareSignatureToTypeHandle(PCCOR_SIGNATURE  pSig,   
-#ifdef BINDER
-                                             MdilModule*      pModule, 
-#else
                                              Module*          pModule, 
-#endif
                                              TypeHandle       handle,
                                      const ZapSig::Context *  pZapSigContext);
 
@@ -177,32 +140,49 @@ public:
     //--------------------------------------------------------------------
     // Static helper encode/decode helper methods
 
-    static Module *DecodeModuleFromIndexes(Module *fromModule,
-        DWORD assemblyIndex,
-        DWORD moduleIndex);
+    static Module *DecodeModuleFromIndex(Module *fromModule,
+        DWORD index);
 
-    static Module *DecodeModuleFromIndexesIfLoaded(Module *fromModule,
-        DWORD assemblyIndex,
-        DWORD moduleIndex);
+    static Module *DecodeModuleFromIndexIfLoaded(Module *fromModule,
+        DWORD index);
 
     // referencingModule is the module that references the type.
     // fromModule is the module in which the type is defined.
     // pBuffer contains the signature encoding for the type.
     // level is the class load level (see classloadlevel.h) to which the type should be loaded
-    static TypeHandle DecodeType(Module *referencingModule,
-        Module *fromModule,
-        PCCOR_SIGNATURE pBuffer,
-        ClassLoadLevel level = CLASS_LOADED);
+    static TypeHandle DecodeType(
+        Module              *referencingModule,
+        Module              *fromModule,
+        PCCOR_SIGNATURE     pBuffer,
+        ClassLoadLevel      level = CLASS_LOADED);
 
-    static MethodDesc *DecodeMethod(Module *referencingModule,
-        Module *fromModule,
-        PCCOR_SIGNATURE pBuffer,
-        TypeHandle * ppTH = NULL);
+    static MethodDesc *DecodeMethod(
+        Module              *referencingModule,
+        Module              *fromModule,
+        PCCOR_SIGNATURE     pBuffer,
+        TypeHandle          *ppTH = NULL);
 
-    static FieldDesc *DecodeField(Module *referencingModule,
-        Module *fromModule,
-        PCCOR_SIGNATURE pBuffer,
-        TypeHandle * ppTH = NULL);
+    static MethodDesc *DecodeMethod(
+        Module              *referencingModule,
+        Module              *fromModule,
+        PCCOR_SIGNATURE     pBuffer,
+        SigTypeContext      *pContext,
+        TypeHandle          *ppTH = NULL,
+        PCCOR_SIGNATURE     *ppOwnerTypeSpecWithVars = NULL,
+        PCCOR_SIGNATURE     *ppMethodSpecWithVars = NULL);
+
+    static FieldDesc *DecodeField(
+        Module              *referencingModule,
+        Module              *fromModule,
+        PCCOR_SIGNATURE     pBuffer,
+        TypeHandle          *ppTH = NULL);
+
+    static FieldDesc *DecodeField(
+        Module              *pReferencingModule,
+        Module              *pInfoModule,
+        PCCOR_SIGNATURE     pBuffer,
+        SigTypeContext      *pContext,
+        TypeHandle          *ppTH = NULL);
 
     static BOOL EncodeMethod(
         MethodDesc             *pMethod,
@@ -211,8 +191,9 @@ public:
         LPVOID                 pReferencingModule,
         ENCODEMODULE_CALLBACK  pfnEncodeModule,
         DEFINETOKEN_CALLBACK   pfnDefineToken,
-        CORINFO_RESOLVED_TOKEN * pResolvedToken = NULL,
-        CORINFO_RESOLVED_TOKEN * pConstrainedResolvedToken = NULL);
+        CORINFO_RESOLVED_TOKEN *pResolvedToken = NULL,
+        CORINFO_RESOLVED_TOKEN *pConstrainedResolvedToken = NULL,
+        BOOL                   fEncodeUsingResolvedTokenSpecStreams = FALSE);
 
     static void EncodeField(
         FieldDesc              *pField,
@@ -220,7 +201,8 @@ public:
         SigBuilder             *pSigBuilder,
         LPVOID                 pReferencingModule,
         ENCODEMODULE_CALLBACK  pfnEncodeModule,
-        CORINFO_RESOLVED_TOKEN * pResolvedToken = NULL);
+        CORINFO_RESOLVED_TOKEN *pResolvedToken = NULL,
+        BOOL                   fEncodeUsingResolvedTokenSpecStreams = FALSE);
 
 };
 

@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //
 
 //
@@ -11,10 +10,6 @@
 
 #ifndef __VSASSERT_H__
 #define __VSASSERT_H__
-
-#ifndef FEATURE_PAL
-#error "FEATURE_PAL must be defined for this file"
-#else // FEATURE_PAL
 
 #define VSASSERT(e, szMsg)                                      \
 do {                                                            \
@@ -60,18 +55,18 @@ do {                                                            \
 #define VSAlloc(cb)          HeapAlloc(GetProcessHeap(), 0, cb)
 #define VSAllocZero(cb)      HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, cb)
 #define VSRealloc(pv, cb)    HeapReAlloc(GetProcessHeap(), 0, pv, cb)
-#define VSReallocZero(pv,cb) Rotors_pal_doesnt_have_vsrealloczero
+#define VSReallocZero(pv,cb) CoreCLR_pal_doesnt_have_vsrealloczero
 #define VSFree(pv)           HeapFree(GetProcessHeap(), 0, pv)
-#define VSSize(pv)           Rotors_pal_doesnt_have_heapsize
+#define VSSize(pv)           CoreCLR_pal_doesnt_have_heapsize
 
 #define VsDebAlloc(flags,cb)          VSAlloc(cb)
 #define VsDebRealloc(pv,flags,cb)     VSRealloc(pv,cb)
-#define VsDebSafeRealloc(pv,flags,cb) Rotors_pal_doenst_have_saferealloc
+#define VsDebSafeRealloc(pv,flags,cb) CoreCLR_pal_doenst_have_saferealloc
 #define VsDebFree(pv)                 VSFree(pv)
 #define VsDebHeapSize(heap, pv)       VSSize(pv)
 
-#define VsDebHeapCreate(flags, name)         Rotor_doesnt_have_heapcreate
-#define VsDebHeapDestroy(heap, fLeakCheck)   Rotor_doesnt_have_heapdestroy
+#define VsDebHeapCreate(flags, name)         CoreCLR_doesnt_have_heapcreate
+#define VsDebHeapDestroy(heap, fLeakCheck)   CoreCLR_doesnt_have_heapdestroy
 
 #define VsDebugAllocInternal(hheap,dwFlags,cb,pszFile,uLine,dwInst,pszExtra) \
     HeapAlloc(GetProcessHeap(), dwFlags, cb)
@@ -95,5 +90,4 @@ do {                                                            \
 
 #define VsIgnoreAllocs(f)
 
-#endif // FEATURE_PAL
 #endif // __VSASSERT_H__

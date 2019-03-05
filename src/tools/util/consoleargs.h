@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 #ifndef __CONSOLEARGS_H__
 #define __CONSOLEARGS_H__
@@ -26,7 +25,7 @@ public:
     ConsoleArgs() :
             m_rgArgs(NULL),
             m_listArgs(NULL),
-            m_errorOccured(false),
+            m_errorOccurred(false),
             m_lastErrorMessage(nullptr)
     {
     };
@@ -44,7 +43,7 @@ public:
 
     LPCWSTR ErrorMessage()
     {
-        if (m_errorOccured)
+        if (m_errorOccurred)
         {
             return m_lastErrorMessage;
         }
@@ -66,7 +65,7 @@ private:
     LPWSTR * m_rgArgs;
     WStrList * m_listArgs;
 
-    bool m_errorOccured;
+    bool m_errorOccurred;
     LPCWSTR m_lastErrorMessage;
 };
 

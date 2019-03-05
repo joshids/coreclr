@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 /*============================================================
 **
@@ -36,16 +35,10 @@ class Object;
 #include "notifyexternals.h"
 #include "winrttypenameconverter.h"
 #include "../md/compiler/custattr.h"
-#ifdef FEATURE_REMOTING
-#include "remoting.h"
-#endif
 #include "mdaassistants.h"
 #include "olevariant.h"
 #include "interopconverter.h"
-#include "constrainedexecutionregion.h"
-#ifdef FEATURE_REMOTING
-#include "crossdomaincalls.h"
-#endif
+#include "typestring.h"
 #include "caparser.h"
 #include "classnames.h"
 #include "objectnative.h"
@@ -111,28 +104,22 @@ IUnknown *ComClassFactory::CreateInstanceFromClassFactory(IClassFactory *pClassF
     }
     CONTRACT_END;
 
-    HRESULT                       hr = S_OK;
-    SafeComHolder<IClassFactory2> pClassFact2   = NULL;
-    SafeComHolder<IUnknown>       pUnk          = NULL;
-    BSTRHolder                    bstrKey       = NULL;
+    HRESULT hr = S_OK;
+    SafeComHolder<IClassFactory2> pClassFact2 = NULL;
+    SafeComHolder<IUnknown> pUnk = NULL;
+    BSTRHolder bstrKey = NULL;
 
-    Thread *pThread = GetThread();
-
-    // Does this support licensing?
-    if (FAILED(SafeQueryInterface(pClassFact, IID_IClassFactory2, (IUnknown**)&pClassFact2)))
+    // If the class doesn't support licensing or if it is missing a managed
+    // type to use for querying a license, just use IClassFactory.
+    if (FAILED(SafeQueryInterface(pClassFact, IID_IClassFactory2, (IUnknown**)&pClassFact2))
+        || m_pClassMT == NULL)
     {
-        // not a licensed class - just createinstance the usual way.
-        // Create an instance of the object.
         FrameWithCookie<DebuggerExitFrame> __def;
         {
             GCX_PREEMP();
-            {
-                LeaveRuntimeHolder lrh(**(size_t**)(IUnknown*)pClassFact);
-                hr = pClassFact->CreateInstance(punkOuter, IID_IUnknown, (void **)&pUnk);
-            }
+            hr = pClassFact->CreateInstance(punkOuter, IID_IUnknown, (void **)&pUnk);
             if (FAILED(hr) && punkOuter)
             {
-                LeaveRuntimeHolder lrh(**(size_t**)(IUnknown*)pClassFact);
                 hr = pClassFact->CreateInstance(NULL, IID_IUnknown, (void**)&pUnk);
                 if (pfDidContainment)
                     *pfDidContainment = TRUE;
@@ -142,130 +129,109 @@ IUnknown *ComClassFactory::CreateInstanceFromClassFactory(IClassFactory *pClassF
     }
     else
     {
-        if (m_pClassMT == NULL)
+        _ASSERTE(m_pClassMT != NULL);
+
+        // Get the type to query for licensing.
+        TypeHandle rth = TypeHandle(m_pClassMT);
+
+        struct
         {
-            // Create an instance of the object.
+            OBJECTREF pProxy;
+            OBJECTREF pType;
+        } gc;
+        gc.pProxy = NULL; // LicenseInteropProxy
+        gc.pType = NULL;
+
+        GCPROTECT_BEGIN(gc);
+
+        // Create an instance of the object
+        MethodDescCallSite createObj(METHOD__LICENSE_INTEROP_PROXY__CREATE);
+        gc.pProxy = createObj.Call_RetOBJECTREF(NULL);
+        gc.pType = rth.GetManagedClassObject();
+
+        // Query the current licensing context
+        MethodDescCallSite getCurrentContextInfo(METHOD__LICENSE_INTEROP_PROXY__GETCURRENTCONTEXTINFO, &gc.pProxy);
+        CLR_BOOL fDesignTime = FALSE;
+        ARG_SLOT args[4];
+        args[0] = ObjToArgSlot(gc.pProxy);
+        args[1] = ObjToArgSlot(gc.pType);
+        args[2] = (ARG_SLOT)&fDesignTime;
+        args[3] = (ARG_SLOT)(BSTR*)&bstrKey;
+
+        getCurrentContextInfo.Call(args);
+
+        if (fDesignTime)
+        {
+            // If designtime, we're supposed to obtain the runtime license key
+            // from the component and save it away in the license context.
+            // (the design tool can then grab it and embedded it into the
+            //  app it is creating)
+            if (bstrKey != NULL)
+            {
+                // It's illegal for our helper to return a non-null bstrKey
+                // when the context is design-time. But we'll try to do the
+                // right thing anyway.
+                _ASSERTE(!"We're not supposed to get here, but we'll try to cope anyway.");
+                SysFreeString(bstrKey);
+                bstrKey = NULL;
+            }
+
+            {
+                GCX_PREEMP();
+                hr = pClassFact2->RequestLicKey(0, &bstrKey);
+            }
+
+            // E_NOTIMPL is not a true failure. It simply indicates that
+            // the component doesn't support a runtime license key.
+            if (hr == E_NOTIMPL)
+                hr = S_OK;
+
+            // Store the requested license key
+            if (SUCCEEDED(hr))
+            {
+                MethodDescCallSite saveKeyInCurrentContext(METHOD__LICENSE_INTEROP_PROXY__SAVEKEYINCURRENTCONTEXT, &gc.pProxy);
+
+                args[0] = ObjToArgSlot(gc.pProxy);
+                args[1] = (ARG_SLOT)(BSTR)bstrKey;
+                saveKeyInCurrentContext.Call(args);
+            }
+        }
+
+        // Create the instance
+        if (SUCCEEDED(hr))
+        {
             FrameWithCookie<DebuggerExitFrame> __def;
             {
                 GCX_PREEMP();
-                LeaveRuntimeHolder lrh(**(size_t**)(IUnknown*)pClassFact);
-                hr = pClassFact->CreateInstance(punkOuter, IID_IUnknown, (void **)&pUnk);
-                if (FAILED(hr) && punkOuter)
+                if (fDesignTime || bstrKey == NULL)
                 {
-                    hr = pClassFact->CreateInstance(NULL, IID_IUnknown, (void**)&pUnk);
-                    if (pfDidContainment)
-                        *pfDidContainment = TRUE;
+                    // Either it's design time, or the current context doesn't
+                    // supply a runtime license key.
+                    hr = pClassFact->CreateInstance(punkOuter, IID_IUnknown, (void **)&pUnk);
+                    if (FAILED(hr) && punkOuter)
+                    {
+                        hr = pClassFact->CreateInstance(NULL, IID_IUnknown, (void**)&pUnk);
+                        if (pfDidContainment)
+                            *pfDidContainment = TRUE;
+                    }
+                }
+                else
+                {
+                    // It is runtime and we have a license key.
+                    _ASSERTE(bstrKey != NULL);
+                    hr = pClassFact2->CreateInstanceLic(punkOuter, NULL, IID_IUnknown, bstrKey, (void**)&pUnk);
+                    if (FAILED(hr) && punkOuter)
+                    {
+                        hr = pClassFact2->CreateInstanceLic(NULL, NULL, IID_IUnknown, bstrKey, (void**)&pUnk);
+                        if (pfDidContainment)
+                            *pfDidContainment = TRUE;
+                    }
                 }
             }
             __def.Pop();
         }
-        else
-        {
-            MethodTable *pHelperMT = pThread->GetDomain()->GetLicenseInteropHelperMethodTable();
-            MethodDesc *pMD = MemberLoader::FindMethod(pHelperMT, "GetCurrentContextInfo", &gsig_IM_LicenseInteropHelper_GetCurrentContextInfo);
-            MethodDescCallSite getCurrentContextInfo(pMD);
-            
-            TypeHandle rth = TypeHandle(m_pClassMT);
 
-            struct _gc {
-                OBJECTREF pHelper;
-                OBJECTREF pType;
-            } gc;
-            gc.pHelper = NULL; // LicenseInteropHelper
-            gc.pType   = NULL;
-
-            GCPROTECT_BEGIN(gc);
-
-            gc.pHelper = pHelperMT->Allocate();
-            gc.pType = rth.GetManagedClassObject();
-
-            // First, crack open the current licensing context.
-            INT32 fDesignTime = 0;
-            ARG_SLOT args[4];
-            args[0] = ObjToArgSlot(gc.pHelper);
-            args[1] = (ARG_SLOT)&fDesignTime;
-            args[2] = (ARG_SLOT)(BSTR*)&bstrKey;
-            args[3] = ObjToArgSlot(gc.pType);
-
-            getCurrentContextInfo.Call(args);
-    
-            if (fDesignTime)
-            {
-                // If designtime, we're supposed to obtain the runtime license key
-                // from the component and save it away in the license context
-                // (the design tool can then grab it and embedded it into the
-                // app it's creating.)
-
-                if (bstrKey != NULL) 
-                {
-                    // It's illegal for our helper to return a non-null bstrKey
-                    // when the context is design-time. But we'll try to do the
-                    // right thing anway.
-                    _ASSERTE(!"We're not supposed to get here, but we'll try to cope anyway.");
-                    SysFreeString(bstrKey);
-                    bstrKey = NULL;
-                }
-
-                {
-                    GCX_PREEMP();
-                    hr = pClassFact2->RequestLicKey(0, &bstrKey);
-                }
-                
-                // E_NOTIMPL is not a true failure. It simply indicates that
-                // the component doesn't support a runtime license key.
-                if (hr == E_NOTIMPL)
-                    hr = S_OK;
-
-                if (SUCCEEDED(hr))
-                {
-                    MethodDesc *pMDSaveKey = MemberLoader::FindMethod(pHelperMT, "SaveKeyInCurrentContext", &gsig_IM_LicenseInteropHelper_SaveKeyInCurrentContext);
-                    MethodDescCallSite saveKeyInCurrentContext(pMDSaveKey);
-
-                    args[0] = ObjToArgSlot(gc.pHelper);
-                    args[1] = (ARG_SLOT)(BSTR)bstrKey;
-                    saveKeyInCurrentContext.Call(args);
-                }
-            }
-    
-            if (SUCCEEDED(hr))
-            {
-                FrameWithCookie<DebuggerExitFrame> __def;
-                {
-                    GCX_PREEMP();
-                    
-                    if (fDesignTime || bstrKey == NULL) 
-                    {
-                        // Either it's design time, or the current context doesn't
-                        // supply a runtime license key.
-                        LeaveRuntimeHolder lrh(**(size_t**)(IUnknown*)pClassFact);
-                        hr = pClassFact->CreateInstance(punkOuter, IID_IUnknown, (void **)&pUnk);
-                        if (FAILED(hr) && punkOuter)
-                        {
-                            hr = pClassFact->CreateInstance(NULL, IID_IUnknown, (void**)&pUnk);
-                            if (pfDidContainment)
-                                *pfDidContainment = TRUE;
-                        }
-                    }
-                    else
-                    {
-                        // It's runtime, and we do have a non-null license key.
-                        _ASSERTE(bstrKey != NULL);
-                        LeaveRuntimeHolder lrh(**(size_t**)(IUnknown*)pClassFact);
-                        hr = pClassFact2->CreateInstanceLic(punkOuter, NULL, IID_IUnknown, bstrKey, (void**)&pUnk);
-                        if (FAILED(hr) && punkOuter)
-                        {
-                            hr = pClassFact2->CreateInstanceLic(NULL, NULL, IID_IUnknown, bstrKey, (void**)&pUnk);
-                            if (pfDidContainment)
-                                *pfDidContainment = TRUE;
-                        }
-            
-                    }
-                }
-                __def.Pop();
-            }
-
-            GCPROTECT_END();
-        }
+        GCPROTECT_END();
     }
 
     if (FAILED(hr))
@@ -520,13 +486,11 @@ IClassFactory *ComClassFactory::GetIClassFactory()
         ServerInfo.pwszName = m_pwszServer;
                 
         // Try to retrieve the IClassFactory passing in CLSCTX_REMOTE_SERVER.
-        LeaveRuntimeHolder lrh((size_t)CoGetClassObject);
         hr = CoGetClassObject(m_rclsid, CLSCTX_REMOTE_SERVER, &ServerInfo, IID_IClassFactory, (void**)&pClassFactory);
     }
     else
     {
         // No server name is specified so we use CLSCTX_SERVER.
-        LeaveRuntimeHolder lrh((size_t)CoGetClassObject);
 
 #ifdef FEATURE_CLASSIC_COMINTEROP
         // If the CLSID is hosted by the CLR itself, then we do not want to go through the COM registration
@@ -541,49 +505,9 @@ IClassFactory *ComClassFactory::GetIClassFactory()
             StackSString ssServer;
             if (FAILED(Clr::Util::Com::FindServerUsingCLSID(m_rclsid, ssServer)))
             {
-#ifndef FEATURE_CORECLR
-                // If there is no server entry, then that implies the CLSID could be implemented by CLR.DLL itself,
-                // if the CLSID is one of the special ones implemented by the CLR. We need to check against the
-                // specific list of CLSIDs here because CLR.DLL-implemented CLSIDs and managed class-implemented
-                // CLSIDs look the same until you start interating the subkeys. For now, the set of CLSIDs implemented
-                // by CLR.DLL is a short and tractable list, but at some point it might become worthwhile to move over
-                // to the more generalized solution of looking for the entries that identify when the CLSID is
-                // implemented by a managed type to avoid having to maintain the hardcoded list.
-                if (IsClrHostedLegacyComObject(m_rclsid))
-                {
-                    PDllGetClassObject pFN = NULL;
-                    hr = g_pCLRRuntime->GetProcAddress("DllGetClassObjectInternal", reinterpret_cast<void**>(&pFN));
-
-                    if (FAILED(hr))
-                        hr = g_pCLRRuntime->GetProcAddress("DllGetClassObject", reinterpret_cast<void**>(&pFN));
-
-                    if (SUCCEEDED(hr))
-                        hr = pFN(m_rclsid, IID_IClassFactory, (void**)&pClassFactory);
-                }
-#endif
             }
             else
             {   
-#ifndef FEATURE_CORECLR
-                // @CORESYSTODO: ?
-                
-                // There is a SxS DLL that implements this CLSID.
-                // NOTE: It is standard practise for RCWs and P/Invokes to leak their module handles,
-                //       as there is no automated mechanism for the runtime to call CanUnloadDllNow.
-                HMODULE hServer = NULL;
-                if (SUCCEEDED(hr = g_pCLRRuntime->LoadLibrary(ssServer.GetUnicode(), &hServer)))
-                {
-                    PDllGetClassObject pFN = reinterpret_cast<PDllGetClassObject>(GetProcAddress(hServer, "DllGetClassObject"));
-                    if (pFN != NULL)
-                    {
-                        hr = pFN(m_rclsid, IID_IClassFactory, (void**)&pClassFactory);
-                    }
-                    else
-                    {
-                        hr = HRESULT_FROM_GetLastError();
-                    }
-                }
-#endif
             }
         }
 #endif // FEATURE_CLASSIC_COMINTEROP
@@ -685,7 +609,6 @@ void ComClassFactory::Init(__in_opt WCHAR* pwszProgID, __in_opt WCHAR* pwszServe
 
     m_pwszProgID = pwszProgID;
     m_pwszServer = pwszServer;  
-    _ASSERTE(pClassMT == NULL || !pClassMT->Collectible());
     m_pClassMT = pClassMT;
 }
 
@@ -764,8 +687,6 @@ IUnknown *AppXComClassFactory::CreateInstanceInternal(IUnknown *pOuter, BOOL *pf
         IfFailThrow(E_FAIL);
     }
 #endif
-
-    LeaveRuntimeHolder lrh((size_t)CoCreateInstanceFromApp);
     
     if (m_pwszServer)
     {
@@ -972,7 +893,6 @@ void WinRTClassFactory::Init()
         // being binary breaking).
         // Note that we just ignore activation attributes if they occur on the wrong type of class
         LPCSTR attributeName;
-        UINT numExpectedParams;
         if (IsComposition())
         {
             attributeName = g_WindowsFoundationComposableAttributeClassName;
@@ -1592,7 +1512,7 @@ public:
 
         if (pRCW->IsValid())
         {
-            if (!GCHeap::GetGCHeap()->IsPromoted(OBJECTREFToObject(pRCW->GetExposedObject())) &&
+            if (!GCHeapUtilities::GetGCHeap()->IsPromoted(OBJECTREFToObject(pRCW->GetExposedObject())) &&
                 !pRCW->IsDetached())
             {
                 // No need to use InterlockedOr here since every other place that modifies the flags
@@ -1613,7 +1533,7 @@ void RCWCache::DetachWrappersWorker()
         NOTHROW;
         GC_NOTRIGGER;
         MODE_ANY;
-        PRECONDITION(GCHeap::IsGCInProgress()); // GC is in progress and the runtime is suspended
+        PRECONDITION(GCHeapUtilities::IsGCInProgress()); // GC is in progress and the runtime is suspended
     }
     CONTRACTL_END;
 
@@ -1917,13 +1837,6 @@ HRESULT RCWCleanupList::ReleaseRCWListInCorrectCtx(LPVOID pData)
 
     ReleaseRCWList_Args* args = (ReleaseRCWList_Args*)pData;
 
-#ifdef FEATURE_REMOTING
-    if (InSendMessage())
-    {
-        args->ctxBusy = TRUE;
-        return S_OK;
-    }
-#endif
 
     RCW* pHead = (RCW *)args->pHead;
 
@@ -2450,9 +2363,6 @@ void RCW::Initialize(IUnknown* pUnk, DWORD dwSyncBlockIndex, MethodTable *pClass
     // calling Marshal.CleanupUnusedObjectsInCurrentContext periodically. The best place
     // to make that call is within their own message pump.
     if (!disableEagerCleanup 
-#ifdef FEATURE_REMOTING
-        && !InSendMessage()
-#endif
        )
     {
         _ASSERTE(g_pRCWCleanupList != NULL);
@@ -2809,7 +2719,7 @@ void RCW::MinorCleanup()
         NOTHROW;
         GC_NOTRIGGER;
         MODE_ANY;
-        PRECONDITION(GCHeap::IsGCInProgress() || ( (g_fEEShutDown & ShutDown_SyncBlock) && g_fProcessDetach ));
+        PRECONDITION(GCHeapUtilities::IsGCInProgress() || ( (g_fEEShutDown & ShutDown_SyncBlock) && g_fProcessDetach ));
     }
     CONTRACTL_END;
     
@@ -3028,14 +2938,6 @@ IUnknown* RCW::GetComIPFromRCW(MethodTable* pMT)
         RETURN result;
     }
 
-    //
-    // Collectible types do not support com interop
-    //
-    if (pMT->Collectible())
-    {
-        COMPlusThrow(kNotSupportedException, W("NotSupported_CollectibleCOM"));
-    }
-
     // returns an AddRef'ed IP
     RETURN GetComIPForMethodTableFromCache(pMT);
 }
@@ -3109,12 +3011,10 @@ IUnknown *RCW::GetWellKnownInterface(REFIID riid)
 // make sure it is on the right thread
 IDispatch *RCW::GetIDispatch()
 {
-#ifdef FEATURE_CORECLR
     if (AppX::IsAppXProcess())
     { 
         COMPlusThrow(kPlatformNotSupportedException, IDS_EE_ERROR_IDISPATCH);
     }
-#endif // FEATURE_CORECLR
 
     WRAPPER_NO_CONTRACT;
     return (IDispatch *)GetWellKnownInterface(IID_IDispatch);
@@ -3627,7 +3527,7 @@ MethodDesc *RCW::GetGetEnumeratorMethod()
         MethodTable *pClsMT;
         {
             GCX_COOP();
-            pClsMT = GetExposedObject()->GetTrueMethodTable();
+            pClsMT = GetExposedObject()->GetMethodTable();
         }
 
         SetGetEnumeratorMethod(pClsMT);
@@ -4000,7 +3900,7 @@ HRESULT RCW::CallQueryInterfaceUsingVariance(MethodTable *pMT, IUnknown **ppUnk)
         
         {
             GCX_COOP();
-            pClassMT = GetExposedObject()->GetTrueMethodTable();
+            pClassMT = GetExposedObject()->GetMethodTable();
         }
         
         // Try interfaces that we know about from metadata
@@ -4576,9 +4476,7 @@ bool RCW::SupportsMngStdInterface(MethodTable *pItfMT)
         if (pItfMT == MscorlibBinder::GetExistingClass(CLASS__IENUMERABLE))
         {
             SafeComHolder<IDispatch> pDisp = NULL;
-#ifdef FEATURE_CORECLR
             if  (!AppX::IsAppXProcess())
-#endif // FEATURE_CORECLR
             {
                  // Get the IDispatch on the current thread.
                  pDisp = GetIDispatch();
@@ -4596,9 +4494,6 @@ bool RCW::SupportsMngStdInterface(MethodTable *pItfMT)
                     // We are about to make a call to COM so switch to preemptive GC.
                     GCX_PREEMP();
 
-                    // Can not get the IP for pDisp->Invoke, instead using the first IP in vtable.
-                    LeaveRuntimeHolder holder (**(size_t**)((IDispatch*)pDisp));
-                    
                     // Call invoke with DISPID_NEWENUM to see if such a member exists.
                     hr = pDisp->Invoke( 
                                         DISPID_NEWENUM, 
@@ -4633,7 +4528,6 @@ TypeHandle::CastResult RCW::SupportsWinRTInteropInterfaceNoGC(MethodTable *pItfM
         NOTHROW;
         GC_NOTRIGGER;
         MODE_ANY;
-        SO_TOLERANT;
     }
     CONTRACTL_END;
 
@@ -4815,15 +4709,6 @@ OBJECTREF ComObject::CreateComObjectRef(MethodTable* pMT)
     {
         pMT->CheckRestore();
         pMT->EnsureInstanceActive();
-
-        //
-        // Collectible types do not support com interop
-        //
-        if (pMT->Collectible())
-        {
-            COMPlusThrow(kNotSupportedException, W("NotSupported_CollectibleCOM"));
-        }
-
         pMT->CheckRunClassInitThrowing();
     }
     
@@ -4902,7 +4787,6 @@ BOOL ComObject::SupportsInterface(OBJECTREF oref, MethodTable* pIntfTable)
             if (SUCCEEDED(hr))
             {
                 GCX_PREEMP();   // make sure we switch to preemptive mode before calling the external COM object
-                LeaveRuntimeHolder lrh(*((*(size_t**)(IConnectionPointContainer*)pCPC)+4));
                 hr = pCPC->FindConnectionPoint(SrcItfIID, &pCP);
                 if (SUCCEEDED(hr))
                 {

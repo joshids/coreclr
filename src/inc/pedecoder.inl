@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 // --------------------------------------------------------------------------------
 // PEDecoder.inl
 // 
@@ -64,6 +63,11 @@ inline BOOL PEDecoder::IsRelocated() const
     return (m_flags & FLAG_RELOCATED) != 0;
 }
 
+inline void PEDecoder::SetRelocated()
+{
+    m_flags |= FLAG_RELOCATED;
+}
+
 inline BOOL PEDecoder::IsFlat() const
 {
     LIMITED_METHOD_CONTRACT;
@@ -99,17 +103,16 @@ inline PEDecoder::PEDecoder(PTR_VOID mappedBase, bool fixedUp /*= FALSE*/)
     {
         CONSTRUCTOR_CHECK;
         PRECONDITION(CheckPointer(mappedBase));
-        PRECONDITION(CheckAligned(mappedBase, OS_PAGE_SIZE));
+        PRECONDITION(CheckAligned(mappedBase, GetOsPageSize()));
         PRECONDITION(PEDecoder(mappedBase,fixedUp).CheckNTHeaders());
         THROWS;
         GC_NOTRIGGER;
-        SO_TOLERANT;
         SUPPORTS_DAC;
     }
     CONTRACTL_END;
 
     // Temporarily set the size to 2 pages, so we can get the headers.
-    m_size = OS_PAGE_SIZE*2;
+    m_size = GetOsPageSize()*2;
 
     m_pNTHeaders = PTR_IMAGE_NT_HEADERS(FindNTHeaders());
     if (!m_pNTHeaders)
@@ -173,7 +176,7 @@ inline HRESULT PEDecoder::Init(void *mappedBase, bool fixedUp /*= FALSE*/)
         NOTHROW;
         GC_NOTRIGGER;
         PRECONDITION(CheckPointer(mappedBase));
-        PRECONDITION(CheckAligned(mappedBase, OS_PAGE_SIZE));
+        PRECONDITION(CheckAligned(mappedBase, GetOsPageSize()));
         PRECONDITION(!HasContents());
     }
     CONTRACTL_END;
@@ -184,7 +187,7 @@ inline HRESULT PEDecoder::Init(void *mappedBase, bool fixedUp /*= FALSE*/)
         m_flags |= FLAG_RELOCATED;
 
     // Temporarily set the size to 2 pages, so we can get the headers.
-    m_size = OS_PAGE_SIZE*2;
+    m_size = GetOsPageSize()*2;
 
     m_pNTHeaders = FindNTHeaders();
     if (!m_pNTHeaders)
@@ -236,7 +239,6 @@ inline BOOL PEDecoder::Has32BitNTHeaders() const
         PRECONDITION(HasNTHeaders());
         NOTHROW;
         GC_NOTRIGGER;
-        SO_TOLERANT;
         SUPPORTS_DAC;
         CANNOT_TAKE_LOCK;
         SUPPORTS_DAC;
@@ -302,7 +304,6 @@ inline const void *PEDecoder::GetPreferredBase() const
         PRECONDITION(CheckNTHeaders());
         NOTHROW;
         GC_NOTRIGGER;
-        SO_TOLERANT;
         POSTCONDITION(CheckPointer(RETVAL, NULL_OK));
     }
     CONTRACT_END;
@@ -322,7 +323,6 @@ inline COUNT_T PEDecoder::GetVirtualSize() const
         NOTHROW;
         GC_NOTRIGGER;
         SUPPORTS_DAC;
-        SO_TOLERANT;
     }
     CONTRACTL_END;
 
@@ -339,7 +339,6 @@ inline WORD PEDecoder::GetSubsystem() const
         NOTHROW;
         GC_NOTRIGGER;
         SUPPORTS_DAC;
-        SO_TOLERANT;
     }
     CONTRACTL_END;
 
@@ -355,7 +354,6 @@ inline WORD PEDecoder::GetDllCharacteristics() const
         PRECONDITION(CheckNTHeaders());
         NOTHROW;
         GC_NOTRIGGER;
-        SO_TOLERANT;
     }
     CONTRACTL_END;
 
@@ -581,7 +579,6 @@ inline BOOL PEDecoder::HasDirectoryEntry(int entry) const
         NOTHROW;
         GC_NOTRIGGER;
         SUPPORTS_DAC;
-        SO_TOLERANT;
     }
     CONTRACTL_END;
 
@@ -600,7 +597,6 @@ inline IMAGE_DATA_DIRECTORY *PEDecoder::GetDirectoryEntry(int entry) const
         NOTHROW;
         GC_NOTRIGGER;
         POSTCONDITION(CheckPointer(RETVAL));
-        SO_TOLERANT;
         CANNOT_TAKE_LOCK;
         SUPPORTS_DAC;
     }
@@ -629,7 +625,6 @@ inline TADDR PEDecoder::GetDirectoryEntryData(int entry, COUNT_T *pSize) const
         NOTHROW;
         GC_NOTRIGGER;
         POSTCONDITION(CheckPointer((void *)RETVAL, NULL_OK));
-        SO_TOLERANT;
         CANNOT_TAKE_LOCK;
         SUPPORTS_DAC;
     }
@@ -652,7 +647,6 @@ inline TADDR PEDecoder::GetDirectoryData(IMAGE_DATA_DIRECTORY *pDir) const
         PRECONDITION(CheckDirectory(pDir, 0, NULL_OK));
         NOTHROW;
         GC_NOTRIGGER;
-        SO_TOLERANT;
         SUPPORTS_DAC;
         POSTCONDITION(CheckPointer((void *)RETVAL, NULL_OK));
         CANNOT_TAKE_LOCK;
@@ -672,7 +666,6 @@ inline TADDR PEDecoder::GetDirectoryData(IMAGE_DATA_DIRECTORY *pDir, COUNT_T *pS
         PRECONDITION(CheckPointer(pSize));
         NOTHROW;
         GC_NOTRIGGER;
-        SO_TOLERANT;
         SUPPORTS_DAC;
         POSTCONDITION(CheckPointer((void *)RETVAL, NULL_OK));
         CANNOT_TAKE_LOCK;
@@ -694,7 +687,6 @@ inline TADDR PEDecoder::GetInternalAddressData(SIZE_T address) const
         NOTHROW;
         GC_NOTRIGGER;
         POSTCONDITION(CheckPointer((void *)RETVAL));
-        SO_TOLERANT;
     }
     CONTRACT_END;
 
@@ -710,7 +702,6 @@ inline BOOL PEDecoder::HasCorHeader() const
         NOTHROW;
         SUPPORTS_DAC;
         GC_NOTRIGGER;
-        SO_TOLERANT;
     }
     CONTRACTL_END;
 
@@ -725,7 +716,6 @@ inline BOOL PEDecoder::IsILOnly() const
         PRECONDITION(HasCorHeader());
         NOTHROW;
         GC_NOTRIGGER;
-        SO_TOLERANT;
         SUPPORTS_DAC;
     }
     CONTRACTL_END;
@@ -790,7 +780,6 @@ inline BOOL PEDecoder::IsStrongNameSigned() const
         NOTHROW;
         GC_NOTRIGGER;
         SUPPORTS_DAC;
-        SO_TOLERANT;
     }
     CONTRACTL_END;
 
@@ -807,7 +796,6 @@ inline BOOL PEDecoder::HasStrongNameSignature() const
         NOTHROW;
         GC_NOTRIGGER;
         SUPPORTS_DAC;
-        SO_TOLERANT;
     }
     CONTRACTL_END;
 
@@ -861,7 +849,6 @@ inline BOOL PEDecoder::HasTls() const
         PRECONDITION(CheckNTHeaders());
         NOTHROW;
         GC_NOTRIGGER;
-        SO_TOLERANT;
     }
     CONTRACTL_END;
 
@@ -876,7 +863,6 @@ inline CHECK PEDecoder::CheckTls() const
         PRECONDITION(CheckNTHeaders());
         NOTHROW;
         GC_NOTRIGGER;
-        SO_TOLERANT;
     }
     CONTRACT_CHECK_END;
 
@@ -943,7 +929,6 @@ inline IMAGE_COR20_HEADER *PEDecoder::GetCorHeader() const
         PRECONDITION(HasCorHeader());
         NOTHROW;
         GC_NOTRIGGER;
-        SO_TOLERANT;
         POSTCONDITION(CheckPointer(RETVAL));
         CANNOT_TAKE_LOCK;
         SUPPORTS_DAC;
@@ -962,8 +947,11 @@ inline BOOL PEDecoder::IsNativeMachineFormat() const
     if (!HasContents() || !HasNTHeaders() )
         return FALSE;
     _ASSERTE(m_pNTHeaders);
+    WORD expectedFormat = HasCorHeader() && (HasNativeHeader() || HasReadyToRunHeader()) ?
+        IMAGE_FILE_MACHINE_NATIVE_NI :
+        IMAGE_FILE_MACHINE_NATIVE;
     //do not call GetNTHeaders as we do not want to bother with PE32->PE32+ conversion
-    return m_pNTHeaders->FileHeader.Machine==IMAGE_FILE_MACHINE_NATIVE;
+    return m_pNTHeaders->FileHeader.Machine==expectedFormat;
 }
 
 inline BOOL PEDecoder::IsI386() const
@@ -986,10 +974,8 @@ inline CORCOMPILE_HEADER *PEDecoder::GetNativeHeader() const
         NOTHROW;
         GC_NOTRIGGER;
         POSTCONDITION(CheckPointer(RETVAL));
-        SO_TOLERANT;        
         SUPPORTS_DAC;
         CANNOT_TAKE_LOCK;
-        SO_TOLERANT;
     }
     CONTRACT_END;
 
@@ -1069,7 +1055,6 @@ inline BOOL PEDecoder::IsNativeILILOnly() const
         PRECONDITION(CheckNativeHeader());
         NOTHROW;
         GC_NOTRIGGER;
-        SO_TOLERANT;
         CANNOT_TAKE_LOCK;
         SUPPORTS_DAC;
     }
@@ -1171,7 +1156,7 @@ inline DWORD PEDecoder::GetImageIdentity() const
 }
 
 
-inline IMAGE_SECTION_HEADER *PEDecoder::FindFirstSection() const
+inline PTR_IMAGE_SECTION_HEADER PEDecoder::FindFirstSection() const
 {
     CONTRACT(IMAGE_SECTION_HEADER *)
     {
@@ -1195,7 +1180,6 @@ inline IMAGE_NT_HEADERS *PEDecoder::FindNTHeaders() const
         NOTHROW;
         GC_NOTRIGGER;
         POSTCONDITION(CheckPointer(RETVAL));
-        SO_TOLERANT;
         CANNOT_TAKE_LOCK;
         SUPPORTS_DAC;
     }
@@ -1214,7 +1198,6 @@ inline IMAGE_COR20_HEADER *PEDecoder::FindCorHeader() const
         GC_NOTRIGGER;
         POSTCONDITION(CheckPointer(RETVAL));
         CANNOT_TAKE_LOCK;
-        SO_TOLERANT;
         SUPPORTS_DAC;
     }
     CONTRACT_END;
@@ -1232,7 +1215,6 @@ inline CORCOMPILE_HEADER *PEDecoder::FindNativeHeader() const
         NOTHROW;
         GC_NOTRIGGER;
         POSTCONDITION(CheckPointer(RETVAL));
-        SO_TOLERANT;        
         CANNOT_TAKE_LOCK;
         SUPPORTS_DAC;
     }
@@ -1333,11 +1315,20 @@ inline void PEDecoder::GetPEKindAndMachine(DWORD * pdwPEKind, DWORD *pdwMachine)
                 dwKind |= (DWORD)pe32Unmanaged;
             }
 
-            if (HasReadyToRunHeader() && (GetReadyToRunHeader()->Flags & READYTORUN_FLAG_PLATFORM_NEUTRAL_SOURCE) != 0)
+            if (HasReadyToRunHeader())
             {
-                // Supply the original PEKind/Machine to the assembly binder to make the full assembly name look like the original
-                dwKind = peILonly;
-                dwMachine = IMAGE_FILE_MACHINE_I386;
+                if (dwMachine == IMAGE_FILE_MACHINE_NATIVE_NI)
+                {
+                    // Supply the original machine type to the assembly binder
+                    dwMachine = IMAGE_FILE_MACHINE_NATIVE;
+                }
+
+                if ((GetReadyToRunHeader()->Flags & READYTORUN_FLAG_PLATFORM_NEUTRAL_SOURCE) != 0)
+                {
+                    // Supply the original PEKind/Machine to the assembly binder to make the full assembly name look like the original
+                    dwKind = peILonly;
+                    dwMachine = IMAGE_FILE_MACHINE_I386;
+                }
             }
         }
         else
@@ -1372,7 +1363,6 @@ inline BOOL PEDecoder::HasReadyToRunHeader() const
         NOTHROW;
         GC_NOTRIGGER;
         CANNOT_TAKE_LOCK;
-        SO_TOLERANT;
         SUPPORTS_DAC;
     }
     CONTRACTL_END;
@@ -1397,10 +1387,8 @@ inline READYTORUN_HEADER * PEDecoder::GetReadyToRunHeader() const
         NOTHROW;
         GC_NOTRIGGER;
         POSTCONDITION(CheckPointer(RETVAL));
-        SO_TOLERANT;        
         SUPPORTS_DAC;
         CANNOT_TAKE_LOCK;
-        SO_TOLERANT;
     }
     CONTRACT_END;
 

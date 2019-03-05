@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 /*++
 
@@ -39,69 +38,6 @@ SET_DEFAULT_DEBUG_CHANNEL(MEM);
 #define DUMMY_HEAP 0x01020304
 #endif // __APPLE__
 
-#ifdef __APPLE__
-#define CACHE_HEAP_ZONE
-#endif // __APPLE__
-
-#ifdef CACHE_HEAP_ZONE
-/* This is a kludge.
- *
- * We need to know whether an instruction pointer fault is in our executable
- * heap, but the intersection between the HeapX functions on Windows and the
- * malloc_zone functions on Mac OS X are somewhat at odds and we'd have to 
- * implement an unnecessarily complicated HeapWalk. Instead, we cache the only
- * "heap" we create, knowing it's the executable heap, and use that instead
- * with the much simpler malloc_zone_from_ptr.
- */
-extern malloc_zone_t *s_pExecutableHeap;
-malloc_zone_t *s_pExecutableHeap = NULL;
-#endif // CACHE_HEAP_ZONE
-
-/*++
-Function:
-  RtlMoveMemory
-
-See MSDN doc.
---*/
-VOID
-PALAPI
-RtlMoveMemory(
-          IN PVOID Destination,
-          IN CONST VOID *Source,
-          IN SIZE_T Length)
-{
-    PERF_ENTRY(RtlMoveMemory);
-    ENTRY("RtlMoveMemory(Destination:%p, Source:%p, Length:%d)\n", 
-          Destination, Source, Length);
-    
-    memmove(Destination, Source, Length);
-    
-    LOGEXIT("RtlMoveMemory returning\n");
-    PERF_EXIT(RtlMoveMemory);
-}
-
-/*++
-Function:
-  RtlZeroMemory
-
-See MSDN doc.
---*/
-VOID
-PALAPI
-RtlZeroMemory(
-    PVOID Destination,
-    SIZE_T Length
-)
-{
-    PERF_ENTRY(RtlZeroMemory);
-    ENTRY("RtlZeroMemory(Destination:%p, Length:%x)\n", Destination, Length);
-    
-    memset(Destination, 0, Length);
-    
-    LOGEXIT("RtlZeroMemory returning.\n");
-    PERF_EXIT(RtlZeroMemory);
-}
-
 /*++
 Function:
   HeapCreate
@@ -137,13 +73,7 @@ HeapCreate(
     }
     else
     {
-        malloc_zone_t *pZone = malloc_create_zone(dwInitialSize, 0 /* flags */);
-        ret = (HANDLE)pZone;
-#ifdef CACHE_HEAP_ZONE
-        _ASSERT_MSG(s_pExecutableHeap == NULL, "PAL currently only handles the creation of one executable heap.");
-        s_pExecutableHeap = pZone;
-        TRACE("s_pExecutableHeap is %p.\n", s_pExecutableHeap);
-#endif // CACHE_HEAP_ZONE
+        ret = (HANDLE)malloc_create_zone(dwInitialSize, 0 /* flags */);
     }
     
 #else // __APPLE__
@@ -176,7 +106,8 @@ GetProcessHeap(
 #if HEAP_HANDLES_ARE_REAL_HANDLES
 #error
 #else
-    ret = (HANDLE) malloc_default_zone();
+    malloc_zone_t *pZone = malloc_default_zone();
+    ret = (HANDLE)pZone;
 #endif // HEAP_HANDLES_ARE_REAL_HANDLES
 #else
     ret = (HANDLE) DUMMY_HEAP;
@@ -234,10 +165,7 @@ HeapAlloc(
 #ifdef __APPLE__
     // This is patterned off of InternalMalloc in malloc.cpp.
     {
-        CPalThread *pthrCurrent = InternalGetCurrentThread();
-        pthrCurrent->suspensionInfo.EnterUnsafeRegion();
         pMem = (BYTE *)malloc_zone_malloc((malloc_zone_t *)hHeap, numberOfBytes);
-        pthrCurrent->suspensionInfo.LeaveUnsafeRegion();
     }
 #else // __APPLE__
     pMem = (BYTE *) PAL_malloc(numberOfBytes);
@@ -310,16 +238,10 @@ HeapFree(
         goto done;
     }
 
-    *((DWORD *) lpMem) = 0;
-
     bRetVal = TRUE;
 #ifdef __APPLE__
-    // This is patterned off of InternalFree in malloc.cpp.
     {
-        CPalThread *pthrCurrent = InternalGetCurrentThread();
-        pthrCurrent->suspensionInfo.EnterUnsafeRegion();
         malloc_zone_free((malloc_zone_t *)hHeap, lpMem);
-        pthrCurrent->suspensionInfo.LeaveUnsafeRegion();
     }
 #else // __APPLE__
     PAL_free (lpMem);
@@ -391,10 +313,7 @@ HeapReAlloc(
 #ifdef __APPLE__
     // This is patterned off of InternalRealloc in malloc.cpp.
     {
-        CPalThread *pthrCurrent = InternalGetCurrentThread();
-        pthrCurrent->suspensionInfo.EnterUnsafeRegion();
         pMem = (BYTE *) malloc_zone_realloc((malloc_zone_t *)hHeap, lpmem, numberOfBytes);
-        pthrCurrent->suspensionInfo.LeaveUnsafeRegion();
     }
 #else // __APPLE__
     pMem = (BYTE *) PAL_realloc(lpmem, numberOfBytes);

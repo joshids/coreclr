@@ -1,14 +1,64 @@
 Build CoreCLR on Linux
 ======================
 
-This guide will walk you through building CoreCLR on Linux and running Hello World.  We'll start by showing how to set up your environment from scratch.
+This guide will walk you through building CoreCLR on Linux.  Before building there is environment setup that needs to happen to pull in all the dependencies required by the build.  There are two suggested ways to go about doing this. First you are able to use the Docker environments provided by https://github.com/dotnet/dotnet-buildtools-prereqs-docker, or you can set up the environment yourself. The documentation will go over both ways of building. Note that using docker only allows you to leverage our existing images which have a setup environment.
+
+[Build using Docker](#Build-using-Docker)
+
+[Build with own environment](#Environment)
+
+Build using Docker
+==================
+
+Install Docker, see https://docs.docker.com/install/
+
+Building using Docker will require that you choose the correct image for your environment. Note that the OS is strictly speaking not extremely important, for example if you are on Ubuntu 18.04 and build using the Ubuntu 16.04 x64 image there should be no issues. The target architecture is more important, as building arm32 using the x64 image will not work, there will be missing rootfs components required by the build. See [Docker Images](#Docker-Images) for more information on choosing an image to build with.
+
+Please note that when choosing an image choosing the same image as the host os you are running on you willa allow you to run the product/tests outside of the docker container you built in.
+
+Once you have chosen an image the build is one command run from the root of the coreclr repository:
+
+```sh
+docker run --rm -v /home/dotnet-bot/coreclr:/coreclr -w /coreclr microsoft/dotnet-buildtools-prereqs:ubuntu-16.04-c103199-20180628134544 ./build.sh
+```
+
+Dissecting the command:
+
+`--rm: erase the created container after use`
+
+`-v: mount the coreclr repository under /coreclr`
+
+`-w: set /coreclr as working directory for the container`
+
+`microsoft/dotnet-buildtools-prereqs:ubuntu-16.04-c103199-20180628134544: image name`
+
+`./build.sh: command to be run in the container`
+
+If you are attempting to cross build for arm/arm64 then use the crossrootfs location to set the ROOTFS_DIR. The command would add `-e ROOTFS_DIR=<crossrootfs location>`. See [Docker Images](#Docker-Images) for the crossrootfs location. In addition you will need to specify `cross`.
+
+```sh
+docker run --rm -v /home/dotnet-bot/coreclr:/coreclr -w /coreclr -e ROOTFS_DIR=/crossrootfs/arm64 microsoft/dotnet-buildtools-prereqs:ubuntu-16.04-cross-arm64-a3ae44b-20180315221921 ./build.sh arm64 cross
+```
+
+Note that instructions on building the crossrootfs location can be found at https://github.com/dotnet/coreclr/blob/master/Documentation/building/cross-building.md. These instructions are suggested only if there are plans to change the rootfs, or the Docker images for arm/arm64 are insufficient for you build.
+
+Docker Images
+=============
+
+| OS             | Target Arch | Image location | crossrootfs location | Clang Version |
+| -------------- | ----------- | -------------- | -------------------- | ------------- |
+| Ubuntu 16.04   | x64         | `microsoft/dotnet-buildtools-prereqs:ubuntu-16.04-c103199-20180628134544` | - | - |
+| Alpine         | x64         | `microsoft/dotnet-buildtools-prereqs:alpine-3.6-e2521f8-20180716231200` | - | - |
+| CentOS 6 (build for RHEL 6) | x64 | `microsoft/dotnet-buildtools-prereqs:centos-6-376e1a3-20174311014331` | - | - |
+| CentOS 7 (build for RHEL 7) | x64 | `microsoft/dotnet-buildtools-prereqs:centos-7-d485f41-20173404063424` | - | - |
+| Ubuntu 14.04   | arm32(armhf) | `microsoft/dotnet-buildtools-prereqs:ubuntu-14.04-cross-e435274-20180426002420` | `/crossrootfs/arm` | - |
+| Ubuntu 16.04   | arm64 (arm64v8) | `microsoft/dotnet-buildtools-prereqs:ubuntu-16.04-cross-arm64-a3ae44b-20180315221921` | `/crossrootfs/arm64` | - |
+| Alpine | arm64 (arm64v8) | `microsoft/dotnet-buildtools-prereqs:ubuntu-16.04-cross-arm64-alpine10fcdcf-20190208200917` | `/crossrootfs/arm64` | -clang5.0 |
 
 Environment
 ===========
 
-These instructions are written assuming the Ubuntu 14.04 LTS, since that's the distro the team uses. Pull Requests are welcome to address other environments as long as they don't break the ability to use Ubuntu 14.04 LTS.
-
-There have been reports of issues when using other distros or versions of Ubuntu (e.g. [Issue 95](https://github.com/dotnet/coreclr/issues/95)). If you're on another distribution, consider using docker's `ubuntu:14.04` image.
+These instructions are written assuming the Ubuntu 16.04/18.04 LTS, since that's the distro the team uses. Pull Requests are welcome to address other environments as long as they don't break the ability to use Ubuntu 16.04/18.04 LTS.
 
 Minimum RAM required to build is 1GB. The build is known to fail on 512 MB VMs ([Issue 536](https://github.com/dotnet/coreclr/issues/536)).
 
@@ -18,47 +68,58 @@ Toolchain Setup
 Install the following packages for the toolchain: 
 
 - cmake 
-- llvm-3.5 
-- clang-3.5 
-- lldb-3.6
-- lldb-3.6-dev 
+- llvm-3.9
+- clang-3.9
+- lldb-3.9
+- liblldb-3.9-dev
 - libunwind8 
 - libunwind8-dev
 - gettext
 - libicu-dev
+- liblttng-ust-dev
+- libcurl4-openssl-dev
+- libssl-dev
+- libkrb5-dev
+- libnuma-dev (optional, enables numa support)
 
-In order to get lldb-3.6 on Ubuntu 14.04, we need to add an additional package source:
+Note: ARM clang has a known issue with CompareExchange
+([#15074](https://github.com/dotnet/coreclr/issues/15074)), so for ARM you must
+use clang-4.0 or higher.  Moreover, when building with clang-5.0, the
+following errors occur:
 
 ```
-ellismg@linux:~$ echo "deb http://llvm.org/apt/trusty/ llvm-toolchain-trusty-3.6 main" | sudo tee /etc/apt/sources.list.d/llvm.list
-ellismg@linux:~$ wget -O - http://llvm.org/apt/llvm-snapshot.gpg.key | sudo apt-key add -
-ellismg@linux:~$ sudo apt-get update
+coreclr/src/debug/inc/arm/primitives.h:66:1: error: __declspec attribute 'selectany' is
+      not supported [-Werror,-Wignored-attributes]
 ```
+
+This is fixed in clang-5.0.2, which can be installed from the apt
+repository listed below.
+
+For other version of Debian/Ubuntu, please visit http://apt.llvm.org/.
 
 Then install the packages you need:
 
-`ellismg@linux:~$ sudo apt-get install cmake llvm-3.5 clang-3.5 lldb-3.6 lldb-3.6-dev libunwind8 libunwind8-dev gettext libicu-dev`
+    ~$ sudo apt-get install cmake llvm-3.9 clang-3.9 lldb-3.9 liblldb-3.9-dev libunwind8 libunwind8-dev gettext libicu-dev liblttng-ust-dev libcurl4-openssl-dev libssl-dev libnuma-dev libkrb5-dev
 
 You now have all the required components.
+
+If you are using Fedora, then you will need to install the following packages:
+
+    ~$ sudo dnf install llvm cmake clang lldb-devel libunwind-devel lttng-ust-devel libicu-devel numactl-devel
 
 Git Setup
 ---------
 
-This guide assumes that you've cloned the corefx and coreclr repositories into `~/git/corefx` and `~/git/coreclr` on your Linux machine and the corefx and coreclr repositories into `D:\git\corefx` and `D:\git\coreclr` on Windows. If your setup is different, you'll need to pay careful attention to the commands you run. In this guide, I'll always show what directory I'm in on both the Linux and Windows machine.
+This guide assumes that you've cloned the coreclr repository.
 
-Install Mono
-------------
+Set the maximum number of file-handles
+--------------------------------------
 
-If you don't already have Mono installed on your system, use the [installation instructions](http://www.mono-project.com/docs/getting-started/install/linux/).
+To ensure that your system can allocate enough file-handles for the corefx build run `sysctl fs.file-max`. If it is less than 100000, add `fs.file-max = 100000` to `/etc/sysctl.conf`, and then run `sudo sysctl -p`.
 
-At a high level, you do the following:
+On Fedora:
 
-```
-ellismg@linux:~$ sudo apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 3FA7E0328081BFF6A14DA29AA6A19B38D3D831EF
-ellismg@linux:~$ echo "deb http://download.mono-project.com/repo/debian wheezy main" | sudo tee /etc/apt/sources.list.d/mono-xamarin.list
-ellismg@linux:~$ sudo apt-get update
-ellismg@linux:~$ sudo apt-get install mono-devel
-```
+`$ sudo dnf install mono-devel`
 
 Build the Runtime and Microsoft Core Library
 =============================================
@@ -66,160 +127,32 @@ Build the Runtime and Microsoft Core Library
 To build the runtime on Linux, run build.sh from the root of the coreclr repository:
 
 ```
-ellismg@linux:~/git/coreclr$ ./build.sh
+./build.sh
 ```
 
 After the build is completed, there should some files placed in `bin/Product/Linux.x64.Debug`.  The ones we are interested in are:
 
 * `corerun`: The command line host.  This program loads and starts the CoreCLR runtime and passes the managed program you want to run to it.
 * `libcoreclr.so`: The CoreCLR runtime itself.
-* `mscorlib.dll`: Microsoft Core Library (requires Mono).
+* `System.Private.CoreLib.dll`: Microsoft Core Library.
 
-In order to keep everything tidy, let's create a new directory for the runtime and copy the runtime and corerun into it.
+Create the Core_Root
+===================
 
-```
-ellismg@linux:~/git/coreclr$ mkdir -p ~/coreclr-demo/runtime
-ellismg@linux:~/git/coreclr$ cp bin/Product/Linux.x64.Debug/corerun ~/coreclr-demo/runtime
-ellismg@linux:~/git/coreclr$ cp bin/Product/Linux.x64.Debug/libcoreclr.so ~/coreclr-demo/runtime
-ellismg@linux:~/git/coreclr$ cp bin/Product/Linux.x64.Debug/mscorlib.dll ~/coreclr-demo/runtime
-```
-
-(Alternative) Build the Microsoft Core Library on Windows
-=========================================================
-
-If the build fails (for example due to Mono issues), alternatively you can build it on Windows.
-You'll need a Windows machine with clone of the CoreCLR project.
-
-You will build mscorlib.dll out of the coreclr repository.
-From a regular command prompt window run:
+The Core_Root folder will have the built binaries, from `build.sh` and it will also include the CoreFX packages required to run tests.
 
 ```
-D:\git\coreclr> build.cmd linuxmscorlib
+./build-test.sh generatelayoutonly
 ```
 
-The output is placed in bin\Product\Linux.x64.Debug\mscorlib.dll. You'll want to copy this to the runtime folder on your Linux machine. (e.g. ~/coreclr-demo/runtime)
+After the build is complete you will be able to find the output in the `bin/tests/Linux.x64.Debug/Tests/Core_Root` folder.
 
-Build the Framework Native Components
-======================================
+Running a single test
+===================
 
+After `build-test.sh` is run, corerun from the Core_Root folder is ready to be run. This can be done by using the full absolute path to corerun, or by setting an environment variable to the Core_Root folder.
+
+```sh
+export CORE_ROOT=/home/dotnet-bot/coreclr/bin/tests/Linux.x64.Debug/Tests/Core_Root
+$CORE_ROOT/corerun hello_world.dll
 ```
-ellismg@linux:~/git/corefx$ src/Native/build.sh
-ellismg@linux:~/git/corefx$ cp bin/Linux.x64.Debug/Native/*.so ~/coreclr-demo/runtime
-```
-
-Build the Framework Managed Components
-======================================
-
-We don't _yet_ have support for building managed code on Linux, so you'll need a Windows machine with clones of CoreFX project.
-
-You will build the rest of the framework that out of the corefx repository.  
-You need to pass some special parameters to build.cmd when building out of the CoreFX repository.
-
-```
-D:\git\corefx> build.cmd /p:OSGroup=Linux /p:SkipTests=true
-```
-
-It's also possible to add `/t:rebuild` to the build.cmd to force it to delete the previously built assemblies.
-
-For the purposes of Hello World, you need to copy over both `bin\Linux.AnyCPU.Debug\System.Console\System.Console.dll` and `bin\Linux.AnyCPU.Debug\System.Diagnostics.Debug\System.Diagnostics.Debug.dll`  into the runtime folder on Linux. (e.g `~/coreclr-demo/runtime`).
-
-After you've done these steps, the runtime directory on Linux should look like this:
-
-```
-matell@linux:~$ ls ~/coreclr-demo/runtime/
-corerun  libcoreclr.so  mscorlib.dll  System.Console.dll  System.Diagnostics.Debug.dll System.Native.so
-```
-
-Download Dependencies
-=====================
-
-The rest of the assemblies you need to run are presently just facades that point to mscorlib.  We can pull these dependencies down via NuGet (which currently requires Mono).
-
-Create a folder for the packages:
-
-```
-ellismg@linux:~$ mkdir ~/coreclr-demo/packages
-ellismg@linux:~$ cd ~/coreclr-demo/packages
-```
-
-Download the NuGet Client
--------------------------
-
-Grab NuGet (if you don't have it already)
-
-```
-ellismg@linux:~/coreclr-demo/packages$ curl -L -O https://nuget.org/nuget.exe
-```
-Download NuGet Packages
------------------------
-
-With Mono and NuGet in hand, you can use NuGet to get the required dependencies. 
-
-Make a `packages.config` file with the following text. These are the required dependencies of this particular app. Different apps will have different dependencies and require a different `packages.config` - see [Issue #480](https://github.com/dotnet/coreclr/issues/480).
-
-```
-<?xml version="1.0" encoding="utf-8"?>
-<packages>
-  <package id="System.Console" version="4.0.0-beta-22703" />
-  <package id="System.Diagnostics.Contracts" version="4.0.0-beta-22703" />
-  <package id="System.Diagnostics.Debug" version="4.0.10-beta-22703" />
-  <package id="System.Diagnostics.Tools" version="4.0.0-beta-22703" />
-  <package id="System.Globalization" version="4.0.10-beta-22703" />
-  <package id="System.IO" version="4.0.10-beta-22703" />
-  <package id="System.IO.FileSystem.Primitives" version="4.0.0-beta-22703" />
-  <package id="System.Reflection" version="4.0.10-beta-22703" />
-  <package id="System.Resources.ResourceManager" version="4.0.0-beta-22703" />
-  <package id="System.Runtime" version="4.0.20-beta-22703" />
-  <package id="System.Runtime.Extensions" version="4.0.10-beta-22703" />
-  <package id="System.Runtime.Handles" version="4.0.0-beta-22703" />
-  <package id="System.Runtime.InteropServices" version="4.0.20-beta-22703" />
-  <package id="System.Text.Encoding" version="4.0.10-beta-22703" />
-  <package id="System.Text.Encoding.Extensions" version="4.0.10-beta-22703" />
-  <package id="System.Threading" version="4.0.10-beta-22703" />
-  <package id="System.Threading.Tasks" version="4.0.10-beta-22703" />
-</packages>
-
-```
-
-And restore your packages.config file:
-
-```
-ellismg@linux:~/coreclr-demo/packages$ mono nuget.exe restore -Source https://www.myget.org/F/dotnet-corefx/ -PackagesDirectory .
-```
-
-NOTE: This assumes you installed Mono from the mono-project.com packages. If you have built your own please see this comment in [Issue #602](https://github.com/dotnet/coreclr/issues/602#issuecomment-88203778)
-
-Finally, you need to copy over the assemblies to the runtime folder.  You don't want to copy over System.Console.dll or System.Diagnostics.Debug however, since the version from NuGet is the Windows version.  The easiest way to do this is with a little find magic:
-
-```
-ellismg@linux:~/coreclr-demo/packages$ find . -wholename '*/aspnetcore50/*.dll' -exec cp -n {} ~/coreclr-demo/runtime \;
-```
-
-Compile an App
-==============
-
-Now you need a Hello World application to run.  You can write your own, if you'd like.  Personally, I'm partial to the one on corefxlab which will draw Tux for us.
-
-```
-ellismg@linux:~$ cd ~/coreclr-demo/runtime
-ellismg@linux:~/coreclr-demo/runtime$ curl -O https://raw.githubusercontent.com/dotnet/corefxlab/master/demos/CoreClrConsoleApplications/HelloWorld/HelloWorld.cs
-```
-
-Then you just need to build it, with `mcs`, the Mono C# compiler. FYI: The Roslyn C# compiler will soon be available on Linux.  Because you need to compile the app against the .NET Core surface area, you need to pass references to the contract assemblies you restored using NuGet:
-
-```
-ellismg@linux:~/coreclr-demo/runtime$ mcs /nostdlib /noconfig /r:../packages/System.Console.4.0.0-beta-22703/lib/contract/System.Console.dll /r:../packages/System.Runtime.4.0.20-beta-22703/lib/contract/System.Runtime.dll HelloWorld.cs
-```
-
-Run your App
-============
-
-You're ready to run Hello World!  To do that, run corerun, passing the path to the managed exe, plus any arguments.  The HelloWorld from corefxlab will print Tux if you pass "linux" as an argument, so:
-
-```
-ellismg@linux:~/coreclr-demo/runtime$ ./corerun HelloWorld.exe linux
-```
-
-Over time, this process will get easier. We will remove the dependency on having to compile managed code on Windows. For example, we are working to get our NuGet packages to include both the Windows and Linux versions of an assembly, so you can simply nuget restore the dependencies. 
-
-Pull Requests to enable building CoreFX on Linux via Mono would be very welcome. A sample that builds Hello World on Linux using the correct references but via XBuild or MonoDevelop would also be great! There's still a lot of work ahead, so if you're interested in helping, we're ready for you!

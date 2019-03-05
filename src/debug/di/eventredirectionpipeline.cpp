@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //*****************************************************************************
 // File: EventRedirectionPipeline.cpp
 // 
@@ -294,13 +293,13 @@ HRESULT EventRedirectionPipeline::CreateProcessUnderDebugger(
 
 
 // Attach
-HRESULT EventRedirectionPipeline::DebugActiveProcess(MachineInfo machineInfo, DWORD processId)
+HRESULT EventRedirectionPipeline::DebugActiveProcess(MachineInfo machineInfo, const ProcessDescriptor& processDescriptor)
 {
-    m_dwProcessId = processId;
+    m_dwProcessId = processDescriptor.m_Pid;
 
     // Use redirected pipeline
     // Spin up debugger to attach to target.
-    return AttachDebuggerToTarget(m_AttachParams.Value(), processId);
+    return AttachDebuggerToTarget(m_AttachParams.Value(), processDescriptor.m_Pid);
 }
 
 // Detach

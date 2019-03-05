@@ -16,6 +16,8 @@ Note that these conventions are different from the CLR C++ Coding Conventions, d
 
 > Note: the JIT currently doesn't follow some of these conventions very widely. The non-conformant code should be updated, eventually.
 
+> Note: we now use jit-format to format our code. All changes it makes supersede the conventions in this doc. Please see the [jit-format documentation](https://github.com/dotnet/jitutils/blob/master/doc/getstarted.md#formatting-jit-source) for instructions on running jit-format.
+
 # How to use this document
 
 * All new code written in the JIT should adhere to these conventions.
@@ -123,7 +125,8 @@ Note that these conventions are different from the CLR C++ Coding Conventions, d
     * [15.5.9 Global class objects](#15.5.9)
   * [15.6 Exceptions](#15.6)
   * [15.7 Code tuning for performance optimization](#15.7)
-  * [15.8 Obsoleting functions, classes and macros](#15.8)
+  * [15.8 Memory allocation](#15.8)
+  * [15.9 Obsoleting functions, classes and macros](#15.9)
 
 # <a name="4"/>4 Principles
 
@@ -1454,7 +1457,7 @@ Note that periodically we do need to go through and remove FEATURE_* defines tha
 
 It is generally discouraged to permanently disable code by commenting it out or by putting `#if 0` around it, in an attempt to keep it around for reference. This reduces the hygiene of the code base over time and such disabled code is rarely actually useful. Instead, such disabled code should be entirely deleted. If you do disable code without deleting it, then you must add a comment as to why the code is disabled, and why it is better to leave the code disabled than it is to delete it.
 
-One exception is that it is often useful to `#if 0` code that is useful for debugging an area, but is not otherwise useful. Even in this case, however, it is probably better to introduce a COMPLUS_* variable to enable the special debugging mode.
+One exception is that it is often useful to `#if 0` code that is useful for debugging an area, but is not otherwise useful. Even in this case, however, it is probably better to introduce a COMPlus_* variable to enable the special debugging mode.
 
 ### <a name="14.1.3"/>14.1.3 Debug code
 
@@ -1462,7 +1465,7 @@ Use `#ifdef DEBUG` for debug-only code. Do not use `#ifdef _DEBUG` (with a leadi
 
 Use the `INDEBUG(x)` macro (and related macros) judiciously, for code that only runs in DEBUG, to avoid `#ifdef`s.
 
-Use the `JITDUMP(x)` macro for printing things to the JIT dump output. Note that these things will only get printed when the `verbose` variable is set, which is when `COMPLUS_JitDump=*` or when `COMPLUS_JitDump=XXX` and we are JITting function XXX; or when `COMPLUS_NgenDump=*` or `COMPLUS_NgenDump=XXX` and we are NGENing function XXX. Do not use `JITDUMP` for all output in a debug-only function that might be useful to call from the debugger. In that case, define a function that uses `printf` (which is a JIT-specific implementation of this function), which can be called from the debugger, and invoke that function like this:
+Use the `JITDUMP(x)` macro for printing things to the JIT dump output. Note that these things will only get printed when the `verbose` variable is set, which is when `COMPlus_JitDump=*` or when `COMPlus_JitDump=XXX` and we are JITting function XXX; or when `COMPlus_NgenDump=*` or `COMPlus_NgenDump=XXX` and we are NGENing function XXX. Do not use `JITDUMP` for all output in a debug-only function that might be useful to call from the debugger. In that case, define a function that uses `printf` (which is a JIT-specific implementation of this function), which can be called from the debugger, and invoke that function like this:
 
 ```c++
 DBEXEC(verbose, MyDumpFunction());
@@ -1483,7 +1486,7 @@ This could be written on fewer lines as:
 JITDUMP("*************** In genGenerateCode()\n");
 ```
 
-However, the former is preferred because it is trivial to set an unconditional breakpoint on the "printf" that triggers when we are compiling the function that matches what COMPLUS_JitDump is set to – a very common debugging technique. Note that conditional breakpoints could be used, but they are more cumbersome, and are very difficult to get right in windbg.
+However, the former is preferred because it is trivial to set an unconditional breakpoint on the "printf" that triggers when we are compiling the function that matches what COMPlus_JitDump is set to – a very common debugging technique. Note that conditional breakpoints could be used, but they are more cumbersome, and are very difficult to get right in windbg.
 
 If many back-to-back JITDUMP statements are going to be used it is preferred that they be written using printf().
 
@@ -1936,7 +1939,45 @@ In general, code should be written to be readable first, and optimized for perfo
 
 In the case of tight loops and code that has been analyzed to be a performance bottleneck, performance optimizations take a higher priority. Talk to the performance team if in doubt.
 
-## <a name="15.8"/>15.8 Obsoleting functions, classes and macros
+## <a name="15.8"/>15.8 Memory allocation
+
+All memory required during the compilation of a method must be allocated using the `Compiler`'s arena allocator. This allocator takes care of deallocating all the memory when compilation ends, avoiding memory leaks and simplifying memory management.
+
+However, the use of an arena allocator can increase memory usage and it's worth considering its impact when writing JIT code. Simple code changes can have a significant impact on memory usage, such as hoisting a `std::vector` variable out of a loop:
+```c++
+std::vector<int> outer; // same memory gets used for all iterations
+for (...)
+{
+    std::vector<int> inner; // this will allocate memory on every iteration
+                            // and previously allocated memory is simply wasted
+}
+```
+Node based data structures (e.g linked lists) may benefit from retaining and reusing removed nodes, provided that maintaining free lists doesn't add significant cost.
+
+The arena allocator should not be used directly. `Compiler::getAllocator(CompMemKind)` returns a `CompAllocator` object that wraps the arena allocator and supports memory usage tracking when `MEASURE_MEM_ALLOC` is enabled. It's best to use a meaningful memory kind (e.g. not `CMK_Generic`) but exceptions can be made for small allocations. `CompAllocator` objects are always pointer sized and can be freely copied and stored (useful to avoid repeated `CompMemKind` references).
+
+The `new (CompAllocator)` operator should be preferred over `CompAllocator::allocate(size_t)`. The later is intended to be used only when constructors must not be run, such as when allocating arrays for containers like `std::vector`.
+```c++
+// typical object allocation
+RangeCheck* p = new (compiler->getAllocator(CMK_RangeCheck)) RangeCheck(compiler);
+// slightly shorter alternative
+RangeCheck* p = new (compiler, CMK_RangeCheck) RangeCheck(compiler);
+// allocate an array with default initialized elements
+LclVarDsc* p = new (compiler->getAllocator(CMK_LvaTable)) LclVarDsc[lvaCount];
+// use list initialization to zero out an array
+unsigned* p = new (compiler->getAllocator(CMK_LvaTable)) unsigned[lvaTrackedCount] { };
+// use CompAllocator::allocate to allocate memory without doing any initialization...
+LclVarDsc* p = compiler->getAllocator(CMK_LvaTable).allocate<LclVarDsc>(lvaCount);
+// ... and construct elements in place as needed
+new (&p[i], jitstd::placement_t()) LclVarDsc(compiler)
+```
+Note that certain classes (e.g. `GenTree`) provide their own `new` operator overloads, those should be used instead of the general purpose `new (CompAllocator)` operator.
+
+`jitstd` container classes accept a `CompAllocator` object by implicit conversion from `CompAllocator` to `jitstd::allocator`.
+
+Debug/checked code that needs to allocate memory outside of method compilation can use the `HostAllocator` class and the associated `new` operator. This is a normal memory allocator that requires manual memory deallocation.
+
+## <a name="15.9"/>15.9 Obsoleting functions, classes and macros
 
 The Visual C++ compiler has support built in for marking various user defined constructs as deprecated. This functionality is accessed via one of two mechanisms:
 

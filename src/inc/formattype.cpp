@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //
 
 //
@@ -206,14 +205,14 @@ const PCCOR_SIGNATURE PrettyPrintSignature(
     PCCOR_SIGNATURE typeEnd = typePtr + typeLen;
     unsigned ixArg= 0; //arg index
     char argname[1024];
-    char label[16];
+    char label[MAX_PREFIX_SIZE];
     const char* openpar = "(";
     const char* closepar = ")";
     ParamDescriptor* pszArgName = NULL; // ptr to array of names (if provided by debug info)
 
     if(inlabel && *inlabel) // check for *inlabel is totally unnecessary, added to pacify the PREFIX
     {
-        strcpy_s(label,COUNTOF(label),inlabel);
+        strcpy_s(label,MAX_PREFIX_SIZE,inlabel);
         ixArg = label[strlen(label)-1] - '0';
         label[strlen(label)-1] = 0;
         if(label[0] == '@') // it's pointer!
@@ -413,7 +412,7 @@ const PCCOR_SIGNATURE PrettyPrintSignature(
 
 
 /******************************************************************************/
-// pretty prints 'type' or its 'typedef' to the buffer 'out' returns a poitner to the next type, 
+// pretty prints 'type' or its 'typedef' to the buffer 'out' returns a pointer to the next type, 
 // or 0 on a format failure; outside ILDASM -- simple wrapper for PrettyPrintType 
 
 PCCOR_SIGNATURE PrettyPrintTypeOrDef(
@@ -424,15 +423,12 @@ PCCOR_SIGNATURE PrettyPrintTypeOrDef(
     CONTRACTL
     {
         THROWS;
-        SO_TOLERANT;
         GC_NOTRIGGER;
     }
     CONTRACTL_END;
 
     PCCOR_SIGNATURE pBegin, pEnd=NULL;
 
-    BEGIN_SO_INTOLERANT_CODE_NO_THROW_CHECK_THREAD(ThrowStackOverflow());
-        
 #ifdef __ILDASM__
     ULONG L = (ULONG)(out->Size());
 #endif
@@ -455,7 +451,6 @@ PCCOR_SIGNATURE PrettyPrintTypeOrDef(
         }
     }
 #endif
-    END_SO_INTOLERANT_CODE;
     return pEnd;
 }
 

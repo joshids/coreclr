@@ -1,5 +1,6 @@
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //
 
 using System;
@@ -132,7 +133,7 @@ public class AA<TA, TB, TC, TD, TE, TF>
         do
         {
             bool[, , , ,][,] local8 = (new bool[81u, 98u, ((uint)(58.0f)), ((uint)(36.0f)),
-                74u][,]);
+                74u*4u][,]);
             while ((((uint)(local5)) != 4u))
             {
                 if (Convert.ToBoolean((local5 + local5)))

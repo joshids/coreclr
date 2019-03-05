@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //*****************************************************************************
 // ShimDataTarget.h
 // 
@@ -35,6 +34,9 @@ public:
     // Set data-target into an error mode. This can be used to mark that the process
     // is unavailable because it's running
     void SetError(HRESULT hr);
+
+    // Get the OS Process ID that this DataTarget is for.
+    DWORD GetPid();
 
     //
     // IUnknown.
@@ -86,8 +88,9 @@ public:
     // ICorDebugDataTarget4
     //    
 
-    // Get the OS Process ID that this DataTarget is for.
-    virtual HRESULT STDMETHODCALLTYPE GetPid(DWORD *pdwProcessId); 
+    // Unwind to the next stack frame
+    virtual HRESULT STDMETHODCALLTYPE VirtualUnwind(
+        DWORD threadId, ULONG32 contextSize, PBYTE context) = 0;
 
 protected:
     // Pid of the target process.
@@ -123,7 +126,7 @@ protected:
 //
 
 HRESULT BuildPlatformSpecificDataTarget(MachineInfo machineInfo,
-                                        DWORD processId, 
+                                        const ProcessDescriptor * pProcessDescriptor,
                                         ShimDataTarget ** ppDataTarget);
 
 #endif //  SHIMDATATARGET_H_

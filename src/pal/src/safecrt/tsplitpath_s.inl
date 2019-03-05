@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 /***
 *tsplitpath_s.inl - general implementation of _tsplitpath_s
@@ -28,7 +27,7 @@ errno_t __cdecl _FUNC_NAME(
     int drive_set = 0;
     size_t length = 0;
     int bEinval = 0;
-	
+
     /* validation section */
     if (_Path == NULL)
     {
@@ -139,9 +138,9 @@ errno_t __cdecl _FUNC_NAME(
                 goto error_erange;
             }
             _TCSNCPY_S(_Dir, _DirSize, _Path, length);
-			
+
             // Normalize the path seperator
-            int iIndex;
+            size_t iIndex;
             for(iIndex = 0; iIndex < length; iIndex++)
             {
                 if (_Dir[iIndex] == _T('\\'))
@@ -185,7 +184,7 @@ errno_t __cdecl _FUNC_NAME(
                 // set length to 1 to get the "." in filename buffer.
                 length = 1;
             }
-			
+
             if (_FilenameSize <= length)
             {
                 goto error_erange;
@@ -201,7 +200,7 @@ errno_t __cdecl _FUNC_NAME(
             // At this time, _Path is pointing to the character after the last slash found.
             // (See comments and code above for clarification).
             //
-            // Returns extension as empty string for strings like "/.". 
+            // Returns extension as empty string for strings like "/.".
             if (dot > _Path)
             {
                 length = (size_t)(tmp - dot);
@@ -209,13 +208,13 @@ errno_t __cdecl _FUNC_NAME(
                 {
                      goto error_erange;
                 }
-                
+
                 /* Since dot pointed to the ".", make sure we actually have an extension
                 like ".cmd" and not just ".", OR
-                
+
                 Confirm that its a string like "/.." - for this, return the
                 second "." in the extension part.
-                
+
                 However, for strings like "/myfile.", return empty string
                 in extension buffer.
                 */

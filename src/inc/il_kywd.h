@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //
 //
 // COM+ IL keywords, symbols and values
@@ -109,6 +108,7 @@
     KYWD( "internalcall",   INTERNALCALL_,      NO_VALUE )
     KYWD( "noinlining",     NOINLINING_,        NO_VALUE )
     KYWD( "nooptimization", NOOPTIMIZATION_,    NO_VALUE )
+    KYWD( "aggressiveoptimization", AGGRESSIVEOPTIMIZATION_, NO_VALUE )
     KYWD( "nomangle",       NOMANGLE_,          NO_VALUE )
     KYWD( "lasterr",        LASTERR_,           NO_VALUE )
     KYWD( "winapi",         WINAPI_,            NO_VALUE )
@@ -195,9 +195,9 @@
     KYWD( "legacy",         LEGACY_,            NO_VALUE )
     KYWD( "library",        LIBRARY_,           NO_VALUE )
     KYWD( "x86",            X86_,               NO_VALUE )
-    KYWD( "ia64",           IA64_,              NO_VALUE )
     KYWD( "amd64",          AMD64_,             NO_VALUE )
     KYWD( "arm",            ARM_,               NO_VALUE )
+    KYWD( "arm64",          ARM64_,             NO_VALUE )
     KYWD( ".publickey",     _PUBLICKEY,         NO_VALUE )
     KYWD( ".publickeytoken",_PUBLICKEYTOKEN,    NO_VALUE )
     KYWD( "algorithm",      ALGORITHM_,         NO_VALUE )

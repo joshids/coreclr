@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 // NSENUMS.H -
 //
 
@@ -55,10 +54,10 @@ DEFINE_NFT(NFT_INTERFACE,                   sizeof(IUnknown*),      false)
 
 DEFINE_NFT(NFT_SAFEHANDLE,                  sizeof(LPVOID),         false)
 DEFINE_NFT(NFT_CRITICALHANDLE,              sizeof(LPVOID),         false)
+DEFINE_NFT(NFT_BSTR,                        sizeof(BSTR),           false)
 
 #ifdef FEATURE_COMINTEROP
 DEFINE_NFT(NFT_SAFEARRAY,                   0,                      false)
-DEFINE_NFT(NFT_BSTR,                        sizeof(BSTR),           false)
 DEFINE_NFT(NFT_HSTRING,                     sizeof(HSTRING),        true)
 DEFINE_NFT(NFT_VARIANT,                     sizeof(VARIANT),        false)
 DEFINE_NFT(NFT_VARIANTBOOL,                 sizeof(VARIANT_BOOL),   false)
@@ -67,7 +66,7 @@ DEFINE_NFT(NFT_DATETIMEOFFSET,              sizeof(INT64),          true)
 DEFINE_NFT(NFT_SYSTEMTYPE,                  sizeof(TypeNameNative), true)  // System.Type -> Windows.UI.Xaml.Interop.TypeName
 DEFINE_NFT(NFT_WINDOWSFOUNDATIONHRESULT,    sizeof(int),            true)  // Windows.Foundation.HResult is marshaled to System.Exception.
 #endif // FEATURE_COMINTEROP
-
+DEFINE_NFT(NFT_STRINGUTF8,                  sizeof(LPVOID),         false)
 DEFINE_NFT(NFT_ILLEGAL,                     1,                      true)
 
 #ifdef FEATURE_COMINTEROP

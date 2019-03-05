@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 // ============================================================
 //
 // ApplicationContext.cpp
@@ -29,6 +28,8 @@
 #include "utils.hpp"
 #include "variables.hpp"
 #include "ex.h"
+#include "clr/fs/path.h"
+using namespace clr::fs;
 
 namespace BINDER_SPACE
 {
@@ -144,9 +145,7 @@ namespace BINDER_SPACE
             m_pFailureCache = pFailureCache;
         }
 
-#if defined(FEATURE_HOST_ASSEMBLY_RESOLVER)      
         m_fCanExplicitlyBindToNativeImages = false;
-#endif // defined(FEATURE_HOST_ASSEMBLY_RESOLVER)
         
     Exit:
         BINDER_LOG_LEAVE_HR(W("ApplicationContext::Init"), hr);
@@ -261,13 +260,25 @@ namespace BINDER_SPACE
                 break;
             }
 
+#ifndef CROSSGEN_COMPILE
+            if (Path::IsRelative(fileName))
+            {
+                BINDER_LOG_STRING(W("ApplicationContext::SetupBindingPaths: Relative path not allowed"), fileName);
+                GO_WITH_HRESULT(E_INVALIDARG);
+            }
+#endif
+
             // Find the beginning of the simple name
             SString::Iterator iSimpleNameStart = fileName.End();
             
             if (!fileName.FindBack(iSimpleNameStart, DIRECTORY_SEPARATOR_CHAR_W))
             {
-                // Couldn't find a directory separator.  File must have been specified as a relative path.  Not allowed.
-                GO_WITH_HRESULT(E_INVALIDARG);
+                iSimpleNameStart = fileName.Begin();
+            }
+            else
+            {
+                // Advance past the directory separator to the first character of the file name
+                iSimpleNameStart++;
             }
 
             if (iSimpleNameStart == fileName.End())
@@ -275,9 +286,6 @@ namespace BINDER_SPACE
                 GO_WITH_HRESULT(E_INVALIDARG);
             }
 
-            // Advance past the directory separator to the first character of the file name
-            iSimpleNameStart++;
-            
             SString simpleName;
             bool isNativeImage = false;
 
@@ -392,6 +400,14 @@ namespace BINDER_SPACE
                 break;
             }
 
+#ifndef CROSSGEN_COMPILE
+            if (Path::IsRelative(pathName))
+            {
+                BINDER_LOG_STRING(W("ApplicationContext::SetupBindingPaths: Relative path not allowed"), pathName);
+                GO_WITH_HRESULT(E_INVALIDARG);
+            }
+#endif
+
             m_platformResourceRoots.Append(pathName);
             BINDER_LOG_STRING(W("ApplicationContext::SetupBindingPaths: Added resource root"), pathName);
         }
@@ -411,6 +427,14 @@ namespace BINDER_SPACE
                 break;
             }
             
+#ifndef CROSSGEN_COMPILE
+            if (Path::IsRelative(pathName))
+            {
+                BINDER_LOG_STRING(W("ApplicationContext::SetupBindingPaths: Relative path not allowed"), pathName);
+                GO_WITH_HRESULT(E_INVALIDARG);
+            }
+#endif
+
             m_appPaths.Append(pathName);
             BINDER_LOG_STRING(W("ApplicationContext::SetupBindingPaths: Added App Path"), pathName);
         }
@@ -429,6 +453,14 @@ namespace BINDER_SPACE
             {
                 break;
             }
+
+#ifndef CROSSGEN_COMPILE
+            if (Path::IsRelative(pathName))
+            {
+                BINDER_LOG_STRING(W("ApplicationContext::SetupBindingPaths: Relative path not allowed"), pathName);
+                GO_WITH_HRESULT(E_INVALIDARG);
+            }
+#endif
 
             m_appNiPaths.Append(pathName);
             BINDER_LOG_STRING(W("ApplicationContext::SetupBindingPaths: Added App NI Path"), pathName);
@@ -460,13 +492,7 @@ namespace BINDER_SPACE
             SAFE_NEW(pNewAssemblyIdentity, AssemblyIdentityUTF8);
             sTextualIdentity.SetUTF8(szTextualIdentity);
 
-
-            BOOL fWindowsPhone7 = false;
-#ifdef FEATURE_LEGACYNETCF
-            fWindowsPhone7 = RuntimeIsLegacyNetCF(GetAppDomainId());
-#endif // FEATURE_LEGACYNETCF
-
-            IF_FAIL_GO(TextualIdentityParser::Parse(sTextualIdentity, pNewAssemblyIdentity, fWindowsPhone7));
+            IF_FAIL_GO(TextualIdentityParser::Parse(sTextualIdentity, pNewAssemblyIdentity));
             IF_FAIL_GO(m_assemblyIdentityCache.Add(szTextualIdentity, pNewAssemblyIdentity));
 
             pNewAssemblyIdentity->PopulateUTF8Fields();

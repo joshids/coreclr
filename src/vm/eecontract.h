@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 // ---------------------------------------------------------------------------
 // EEContract.h
@@ -17,7 +16,6 @@
 #define EECONTRACT_H_
 
 #include "contract.h"
-#include "stackprobe.h"
 
 // --------------------------------------------------------------------------------
 // EECONTRACT is an extension of the lower level CONTRACT macros to include some
@@ -37,13 +35,13 @@ class EEContract : public BaseContract
     virtual void DestructorDefinedThatCallsRestore(){}
 
   public:
-    __declspec(nothrow) ~EEContract()
+    NOTHROW_DECL ~EEContract()
     {
         Restore();
     }
 
     void Disable();
-    void DoChecks(UINT testmask, __in_z const char *szFunction, __in_z char *szFile, int lineNum);
+    void DoChecks(UINT testmask, __in_z const char *szFunction, __in_z const char *szFile, int lineNum);
 };
 
 
@@ -110,7 +108,6 @@ class EEContract : public BaseContract
     THROWS;                     \
     GC_TRIGGERS;                \
     MODE_PREEMPTIVE;            \
-    SO_INTOLERANT;              \
     INJECT_FAULT(COMPlusThrowOM();); \
 
 #endif  // EECONTRACT_H_

@@ -25,17 +25,18 @@ Object Inspection                  Examining code and stacks
 -----------------------------      -----------------------------
 DumpObj (do)                       Threads
 DumpArray (da)                     ThreadState
-DumpStackObjects (dso)             IP2MD
-DumpHeap                           U
-DumpVC                             DumpStack
-GCRoot                             EEStack
-ObjSize                            CLRStack
-FinalizeQueue                      GCInfo
-PrintException (pe)                EHInfo
-TraverseHeap                       BPMD 
-Watch                              COMState
-                                   StopOnCatch
-                                   SuppressJitOptimization
+DumpAsync                          IP2MD
+DumpDelegate                       U
+DumpStackObjects (dso)             DumpStack
+DumpHeap                           EEStack
+DumpVC                             CLRStack
+GCRoot                             GCInfo
+ObjSize                            EHInfo
+FinalizeQueue                      BPMD
+PrintException (pe)                COMState 
+TraverseHeap                       StopOnCatch
+Watch                              SuppressJitOptimization
+                                   
 
 Examining CLR data structures      Diagnostic Utilities
 -----------------------------      -----------------------------
@@ -340,7 +341,23 @@ The arguments in detail:
 	    5b9a628c  4000002        4         System.Int32   instance        8 y
 	    5b9a628c  4000003        8         System.Int32   instance       12 z
 
+\\
 
+COMMAND: dumpasync.
+!DumpAsync [-addr <Object Address>]
+           [-mt <MethodTable address>]
+           [-type <partial type name>]
+           [-tasks]
+           [-completed]
+           [-fields]
+           [-stacks]
+           [-roots]
+
+!DumpAsync traverses the garbage collected heap, looking for objects representing
+async state machines as created when an async method's state is transferred to the
+heap.  This command recognizes async state machines defined as "async void", "async Task",
+"async Task<T>", "async ValueTask", and "async ValueTask<T>".  It also optionally supports
+any other tasks.
 \\
 
 COMMAND: dumpstackobjects.
@@ -357,6 +374,19 @@ on by default because very often in a debugging scenario, you are
 interested in objects with invalid fields.
 
 The abbreviation !dso can be used for brevity.
+\\
+
+COMMAND: dumpdelegate.
+!DumpDelegate <delegate address>
+
+!DumpDelegate finds and outputs the one or more method descriptors associated with a delegate object.
+
+For example:
+
+	0:000> !dumpdelegate
+    Target           Method           Name
+    000001461bacb0d8 00007ffc5c894b80 ConsoleApp16.Program.InstanceMethod()
+    000001461bacb098 00007ffc5c894b68 ConsoleApp16.Program.StaticMethod()
 \\
 
 COMMAND: dumpheap.
@@ -931,7 +961,6 @@ associated with it. For example, this output from K:
 	Module:       001caa38
 	IsJitted:     yes
 	CodeAddr:     03ef00b8
-	Transparency: Critical
 	Source file:  c:\Code\prj.mini\exc.cs @ 39
 
 We have taken a return address into Mainy.Main, and discovered information 
@@ -1041,7 +1070,6 @@ Sample output:
 	Module: 001e2fd8
 	IsJitted: yes
 	CodeAddr: 033bbca0
-	Transparency: Critical
 
 	EHHandler 0: TYPED catch(System.IO.FileNotFoundException) 
 	Clause: [033bbd2b, 033bbd3c] [8b, 9c]
@@ -2020,7 +2048,7 @@ The percentage column contains a breakout of free or unrooted bytes to total byt
 COMMAND: analyzeoom.
 !AnalyzeOOM
 
-!AnalyzeOOM displays the info of the last OOM occured on an allocation request to
+!AnalyzeOOM displays the info of the last OOM occurred on an allocation request to
 the GC heap (in Server GC it displays OOM, if any, on each GC heap). 
 
 To see the managed exception(s) use the !Threads command which will show you 
@@ -2064,12 +2092,12 @@ Sample output:
 
 0:011> !ao
 ---------Heap 2 ---------
-Managed OOM occured after GC #28 (Requested to allocate 1234 bytes)
+Managed OOM occurred after GC #28 (Requested to allocate 1234 bytes)
 Reason: Didn't have enough memory to commit
 Detail: SOH: Didn't have enough memory to grow the internal GC datastructures (800000 bytes) - 
         on GC entry available commit space was 500 MB
 ---------Heap 4 ---------
-Managed OOM occured after GC #12 (Requested to allocate 100000 bytes)
+Managed OOM occurred after GC #12 (Requested to allocate 100000 bytes)
 Reason: Didn't have enough memory to allocate an LOH segment
 Detail: LOH: Failed to reserve memory (16777216 bytes)
 

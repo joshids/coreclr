@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //
 // File: stubhelpers.cpp
 // 
@@ -17,15 +16,10 @@
 #include "dllimport.h"
 #include "fieldmarshaler.h"
 #include "comdelegate.h"
-#include "security.h"
 #include "eventtrace.h"
 #include "comdatetime.h"
-#include "gc.h"
+#include "gcheaputilities.h"
 #include "interoputil.h"
-#include "gcscan.h"
-#ifdef FEATURE_REMOTING
-#include "remoting.h"
-#endif
 
 #ifdef FEATURE_COMINTEROP
 #include <oletls.h>
@@ -58,11 +52,10 @@ void StubHelpers::ValidateObjectInternal(Object *pObjUNSAFE, BOOL fValidateNextO
 	NOTHROW;
 	GC_NOTRIGGER;
 	MODE_ANY;
-	SO_TOLERANT;
 }
 	CONTRACTL_END;
 
-	_ASSERTE(CNameSpace::GetGcRuntimeStructuresValid());
+	_ASSERTE(GCHeapUtilities::GetGCHeap()->RuntimeStructuresValid());
 
 	// validate the object - there's no need to validate next object's
 	// header since we validate the next object explicitly below
@@ -71,7 +64,7 @@ void StubHelpers::ValidateObjectInternal(Object *pObjUNSAFE, BOOL fValidateNextO
 	// and the next object as required
 	if (fValidateNextObj)
 	{
-		Object *nextObj = GCHeap::GetGCHeap()->NextObj(pObjUNSAFE);
+		Object *nextObj = GCHeapUtilities::GetGCHeap()->NextObj(pObjUNSAFE);
 		if (nextObj != NULL)
 		{
 			// Note that the MethodTable of the object (i.e. the pointer at offset 0) can change from
@@ -101,7 +94,7 @@ MethodDesc *StubHelpers::ResolveInteropMethod(Object *pThisUNSAFE, MethodDesc *p
         MethodTable *pMT = pThisUNSAFE->GetMethodTable();
 
         _ASSERTE(pMT->IsDelegate());
-        return ((DelegateEEClass *)pMT->GetClass())->m_pInvokeMethod;
+        return ((DelegateEEClass *)pMT->GetClass())->GetInvokeMethod();
     }
     return pMD;
 }
@@ -144,7 +137,7 @@ void StubHelpers::ProcessByrefValidationList()
 {
     CONTRACTL
     {
-        THROWS;
+        NOTHROW;
         GC_NOTRIGGER;
         MODE_ANY;           
     }
@@ -163,14 +156,22 @@ void StubHelpers::ProcessByrefValidationList()
         {
             entry = s_ByrefValidationEntries[i];
 
-            Object *pObjUNSAFE = GCHeap::GetGCHeap()->GetGCHeap()->GetContainingObject(entry.pByref);
+            Object *pObjUNSAFE = GCHeapUtilities::GetGCHeap()->GetContainingObject(entry.pByref, false);
             ValidateObjectInternal(pObjUNSAFE, TRUE);
         }
     }
     EX_CATCH
     {
-        FormatValidationMessage(entry.pMD, errorString);
-        EEPOLICY_HANDLE_FATAL_ERROR_WITH_MESSAGE(COR_E_EXECUTIONENGINE, errorString.GetUnicode());
+        EX_TRY
+        {
+            FormatValidationMessage(entry.pMD, errorString);
+            EEPOLICY_HANDLE_FATAL_ERROR_WITH_MESSAGE(COR_E_EXECUTIONENGINE, errorString.GetUnicode());
+        }
+        EX_CATCH
+        {
+            EEPOLICY_HANDLE_FATAL_ERROR(COR_E_EXECUTIONENGINE);
+        }
+        EX_END_CATCH_UNREACHABLE;
     }
     EX_END_CATCH_UNREACHABLE;
 
@@ -179,7 +180,7 @@ void StubHelpers::ProcessByrefValidationList()
 
 #endif // VERIFY_HEAP
 
-FCIMPL1(double, StubHelpers::DateMarshaler__ConvertToNative,  INT64 managedDate)
+FCIMPL1_V(double, StubHelpers::DateMarshaler__ConvertToNative,  INT64 managedDate)
 {
     FCALL_CONTRACT;
 
@@ -282,7 +283,6 @@ FORCEINLINE static void *GetCOMIPFromRCW_GetTargetNoInterception(IUnknown *pUnk,
     _ASSERTE(pComInfo->m_pInterceptStub == NULL || pComInfo->m_pInterceptStub == (LPVOID)-1);
     _ASSERTE(!pComInfo->HasCopyCtorArgs());
 #endif // _TARGET_X86_
-    _ASSERTE(!NDirect::IsHostHookEnabled());
 
     LPVOID *lpVtbl = *(LPVOID **)pUnk;
     return lpVtbl[pComInfo->m_cachedComSlot];
@@ -366,40 +366,6 @@ FORCEINLINE static void *GetCOMIPFromRCW_GetTarget(IUnknown *pUnk, ComPlusCallIn
 {
     LIMITED_METHOD_CONTRACT;
 
-#ifndef FEATURE_CORECLR
-#ifdef _TARGET_X86_
-    // m_pInterceptStub is either NULL if we never called on this method, -1 if we're not
-    // hosted, or the host hook stub if we are hosted. The stub will extract the real target
-    // from the 'this' argument.
-    PVOID pInterceptStub = VolatileLoadWithoutBarrier(&pComInfo->m_pInterceptStub);
-
-    if (pInterceptStub != (LPVOID)-1)
-    {
-        if (pInterceptStub != NULL)
-        {
-            return pInterceptStub;
-        }
-
-        if (NDirect::IsHostHookEnabled() || pComInfo->HasCopyCtorArgs())
-        {
-            return NULL;
-        }
-
-        if (!EnsureWritablePagesNoThrow(&pComInfo->m_pInterceptStub, sizeof(pComInfo->m_pInterceptStub)))
-        {
-            return NULL;
-        }
-   
-        pComInfo->m_pInterceptStub = (LPVOID)-1;
-    }
-#else // _TARGET_X86_
-    if (NDirect::IsHostHookEnabled())
-    {
-        // There's one static stub on !_TARGET_X86_.
-        return (LPVOID)GetEEFuncEntryPoint(PInvokeStubForHost);
-    }
-#endif // _TARGET_X86_
-#endif // FEATURE_CORECLR
 
     LPVOID *lpVtbl = *(LPVOID **)pUnk;
     return lpVtbl[pComInfo->m_cachedComSlot];
@@ -426,44 +392,6 @@ NOINLINE static IUnknown* GetCOMIPFromRCWHelper(LPVOID pFCall, OBJECTREF pSrc, M
         pRetUnk.Release();
     }
 
-#ifndef FEATURE_CORECLR
-#ifdef _TARGET_X86_
-    GCX_PREEMP();
-    Stub *pInterceptStub = NULL;
-
-    if (pComInfo->m_pInterceptStub == NULL)
-    {
-        if (pComInfo->HasCopyCtorArgs())
-        {
-            // static stub that gets its arguments in a thread-static field
-            pInterceptStub = NDirect::GetStubForCopyCtor();
-        }
-
-        if (NDirect::IsHostHookEnabled())
-        {
-            pInterceptStub = pComInfo->GenerateStubForHost(
-                pMD->GetDomain()->GetLoaderAllocator()->GetStubHeap(),
-                pInterceptStub);
-        }
-
-        EnsureWritablePages(&pComInfo->m_pInterceptStub);
-
-        if (pInterceptStub != NULL)
-        {
-            if (InterlockedCompareExchangeT(&pComInfo->m_pInterceptStub,
-                                            (LPVOID)pInterceptStub->GetEntryPoint(),
-                                            NULL) != NULL)
-            {
-                pInterceptStub->DecRef();
-            }
-        }
-        else
-        {
-            pComInfo->m_pInterceptStub = (LPVOID)-1;
-        }
-    }
-#endif // _TARGET_X86_
-#endif // !FEATURE_CORECLR
 
     *ppTarget = GetCOMIPFromRCW_GetTarget(pRetUnk, pComInfo);
     _ASSERTE(*ppTarget != NULL);
@@ -810,12 +738,12 @@ void QCALLTYPE StubHelpers::InterfaceMarshaler__ClearNative(IUnknown * pUnk)
 {
     QCALL_CONTRACT;
 
-    BEGIN_QCALL_SO_TOLERANT;
+    BEGIN_QCALL;
 
     ULONG cbRef = SafeReleasePreemp(pUnk);
     LogInteropRelease(pUnk, cbRef, "InterfaceMarshalerBase::ClearNative: In/Out release");
 
-    END_QCALL_SO_TOLERANT;
+    END_QCALL;
 }
 #include <optdefault.h>
 
@@ -843,10 +771,7 @@ FCIMPL1(StringObject*, StubHelpers::UriMarshaler__GetRawUriFromNative, ABI::Wind
         GCX_PREEMP();
 
         // Get the RawUri string from the WinRT URI object
-        {
-            LeaveRuntimeHolder lrh(**(size_t**)(IUnknown*)pIUriRC);
-            IfFailThrow(pIUriRC->get_RawUri(hsRawUriName.Address()));
-        }
+        IfFailThrow(pIUriRC->get_RawUri(hsRawUriName.Address()));
 
         pwszRawUri = hsRawUriName.GetRawBuffer(&cchRawUri);
     }
@@ -879,69 +804,6 @@ FCIMPL2(IUnknown*, StubHelpers::UriMarshaler__CreateNativeUriInstance, WCHAR* pR
     return pIUriRC;
 }
 FCIMPLEND
-
-ABI::Windows::UI::Xaml::Interop::INotifyCollectionChangedEventArgs* QCALLTYPE 
-StubHelpers::EventArgsMarshaler__CreateNativeNCCEventArgsInstance
-(int action, ABI::Windows::UI::Xaml::Interop::IBindableVector *newItem, ABI::Windows::UI::Xaml::Interop::IBindableVector *oldItem, int newIndex, int oldIndex)
-{
-    QCALL_CONTRACT;
-
-   ABI::Windows::UI::Xaml::Interop::INotifyCollectionChangedEventArgs *pArgsRC = NULL;
-
-    BEGIN_QCALL;
-
-    EventArgsMarshalingInfo *marshalingInfo = GetAppDomain()->GetMarshalingData()->GetEventArgsMarshalingInfo();
-    ABI::Windows::UI::Xaml::Interop::INotifyCollectionChangedEventArgsFactory *pFactory = marshalingInfo->GetNCCEventArgsFactory();
-
-    SafeComHolderPreemp<IInspectable> pInner;
-    HRESULT hr;
-    {
-        LeaveRuntimeHolder lrh(**(size_t **)(IUnknown *)pFactory);
-        hr = pFactory->CreateInstanceWithAllParameters(
-            (ABI::Windows::UI::Xaml::Interop::NotifyCollectionChangedAction)action,
-            (ABI::Windows::UI::Xaml::Interop::IBindableVector *)newItem,
-            (ABI::Windows::UI::Xaml::Interop::IBindableVector *)oldItem,
-            newIndex,
-            oldIndex,
-            NULL,
-            &pInner,
-            &pArgsRC);
-    }
-    IfFailThrow(hr);
-
-    END_QCALL;
-
-    return pArgsRC;
-}
-
-ABI::Windows::UI::Xaml::Data::IPropertyChangedEventArgs* QCALLTYPE 
-	StubHelpers::EventArgsMarshaler__CreateNativePCEventArgsInstance(HSTRING name)
-{
-    QCALL_CONTRACT;
-
-    ABI::Windows::UI::Xaml::Data::IPropertyChangedEventArgs *pArgsRC = NULL;
-
-    BEGIN_QCALL;
-
-    EventArgsMarshalingInfo *marshalingInfo = GetAppDomain()->GetMarshalingData()->GetEventArgsMarshalingInfo();
-    ABI::Windows::UI::Xaml::Data::IPropertyChangedEventArgsFactory *pFactory = marshalingInfo->GetPCEventArgsFactory();
-
-    SafeComHolderPreemp<IInspectable> pInner;
-    HRESULT hr;
-    {
-        LeaveRuntimeHolder lrh(**(size_t **)(IUnknown *)pFactory);
-        hr = pFactory->CreateInstance(
-            name,
-            NULL,
-            &pInner,
-            &pArgsRC);
-    }
-    IfFailThrow(hr);
-
-    END_QCALL;
-
-    return pArgsRC;
-}
 
 // A helper to convert an IP to object using special flags.
 FCIMPL1(Object *, StubHelpers::InterfaceMarshaler__ConvertToManagedWithoutUnboxing, IUnknown *pNative)
@@ -1108,7 +970,7 @@ FCIMPL2(IInspectable *, StubHelpers::GetOuterInspectable, Object *pThisUNSAFE, M
 
     OBJECTREF pThis = ObjectToOBJECTREF(pThisUNSAFE);
 
-    if (pThis->GetTrueMethodTable() != pCtorMD->GetMethodTable())
+    if (pThis->GetMethodTable() != pCtorMD->GetMethodTable())
     {
         // this is a composition scenario
         HELPER_METHOD_FRAME_BEGIN_RET_1(pThis);
@@ -1245,20 +1107,14 @@ FCIMPL2(void*, StubHelpers::GetDelegateTarget, DelegateObject *pThisUNSAFE, UINT
 #if defined(_WIN64)
     UINT_PTR target = (UINT_PTR)orefThis->GetMethodPtrAux();
 
+    // See code:GenericPInvokeCalliHelper
     // The lowest bit is used to distinguish between MD and target on 64-bit.
-#ifdef _TARGET_AMD64_
     target = (target << 1) | 1;
-#endif // _TARGET_AMD64_
 
     // On 64-bit we pass the real target to the stub-for-host through this out argument,
     // see IL code gen in NDirectStubLinker::DoNDirect for details.
     *ppStubArg = target;
 
-    if (NDirect::IsHostHookEnabled())
-    {
-        // There's one static stub on !_TARGET_X86_.
-        pEntryPoint = GetEEFuncEntryPoint(PInvokeStubForHost);
-    }
 #elif defined(_TARGET_ARM_)
     // @ARMTODO: Nothing to do for ARM yet since we don't support the hosted path.
 #endif // _WIN64, _TARGET_ARM_
@@ -1276,109 +1132,7 @@ FCIMPL2(void*, StubHelpers::GetDelegateTarget, DelegateObject *pThisUNSAFE, UINT
 }
 FCIMPLEND
 
-#ifndef FEATURE_CORECLR // CAS
-static void DoDeclarativeActionsForPInvoke(MethodDesc* pCurrent)
-{
-    CONTRACTL
-    {
-        MODE_COOPERATIVE;
-        GC_TRIGGERS;
-        THROWS;
-        SO_INTOLERANT;
-    }
-    CONTRACTL_END;
 
-    MethodSecurityDescriptor MDSecDesc(pCurrent);
-    MethodSecurityDescriptor::LookupOrCreateMethodSecurityDescriptor(&MDSecDesc);
-
-    DeclActionInfo* pRuntimeDeclActionInfo = MDSecDesc.GetRuntimeDeclActionInfo();
-    if (pRuntimeDeclActionInfo != NULL)
-    {
-         // Tell the debugger not to start on any managed code that we call in this method    
-        FrameWithCookie<DebuggerSecurityCodeMarkFrame> __dbgSecFrame;
-
-        Security::DoDeclarativeActions(pCurrent, pRuntimeDeclActionInfo, NULL, &MDSecDesc);
-
-        // Pop the debugger frame
-        __dbgSecFrame.Pop();
-    }
-}
-#endif // FEATURE_CORECLR
-
-#ifndef FEATURE_CORECLR
-#ifndef _WIN64
-FCIMPL3(void*, StubHelpers::GetFinalStubTarget, LPVOID pStubArg, LPVOID pUnmngThis, DWORD dwFlags)
-{
-    CONTRACTL
-    {
-        FCALL_CHECK;
-        PRECONDITION(SF_IsForwardStub(dwFlags));
-    }
-    CONTRACTL_END;
-
-    if (SF_IsCALLIStub(dwFlags))
-    {
-        // stub argument is the target
-        return pStubArg;
-    }
-    else if (SF_IsDelegateStub(dwFlags))
-    {
-        // stub argument is not used but we pass _methodPtrAux which is the target
-        return pStubArg;
-    }
-    else if (SF_IsCOMStub(dwFlags))
-    {
-        // stub argument is a ComPlusCallMethodDesc
-        ComPlusCallMethodDesc *pCMD = (ComPlusCallMethodDesc *)pStubArg;
-        LPVOID *lpVtbl = *(LPVOID **)pUnmngThis;
-        return lpVtbl[pCMD->m_pComPlusCallInfo->m_cachedComSlot];
-    }
-    else // P/Invoke
-    {
-        // secret stub argument is an NDirectMethodDesc
-        NDirectMethodDesc *pNMD = (NDirectMethodDesc *)pStubArg;
-        return pNMD->GetNativeNDirectTarget();
-    }
-}
-FCIMPLEND
-#endif // !_WIN64
-
-FCIMPL1(void, StubHelpers::DemandPermission, NDirectMethodDesc *pNMD)
-{
-    FCALL_CONTRACT;
-
-    // ETWOnStartup (SecurityCatchCall, SecurityCatchCallEnd); // this is messing up HMF below
-
-    if (pNMD != NULL)
-    {
-        g_IBCLogger.LogMethodDescAccess(pNMD);
-
-        if (pNMD->IsInterceptedForDeclSecurity())
-        {
-            if (pNMD->IsInterceptedForDeclSecurityCASDemandsOnly() &&
-                SecurityStackWalk::HasFlagsOrFullyTrusted(1 << SECURITY_UNMANAGED_CODE))
-            {
-                // Track perfmon counters. Runtime security checks.
-                Security::IncrementSecurityPerfCounter();
-            }
-            else
-            {
-                HELPER_METHOD_FRAME_BEGIN_0();
-                DoDeclarativeActionsForPInvoke(pNMD);
-                HELPER_METHOD_FRAME_END();
-            }
-        }
-    }
-    else
-    {
-        // This is either CLR->COM or delegate P/Invoke (we don't call this helper for CALLI).
-        HELPER_METHOD_FRAME_BEGIN_0();
-        SecurityStackWalk::SpecialDemand(SSWT_DECLARATIVE_DEMAND, SECURITY_UNMANAGED_CODE);
-        HELPER_METHOD_FRAME_END();
-    }
-}
-FCIMPLEND
-#endif // !FEATURE_CORECLR
 
 FCIMPL2(void, StubHelpers::ThrowInteropParamException, UINT resID, UINT paramIdx)
 {
@@ -1738,7 +1492,7 @@ FCIMPL3(SIZE_T, StubHelpers::ProfilerBeginTransitionCallback, SIZE_T pSecretPara
             _ASSERTE(pMT->IsDelegate());
 
             EEClass * pClass = pMT->GetClass();
-            pRealMD = ((DelegateEEClass*)pClass)->m_pInvokeMethod;
+            pRealMD = ((DelegateEEClass*)pClass)->GetInvokeMethod();
             _ASSERTE(pRealMD);
         }
     }
@@ -1878,7 +1632,7 @@ FCIMPL4(Object*, StubHelpers::GetCOMHRExceptionObject, HRESULT hr, MethodDesc *p
             }
         }
 
-        GetExceptionForHR(hr, pErrInfo, fForWinRT, &oThrowable, pResErrorInfo, bHasNonCLRLanguageErrorObject);
+        GetExceptionForHR(hr, pErrInfo, !fForWinRT, &oThrowable, pResErrorInfo, bHasNonCLRLanguageErrorObject);
     }
     HELPER_METHOD_FRAME_END();    
 
@@ -1940,30 +1694,6 @@ FCIMPL1(Object*, StubHelpers::AllocateInternal, EnregisteredTypeHandle pRegister
 }
 FCIMPLEND
 
-FCIMPL1(void, StubHelpers::DecimalCanonicalizeInternal, DECIMAL *pDec)
-{
-    FCALL_CONTRACT;
-
-    if (FAILED(DecimalCanonicalize(pDec)))
-    {
-        FCThrowResVoid(kOverflowException, W("Overflow_Currency"));
-    }
-}
-FCIMPLEND
-
-FCIMPL1(int, StubHelpers::AnsiStrlen, __in_z char* pszStr)
-{
-    FCALL_CONTRACT;
-
-    size_t len = strlen(pszStr);
-
-    // the length should have been checked earlier (see StubHelpers.CheckStringLength)
-    _ASSERTE(FitsInI4(len));
-
-    return (int)len;
-}
-FCIMPLEND
-
 FCIMPL3(void, StubHelpers::MarshalToUnmanagedVaListInternal, va_list va, DWORD cbVaListSize, const VARARGS* pArgIterator)
 {
     FCALL_CONTRACT;
@@ -1995,7 +1725,7 @@ FCIMPL3(void, StubHelpers::ValidateObject, Object *pObjUNSAFE, MethodDesc *pMD, 
         AVInRuntimeImplOkayHolder AVOkay;
 		// don't validate the next object if a BGC is in progress.  we can race with background
 	    // sweep which could make the next object a Free object underneath us if it's dead.
-        ValidateObjectInternal(pObjUNSAFE, !(GCHeap::GetGCHeap()->IsConcurrentGCInProgress()));
+        ValidateObjectInternal(pObjUNSAFE, !(GCHeapUtilities::GetGCHeap()->IsConcurrentGCInProgress()));
     }
     EX_CATCH
     {
@@ -2022,7 +1752,7 @@ FCIMPL3(void, StubHelpers::ValidateByref, void *pByref, MethodDesc *pMD, Object 
     // perform the validation on next GC (see code:StubHelpers.ProcessByrefValidationList).
 
     // Skip byref if is not pointing inside managed heap
-    if (!GCHeap::GetGCHeap()->IsHeapPointer(pByref))
+    if (!GCHeapUtilities::GetGCHeap()->IsHeapPointer(pByref))
     {
         return;
     }
@@ -2057,7 +1787,7 @@ FCIMPL3(void, StubHelpers::ValidateByref, void *pByref, MethodDesc *pMD, Object 
     if (NumOfEntries > BYREF_VALIDATION_LIST_MAX_SIZE)
     {
         // if the list is too big, trigger GC now
-        GCHeap::GetGCHeap()->GarbageCollect(0);
+        GCHeapUtilities::GetGCHeap()->GarbageCollect(0);
     }
 
     HELPER_METHOD_FRAME_END();
@@ -2100,7 +1830,7 @@ FCIMPL2(void, StubHelpers::LogPinnedArgument, MethodDesc *target, Object *pinned
 }
 FCIMPLEND
 
-#ifdef _WIN64
+#ifdef _TARGET_64BIT_
 FCIMPL0(void*, StubHelpers::GetStubContextAddr)
 {
     FCALL_CONTRACT;
@@ -2109,7 +1839,7 @@ FCIMPL0(void*, StubHelpers::GetStubContextAddr)
     UNREACHABLE_MSG("This is a JIT intrinsic!");
 }
 FCIMPLEND
-#endif // _WIN64
+#endif // _TARGET_64BIT_
 
 #ifdef MDA_SUPPORTED    
 FCIMPL0(void, StubHelpers::TriggerGCForMDA)
@@ -2157,10 +1887,11 @@ FCIMPL2(void, StubHelpers::ArrayTypeCheck, Object* element, PtrArray* arr)
 FCIMPLEND
 #endif // FEATURE_ARRAYSTUB_AS_IL
 
-#ifdef FEATURE_STUBS_AS_IL
+#ifdef FEATURE_MULTICASTSTUB_AS_IL
 FCIMPL2(void, StubHelpers::MulticastDebuggerTraceHelper, Object* element, INT32 count)
 {
     FCALL_CONTRACT;
+    FCUnique(0xa5);
 }
 FCIMPLEND
-#endif // FEATURE_STUBS_AS_IL
+#endif // FEATURE_MULTICASTSTUB_AS_IL

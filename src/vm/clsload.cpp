@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //
 // File: clsload.cpp
 //
@@ -24,7 +23,6 @@
 #include "comsynchronizable.h"
 #include "threads.h"
 #include "dllimport.h"
-#include "security.h"
 #include "dbginterface.h"
 #include "log.h"
 #include "eeconfig.h"
@@ -32,13 +30,11 @@
 #include "jitinterface.h"
 #include "vars.hpp"
 #include "assembly.hpp"
-#include "perfcounters.h"
 #include "eeprofinterfaces.h"
 #include "eehash.h"
 #include "typehash.h"
 #include "comdelegate.h"
 #include "array.h"
-#include "stackprobe.h"
 #include "posterror.h"
 #include "wrappers.h"
 #include "generics.h"
@@ -53,9 +49,6 @@
 #include "virtualcallstub.h"
 #include "stringarraylist.h"
 
-#if defined(FEATURE_FUSION) && !defined(DACCESS_COMPILE)
-#include "policy.h" // For Fusion::Util::IsAnyFrameworkAssembly
-#endif
 
 // This method determines the "loader module" for an instantiated type
 // or method. The rule must ensure that any types involved in the
@@ -91,7 +84,6 @@ PTR_Module ClassLoader::ComputeLoaderModuleWorker(
         MODE_ANY;
         PRECONDITION(CheckPointer(pDefinitionModule, NULL_OK));
         POSTCONDITION(CheckPointer(RETVAL));
-        SO_INTOLERANT;
         SUPPORTS_DAC;
     }
     CONTRACT_END
@@ -101,31 +93,27 @@ PTR_Module ClassLoader::ComputeLoaderModuleWorker(
 
 #ifndef DACCESS_COMPILE
 #ifdef FEATURE_NATIVE_IMAGE_GENERATION
-    // Check we're NGEN'ing
-    if (IsCompilationProcess())
+    //
+    // Use special loader module placement during compilation of fragile native images.
+    //
+    // ComputeLoaderModuleForCompilation algorithm assumes that we are using fragile native image
+    // for CoreLib (or compiling CoreLib itself). It is not the case for ReadyToRun compilation because
+    // CoreLib as always treated as IL there (see code:PEFile::ShouldTreatNIAsMSIL for details).
+    //
+    if (IsCompilationProcess() && !IsReadyToRunCompilation())
     {
         RETURN(ComputeLoaderModuleForCompilation(pDefinitionModule, token, classInst, methodInst));
     }
 #endif // FEATURE_PREJIT
 #endif // #ifndef DACCESS_COMPILE
 
-    Module *pFirstNonSharedLoaderModule = NULL;
-    Module *pFirstNonSystemSharedModule = NULL;
     Module *pLoaderModule = NULL;
 
     if (pDefinitionModule)
     {
         if (pDefinitionModule->IsCollectible())
             goto ComputeCollectibleLoaderModule;
-        if (!pDefinitionModule->GetAssembly()->IsDomainNeutral())
-        {
-            pFirstNonSharedLoaderModule = pDefinitionModule;
-        }
-        else
-        if (!pDefinitionModule->IsSystem())
-        {
-            pFirstNonSystemSharedModule = pDefinitionModule;
-        }
+        pLoaderModule = pDefinitionModule;
     }
 
     for (DWORD i = 0; i < classInst.GetNumArgs(); i++)
@@ -135,17 +123,8 @@ PTR_Module ClassLoader::ComputeLoaderModuleWorker(
         Module* pModule = classArg.GetLoaderModule();
         if (pModule->IsCollectible())
             goto ComputeCollectibleLoaderModule;
-        if (!pModule->GetAssembly()->IsDomainNeutral())
-        {
-            if (pFirstNonSharedLoaderModule == NULL)
-                pFirstNonSharedLoaderModule = pModule;
-        }
-        else
-        if (!pModule->IsSystem())
-        {
-            if (pFirstNonSystemSharedModule == NULL)
-                pFirstNonSystemSharedModule = pModule;
-        }
+        if (pLoaderModule == NULL)
+            pLoaderModule = pModule;
     }
 
     for (DWORD i = 0; i < methodInst.GetNumArgs(); i++)
@@ -155,40 +134,11 @@ PTR_Module ClassLoader::ComputeLoaderModuleWorker(
         Module *pModule = methodArg.GetLoaderModule();
         if (pModule->IsCollectible())
             goto ComputeCollectibleLoaderModule;
-        if (!pModule->GetAssembly()->IsDomainNeutral())
-        {
-            if (pFirstNonSharedLoaderModule == NULL)
-                pFirstNonSharedLoaderModule = pModule;
-        }
-        else
-        if (!pModule->IsSystem())
-        {
-            if (pFirstNonSystemSharedModule == NULL)
-                pFirstNonSystemSharedModule = pModule;
-        }
+        if (pLoaderModule == NULL)
+            pLoaderModule = pModule;
     }
 
-    // RULE: Prefer modules in non-shared assemblies.
-    // This ensures safety of app-domain unloading.
-    if (pFirstNonSharedLoaderModule != NULL)
-    {
-        pLoaderModule = pFirstNonSharedLoaderModule;
-    }
-    else if (pFirstNonSystemSharedModule != NULL)
-    {
-#ifdef FEATURE_FULL_NGEN
-        // pFirstNonSystemSharedModule may be module of speculative generic instantiation.
-        // If we are domain neutral, we have to use constituent of the instantiation to store
-        // statics. We need to ensure that we can create DomainModule in all domains
-        // that this instantiations may get activated in. PZM is good approximation of such constituent.
-        pLoaderModule = Module::ComputePreferredZapModule(pDefinitionModule, classInst, methodInst);
-#else
-        // Use pFirstNonSystemSharedModule just so C<object> ends up in module C - it
-        // shouldn't actually matter at all though.
-        pLoaderModule = pFirstNonSystemSharedModule;
-#endif
-    }
-    else
+    if (pLoaderModule == NULL)
     {
         CONSISTENCY_CHECK(MscorlibBinder::GetModule() && MscorlibBinder::GetModule()->IsSystem());
 
@@ -256,7 +206,6 @@ PTR_Module ClassLoader::ComputeLoaderModuleForCompilation(
         MODE_ANY;
         PRECONDITION(CheckPointer(pDefinitionModule, NULL_OK));
         POSTCONDITION(CheckPointer(RETVAL));
-        SO_INTOLERANT;
     }
     CONTRACT_END
 
@@ -573,8 +522,6 @@ TypeHandle ClassLoader::LoadTypeHandleThrowIfFailed(NameHandle* pName, ClassLoad
 #endif
 
 #ifndef DACCESS_COMPILE
-            COUNTER_ONLY(GetPerfCounters().m_Loading.cLoadFailures++);
-
             m_pAssembly->ThrowTypeLoadException(pName, IDS_CLASSLOAD_GENERAL);
 #else
             DacNotImpl();
@@ -827,7 +774,7 @@ BOOL ClassLoader::IsNested(NameHandle* pName, mdToken *mdEncloser)
     if (pName->GetTypeModule()) {
         if (TypeFromToken(pName->GetTypeToken()) == mdtBaseType)
         {
-            if (pName->GetBucket())
+            if (!pName->GetBucket().IsNull())
                 return TRUE;
             return FALSE;
         }
@@ -838,11 +785,14 @@ BOOL ClassLoader::IsNested(NameHandle* pName, mdToken *mdEncloser)
         return FALSE;
 }
 
-EEClassHashEntry_t *ClassLoader::GetClassValue(NameHandleTable nhTable,
-                                               NameHandle *pName,
-                                               HashDatum *pData,
-                                               EEClassHashTable **ppTable,
-                                               Module* pLookInThisModuleOnly)
+void ClassLoader::GetClassValue(NameHandleTable nhTable,
+                                    NameHandle *pName,
+                                    HashDatum *pData,
+                                    EEClassHashTable **ppTable,
+                                    Module* pLookInThisModuleOnly,
+                                    HashedTypeEntry* pFoundEntry,
+                                    Loader::LoadFlag loadFlag,
+                                    BOOL& needsToBuildHashtable)
 {
     CONTRACTL
     {
@@ -860,6 +810,8 @@ EEClassHashEntry_t *ClassLoader::GetClassValue(NameHandleTable nhTable,
     mdToken             mdEncloser;
     EEClassHashEntry_t  *pBucket = NULL;
 
+    needsToBuildHashtable = FALSE;
+
 #if _DEBUG
     if (pName->GetName()) {
         if (pName->GetNameSpace() == NULL)
@@ -871,110 +823,135 @@ EEClassHashEntry_t *ClassLoader::GetClassValue(NameHandleTable nhTable,
     }
 #endif
 
-    if (IsNested(pName, &mdEncloser)) 
+    BOOL isNested = IsNested(pName, &mdEncloser);
+
+    PTR_Assembly assembly = GetAssembly();
+    PREFIX_ASSUME(assembly != NULL);
+    ModuleIterator i = assembly->IterateModules();
+
+    while (i.Next()) 
     {
-        Module *pModule = pName->GetTypeModule();
-        PREFIX_ASSUME(pModule != NULL);
-        PTR_Assembly assembly=GetAssembly();
-        PREFIX_ASSUME(assembly!=NULL);
-        ModuleIterator i = assembly->IterateModules();
-        Module *pClsModule = NULL;
+        Module * pCurrentClsModule = i.GetModule();
+        PREFIX_ASSUME(pCurrentClsModule != NULL);
 
-        while (i.Next()) {
-            pClsModule = i.GetModule();
-            if (pClsModule->IsResource())
-                continue;
-            if (pLookInThisModuleOnly && (pClsModule != pLookInThisModuleOnly))
-                continue;
+        if (pCurrentClsModule->IsResource())
+            continue;
+        if (pLookInThisModuleOnly && (pCurrentClsModule != pLookInThisModuleOnly))
+            continue;
 
+#ifdef FEATURE_READYTORUN
+        if (nhTable == nhCaseSensitive && pCurrentClsModule->IsReadyToRun() && pCurrentClsModule->GetReadyToRunInfo()->HasHashtableOfTypes())
+        {
+            // For R2R modules, we only search the hashtable of token types stored in the module's image, and don't fallback
+            // to searching m_pAvailableClasses or m_pAvailableClassesCaseIns (in fact, we don't even allocate them for R2R modules).
+            // Also note that type lookups in R2R modules only support case sensitive lookups.
+
+            mdToken mdFoundTypeToken;
+            if (pCurrentClsModule->GetReadyToRunInfo()->TryLookupTypeTokenFromName(pName, &mdFoundTypeToken))
+            {
+                if (TypeFromToken(mdFoundTypeToken) == mdtExportedType)
+                {
+                    mdToken mdUnused;
+                    Module * pTargetModule = GetAssembly()->FindModuleByExportedType(mdFoundTypeToken, loadFlag, mdTypeDefNil, &mdUnused);
+
+                    pFoundEntry->SetTokenBasedEntryValue(mdFoundTypeToken, pTargetModule);
+                }
+                else
+                {
+                    pFoundEntry->SetTokenBasedEntryValue(mdFoundTypeToken, pCurrentClsModule);
+                }
+
+                return; // Return on the first success
+            }
+        }
+        else
+#endif
+        {
             EEClassHashTable* pTable = NULL;
             if (nhTable == nhCaseSensitive)
             {
-                *ppTable = pTable = pClsModule->GetAvailableClassHash();
-                
+                *ppTable = pTable = pCurrentClsModule->GetAvailableClassHash();
+
+#ifdef FEATURE_READYTORUN
+                if (pTable == NULL && pCurrentClsModule->IsReadyToRun() && !pCurrentClsModule->GetReadyToRunInfo()->HasHashtableOfTypes())
+                {
+                    // Old R2R image generated without the hashtable of types.
+                    // We fallback to the slow path of creating the hashtable dynamically 
+                    // at execution time in that scenario. The caller will handle
+                    pFoundEntry->SetClassHashBasedEntryValue(NULL);
+                    needsToBuildHashtable = TRUE;
+                    return;
+                }
+#endif
             }
-            else {
+            else
+            {
                 // currently we expect only these two kinds--for DAC builds, nhTable will be nhCaseSensitive
                 _ASSERTE(nhTable == nhCaseInsensitive);
-                *ppTable = pTable = pClsModule->GetAvailableClassCaseInsHash();
+                *ppTable = pTable = pCurrentClsModule->GetAvailableClassCaseInsHash();
 
-                if (pTable == NULL) {
-                    // We have not built the table yet - the caller will handle
-                    return NULL;
-                }
-            }
-
-            _ASSERTE(pTable);
-
-            EEClassHashTable::LookupContext sContext;
-            if ((pBucket = pTable->GetValue(pName, pData, TRUE, &sContext)) != NULL) {
-                switch (TypeFromToken(pName->GetTypeToken())) {
-                case mdtTypeDef:
-                    while ((!CompareNestedEntryWithTypeDef(pModule->GetMDImport(),
-                                                           mdEncloser,
-                                                           pClsModule->GetAvailableClassHash(),
-                                                           pBucket->GetEncloser())) &&
-                           (pBucket = pTable->FindNextNestedClass(pName, pData, &sContext)) != NULL);
-                    break;
-                case mdtTypeRef:
-                    while ((!CompareNestedEntryWithTypeRef(pModule->GetMDImport(),
-                                                           mdEncloser,
-                                                           pClsModule->GetAvailableClassHash(),
-                                                           pBucket->GetEncloser())) &&
-                           (pBucket = pTable->FindNextNestedClass(pName, pData, &sContext)) != NULL);
-                    break;
-                case mdtExportedType:
-                    while ((!CompareNestedEntryWithExportedType(pModule->GetAssembly()->GetManifestImport(),
-                                                                mdEncloser,
-                                                                pClsModule->GetAvailableClassHash(),
-                                                                pBucket->GetEncloser())) &&
-                           (pBucket = pTable->FindNextNestedClass(pName, pData, &sContext)) != NULL);
-                    break;
-                default:
-                    while ((pBucket->GetEncloser() != pName->GetBucket())  &&
-                           (pBucket = pTable->FindNextNestedClass(pName, pData, &sContext)) != NULL);
-                }
-            }
-            if (pBucket) // break on the first success
-                break;
-        }
-    }
-    else {
-        // Check if this non-nested class is in the table of available classes.
-        ModuleIterator i = GetAssembly()->IterateModules();
-        Module *pModule = NULL;
-
-        while (i.Next()) {
-            pModule = i.GetModule();
-            // i.Next will not return TRUE unless i.GetModule will return non-NULL.
-            PREFIX_ASSUME(pModule != NULL);
-            if (pModule->IsResource())
-                continue;
-            if (pLookInThisModuleOnly && (pModule != pLookInThisModuleOnly))
-                continue;
-            
-            PREFIX_ASSUME(pModule!=NULL);
-            EEClassHashTable* pTable = NULL;
-            if (nhTable == nhCaseSensitive)
-                *ppTable = pTable = pModule->GetAvailableClassHash();
-            else {
-                // currently we support only these two types
-                _ASSERTE(nhTable == nhCaseInsensitive);
-                *ppTable = pTable = pModule->GetAvailableClassCaseInsHash();
-
-                // We have not built the table yet - the caller will handle
                 if (pTable == NULL)
-                    return NULL;
+                {
+                    // We have not built the table yet - the caller will handle
+                    pFoundEntry->SetClassHashBasedEntryValue(NULL);
+                    needsToBuildHashtable = TRUE;
+                    return;
+                }
+            }
+            _ASSERTE(pTable);
+
+            if (isNested)
+            {
+                Module *pNameModule = pName->GetTypeModule();
+                PREFIX_ASSUME(pNameModule != NULL);
+
+                EEClassHashTable::LookupContext sContext;
+                if ((pBucket = pTable->GetValue(pName, pData, TRUE, &sContext)) != NULL)
+                {
+                    switch (TypeFromToken(pName->GetTypeToken()))
+                    {
+                    case mdtTypeDef:
+                        while ((!CompareNestedEntryWithTypeDef(pNameModule->GetMDImport(),
+                                                               mdEncloser,
+                                                               pCurrentClsModule->GetAvailableClassHash(),
+                                                               pBucket->GetEncloser())) &&
+                                                               (pBucket = pTable->FindNextNestedClass(pName, pData, &sContext)) != NULL);
+                        break;
+                    case mdtTypeRef:
+                        while ((!CompareNestedEntryWithTypeRef(pNameModule->GetMDImport(),
+                                                               mdEncloser,
+                                                               pCurrentClsModule->GetAvailableClassHash(),
+                                                               pBucket->GetEncloser())) &&
+                                                               (pBucket = pTable->FindNextNestedClass(pName, pData, &sContext)) != NULL);
+                        break;
+                    case mdtExportedType:
+                        while ((!CompareNestedEntryWithExportedType(pNameModule->GetAssembly()->GetManifestImport(),
+                                                                    mdEncloser,
+                                                                    pCurrentClsModule->GetAvailableClassHash(),
+                                                                    pBucket->GetEncloser())) &&
+                                                                    (pBucket = pTable->FindNextNestedClass(pName, pData, &sContext)) != NULL);
+                        break;
+                    default:
+                        while ((pBucket->GetEncloser() != pName->GetBucket().GetClassHashBasedEntryValue()) &&
+                            (pBucket = pTable->FindNextNestedClass(pName, pData, &sContext)) != NULL);
+                    }
+                }
+            }
+            else
+            {
+                pBucket = pTable->GetValue(pName, pData, FALSE, NULL);
             }
 
-            _ASSERTE(pTable);
-            pBucket = pTable->GetValue(pName, pData, FALSE, NULL);
-            if (pBucket) // break on the first success
-                break;
+            if (pBucket) // Return on the first success
+            {
+                pFoundEntry->SetClassHashBasedEntryValue(pBucket);
+                return;
+            }
         }
     }
 
-    return pBucket;
+    // No results found: default to a NULL EEClassHashEntry_t result
+    pFoundEntry->SetClassHashBasedEntryValue(NULL);
 }
 
 #ifndef DACCESS_COMPILE
@@ -1003,8 +980,7 @@ VOID ClassLoader::PopulateAvailableClassHashTable(Module* pModule,
     SString            ssFileName;
     StackScratchBuffer ssFileNameBuffer;
     
-    if (pModule->GetAssembly()->IsWinMD() && 
-        !pModule->IsIntrospectionOnly())
+    if (pModule->GetAssembly()->IsWinMD())
     {   // WinMD file in execution context (not ReflectionOnly context) - use its file name as WinRT namespace prefix 
         //  (Windows requirement)
         // Note: Reflection can work on 'unfinished' WinMD files where the types are in 'wrong' WinMD file (i.e. 
@@ -1040,6 +1016,54 @@ VOID ClassLoader::PopulateAvailableClassHashTable(Module* pModule,
 }
 
 
+void ClassLoader::LazyPopulateCaseSensitiveHashTables()
+{
+    CONTRACTL
+    {
+        INSTANCE_CHECK;
+        THROWS;
+        GC_TRIGGERS;
+        MODE_ANY;
+        INJECT_FAULT(COMPlusThrowOM());
+    }
+    CONTRACTL_END;
+
+    AllocMemTracker amTracker;
+    ModuleIterator i = GetAssembly()->IterateModules();
+
+    // Create a case-sensitive hashtable for each module, and fill it with the module's typedef entries
+    while (i.Next())
+    {
+        Module *pModule = i.GetModule();
+        PREFIX_ASSUME(pModule != NULL);
+        if (pModule->IsResource())
+            continue;
+
+        // Lazy construction of the case-sensitive hashtable of types is *only* a scenario for ReadyToRun images
+        // (either images compiled with an old version of crossgen, or for case-insensitive type lookups in R2R modules)
+        _ASSERT(pModule->IsReadyToRun());
+
+        EEClassHashTable * pNewClassHash = EEClassHashTable::Create(pModule, AVAILABLE_CLASSES_HASH_BUCKETS, FALSE /* bCaseInsensitive */, &amTracker);
+        pModule->SetAvailableClassHash(pNewClassHash);
+
+        PopulateAvailableClassHashTable(pModule, &amTracker);
+    }
+
+    // Add exported types of the manifest module to the hashtable
+    if (!GetAssembly()->GetManifestModule()->IsResource())
+    {
+        IMDInternalImport * pManifestImport = GetAssembly()->GetManifestImport();
+        HENUMInternalHolder phEnum(pManifestImport);
+        phEnum.EnumInit(mdtExportedType, mdTokenNil);
+
+        mdToken mdExportedType;
+        while (pManifestImport->EnumNext(&phEnum, &mdExportedType))
+            AddExportedTypeHaveLock(GetAssembly()->GetManifestModule(), mdExportedType, &amTracker);
+    }
+
+    amTracker.SuppressRelease();
+}
+
 void ClassLoader::LazyPopulateCaseInsensitiveHashTables()
 {
     CONTRACTL
@@ -1052,19 +1076,27 @@ void ClassLoader::LazyPopulateCaseInsensitiveHashTables()
     }
     CONTRACTL_END;
 
+    if (!GetAssembly()->GetManifestModule()->IsResource() && GetAssembly()->GetManifestModule()->GetAvailableClassHash() == NULL)
+    {
+        // This is a R2R assembly, and a case insensitive type lookup was triggered. 
+        // Construct the case-sensitive table first, since the case-insensitive table 
+        // create piggy-backs on the first.
+        LazyPopulateCaseSensitiveHashTables();
+    }
 
     // Add any unhashed modules into our hash tables, and try again.
-
+    
+    AllocMemTracker amTracker;
     ModuleIterator i = GetAssembly()->IterateModules();
 
-    while (i.Next()) {
+    while (i.Next()) 
+    {
         Module *pModule = i.GetModule();
-        PREFIX_ASSUME(pModule!=NULL);
         if (pModule->IsResource())
             continue;
 
-        if (pModule->GetAvailableClassCaseInsHash() == NULL) {
-            AllocMemTracker amTracker;
+        if (pModule->GetAvailableClassCaseInsHash() == NULL) 
+        {
             EEClassHashTable *pNewClassCaseInsHash = pModule->GetAvailableClassHash()->MakeCaseInsensitiveTable(pModule, &amTracker);
 
             LOG((LF_CLASSLOADER, LL_INFO10, "%s's classes being added to case insensitive hash table\n",
@@ -1109,7 +1141,6 @@ TypeHandle ClassLoader::LoadConstructedTypeThrowing(TypeKey *pKey,
         if (FORBIDGC_LOADER_USE_ENABLED()) GC_NOTRIGGER; else GC_TRIGGERS;
         if (FORBIDGC_LOADER_USE_ENABLED()) FORBID_FAULT; else { INJECT_FAULT(COMPlusThrowOM()); }
         if (FORBIDGC_LOADER_USE_ENABLED() || fLoadTypes != LoadTypes) { LOADS_TYPE(CLASS_LOAD_BEGIN); } else { LOADS_TYPE(level); }
-        if (fLoadTypes == DontLoadTypes) SO_TOLERANT; else SO_INTOLERANT;
         PRECONDITION(CheckPointer(pKey));
         PRECONDITION(level > CLASS_LOAD_BEGIN && level <= CLASS_LOADED);
         PRECONDITION(CheckPointer(pInstContext, NULL_OK));
@@ -1197,8 +1228,6 @@ void ClassLoader::EnsureLoaded(TypeHandle typeHnd, ClassLoadLevel level)
 
     if (typeHnd.GetLoadLevel() < level)
     {
-        INTERIOR_STACK_PROBE_CHECK_THREAD;
-
 #ifdef FEATURE_PREJIT
         if (typeHnd.GetLoadLevel() == CLASS_LOAD_UNRESTOREDTYPEKEY)
         {
@@ -1212,8 +1241,6 @@ void ClassLoader::EnsureLoaded(TypeHandle typeHnd, ClassLoadLevel level)
             Module *pLoaderModule = ComputeLoaderModule(&typeKey);
             pLoaderModule->GetClassLoader()->LoadTypeHandleForTypeKey(&typeKey, typeHnd, level);
         }
-
-        END_INTERIOR_STACK_PROBE;
     }
 
 #endif // DACCESS_COMPILE
@@ -1249,6 +1276,9 @@ TypeHandle ClassLoader::LookupTypeKeyUnderLock(TypeKey *pKey,
     WRAPPER_NO_CONTRACT;
     SUPPORTS_DAC;
 
+    // m_AvailableTypesLock has to be taken in cooperative mode to avoid deadlocks during GC
+    GCX_MAYBE_COOP_NO_THREAD_BROKEN(!IsGCThread());
+
     CrstHolder ch(pLock);
     return pTable->GetValue(pKey);
 }
@@ -1273,20 +1303,7 @@ TypeHandle ClassLoader::LookupTypeKey(TypeKey *pKey,
 
     TypeHandle th;
 
-    // If this is the GC thread, and we're hosted, we're in a sticky situation with
-    // SQL where we may have suspended another thread while doing Thread::SuspendRuntime.
-    // In this case, we have the issue that a thread holding this lock could be
-    // suspended, perhaps implicitly because the active thread on the SQL scheduler
-    // has been suspended by the GC thread. In such a case, we need to skip taking
-    // the lock. We can be sure that there will be no races in such a condition because
-    // we will only be looking for types that are already loaded, or for a type that
-    // is not loaded, but we will never cause the type to get loaded, and so the result
-    // of the lookup will not change.
-#ifndef DACCESS_COMPILE
-    if (fCheckUnderLock && !(IsGCThread() && CLRTaskHosted()))
-#else
     if (fCheckUnderLock)
-#endif // DACCESS_COMPILE
     {
         th = LookupTypeKeyUnderLock(pKey, pTable, pLock);
     }
@@ -1426,179 +1443,6 @@ TypeHandle ClassLoader::LookupTypeHandleForTypeKeyInner(TypeKey *pKey, BOOL fChe
     return TypeHandle();
 }
 
-
-//---------------------------------------------------------------------------
-// ClassLoader::TryFindDynLinkZapType
-//
-// This is a major routine in the process of finding and using
-// zapped generic instantiations (excluding those which were zapped into
-// their PreferredZapModule).
-//
-// DynLinkZapItems are generic instantiations that may have been NGEN'd
-// into more than one NGEN image (e.g. the code and TypeHandle for 
-// List<int> may in principle be zapped into several client images - it is theoretically
-// an NGEN policy decision about how often this done, though for now we
-// have hard-baked a strategy).  
-// 
-// There are lots of potential problems with this kind of duplication 
-// and the way we get around nearly all of these is to make sure that
-// we only use one at most one "unique" copy of each item 
-// at runtime. Thus we keep tables in the SharedDomain and the AppDomain indicating
-// which unique items have been chosen.  If an item is "loaded" by this technique
-// then it will not be loaded by any other technique.
-//
-// Note generic instantiations may have the good fortune to be zapped 
-// into the "PreferredZapModule".  If so we can eager bind to them and
-// they will not be considered to be DynLinkZapItems.  We always
-// look in the PreferredZapModule first, and we do not add an entry to the
-// DynLinkZapItems table for this case.
-//
-// Zap references to DynLinkZapItems are always via encoded fixups, except 
-// for a few intra-module references when one DynLinkZapItem is "TightlyBound"
-// to another, e.g. an canonical DynLinkZap MethodTable may directly refer to 
-// its EEClass - this is because we know that if one is used at runtime then the
-// other will also be.  These items should be thought of as together constituting
-// one DynLinkedZapItem.
-//
-// This function section searches for a copy of the instantiation in various NGEN images.
-// This is effectively like doing a load since we are choosing which copy of the instantiation
-// to use from among a number of potential candidates.  We have to have the loading lock
-// for this item before we can do this to make sure no other threads choose a
-// different copy of the instantiation, and that no other threads are JIT-loading
-// the instantiation.
-
-
-
-#ifndef DACCESS_COMPILE
-#ifdef FEATURE_FULL_NGEN
-/* static */
-TypeHandle ClassLoader::TryFindDynLinkZapType(TypeKey *pKey)
-{
-    CONTRACTL
-    {
-        THROWS;
-        GC_TRIGGERS; 
-        INJECT_FAULT(COMPlusThrowOM());
-        PRECONDITION(CheckPointer(pKey));
-        PRECONDITION(pKey->IsConstructed());
-        MODE_ANY;
-    }
-    CONTRACTL_END;
-
-    // For the introspection-only case, we can skip this step as introspection assemblies
-    // do not use NGEN images. 
-    if (pKey->IsIntrospectionOnly())
-        return TypeHandle();
-
-    // Never use dyn link zap items during ngen time. We will independently decide later 
-    // whether we want to store the item into ngen image or not.
-    // Note that it is not good idea to make decisions based on the list of depencies here 
-    // since their list may not be fully populated yet.
-    if (IsCompilationProcess())
-        return TypeHandle();
-
-    TypeHandle th = TypeHandle();
-
-#ifndef CROSSGEN_COMPILE
-    // We need to know which domain the item must live in (DomainNeutral or AppDomain)
-    // Note we can't use the domain from GetLoaderModule()->GetDomain() because at NGEN
-    // time this may not be accurate (we may be deliberately duplicating a domain-neutral
-    // instantiation into a domain-specific image, in the sense that the LoaderModule
-    // returned by ComputeLoaderModule may be the current module being 
-    // NGEN'd)....
-    
-    BaseDomain * pRequiredDomain = BaseDomain::ComputeBaseDomain(pKey);
-    
-    // Next look in each ngen'ed image in turn
-    
-    // Searching the shared domain and the app domain are slightly different.
-    if (pRequiredDomain->IsSharedDomain())
-    {
-        // This switch to cooperative mode makes the iteration below thread safe. It ensures that the underlying 
-        // async HashMap storage is not going to disapper while we are iterating it. Other uses of SharedAssemblyIterator 
-        // have same problem, but I have fixed just this one as targeted ask mode fix.
-        GCX_COOP();
-
-        // Searching for SharedDomain instantiation involves searching all shared assemblies....
-        // Note we may choose to use an instantiation from an assembly that is from an NGEN
-        // image that is not logically speaking part of the currently running AppDomain.  This
-        // tkaes advantage of the fact that at the moment SharedDomain NGEN images are never unloaded.
-        // Thus SharedDomain NGEN images effectively contribute all their instantiations to all
-        // AppDomains.
-        //
-        // <NOTE> This will have to change if we ever start unloading NGEN images from the SharedDomain </NOTE>
-        SharedDomain::SharedAssemblyIterator assem;
-        while (th.IsNull() && assem.Next())
-        {
-            ModuleIterator i = assem.GetAssembly()->IterateModules();
-
-            while (i.Next())
-            {
-                Module *pModule = i.GetModule();
-                if (!pModule->HasNativeImage())
-                    continue;
-
-                // If the module hasn't reached FILE_LOADED in some domain, it cannot provide candidate instantiations
-                if (!pModule->IsReadyForTypeLoad())
-                    continue;
-
-                TypeHandle thFromZapModule = pModule->GetAvailableParamTypes()->GetValue(pKey);
-                
-                // Check that the item really is a zapped item, i.e. that it has not been JIT-loaded to the module
-                if (thFromZapModule.IsNull() || !thFromZapModule.IsZapped())
-                    continue;
-
-                th = thFromZapModule;
-            }
-        }
-    }
-    else
-    {
-        // Searching for domain specific instantiation involves searching all 
-        // domain-specific assemblies in the relevant AppDomain....
-
-        AppDomain * pDomain = pRequiredDomain->AsAppDomain();
-        
-        _ASSERTE(!(pKey->IsIntrospectionOnly()));
-        AppDomain::AssemblyIterator assemblyIterator = pDomain->IterateAssembliesEx(
-            (AssemblyIterationFlags)(kIncludeLoaded | kIncludeExecution));
-        CollectibleAssemblyHolder<DomainAssembly *> pDomainAssembly;
-        
-        while (th.IsNull() && assemblyIterator.Next(pDomainAssembly.This()))
-        {
-            CollectibleAssemblyHolder<Assembly *> pAssembly = pDomainAssembly->GetLoadedAssembly();
-            // Make sure the domain of the NGEN'd images associated with the assembly matches...
-            if (pAssembly->GetDomain() == pRequiredDomain)
-            {
-                DomainAssembly::ModuleIterator i = pDomainAssembly->IterateModules(kModIterIncludeLoaded);
-                while (th.IsNull() && i.Next())
-                {
-                    Module * pModule = i.GetLoadedModule();
-                    if (!pModule->HasNativeImage())
-                        continue;
-
-                    // If the module hasn't reached FILE_LOADED in some domain, it cannot provide candidate instantiations
-                    if (!pModule->IsReadyForTypeLoad())
-                        continue;
-
-                    TypeHandle thFromZapModule = pModule->GetAvailableParamTypes()->GetValue(pKey);
-                        
-                    // Check that the item really is a zapped item
-                    if (thFromZapModule.IsNull() || !thFromZapModule.IsZapped())
-                        continue;
-
-                    th = thFromZapModule;
-                }
-            }
-        }
-    }
-#endif // CROSSGEN_COMPILE
-
-    return th;
-}
-#endif // FEATURE_FULL_NGEN
-#endif // !DACCESS_COMPILE
-
 // FindClassModuleThrowing discovers which module the type you're looking for is in and loads the Module if necessary.
 // Basically, it iterates through all of the assembly's modules until a name match is found in a module's
 // AvailableClassHashTable.
@@ -1630,14 +1474,13 @@ TypeHandle ClassLoader::TryFindDynLinkZapType(TypeKey *pKey)
 //        Module/typedef stuff and give you the actual TypeHandle.
 //
 //
-BOOL 
-ClassLoader::FindClassModuleThrowing(
+BOOL ClassLoader::FindClassModuleThrowing(
     const NameHandle *    pOriginalName, 
     TypeHandle *          pType, 
     mdToken *             pmdClassToken, 
     Module **             ppModule, 
     mdToken *             pmdFoundExportedType, 
-    EEClassHashEntry_t ** ppEntry, 
+    HashedTypeEntry *     pFoundEntry,
     Module *              pLookInThisModuleOnly, 
     Loader::LoadFlag      loadFlag)
 {
@@ -1741,43 +1584,70 @@ ClassLoader::FindClassModuleThrowing(
 
     HashDatum Data;
     EEClassHashTable * pTable = NULL;
-    EEClassHashEntry_t * pBucket = GetClassValue(
-        nhTable, 
-        pName, 
-        &Data, 
-        &pTable, 
-        pLookInThisModuleOnly);
+    HashedTypeEntry foundEntry;
+    BOOL needsToBuildHashtable;
+    GetClassValue(nhTable, pName, &Data, &pTable, pLookInThisModuleOnly, &foundEntry, loadFlag, needsToBuildHashtable);
 
-    if (pBucket == NULL)
+    // In the case of R2R modules, the search is only performed in the hashtable saved in the 
+    // R2R image, and this is why we return (whether we found a valid typedef token or not).
+    // Note: case insensitive searches are not used/supported in R2R images.
+    if (foundEntry.GetEntryType() == HashedTypeEntry::EntryType::IsHashedTokenEntry)
     {
-        if (nhTable == nhCaseInsensitive)
+        *pType = TypeHandle();
+        HashedTypeEntry::TokenTypeEntry tokenAndModulePair = foundEntry.GetTokenBasedEntryValue();
+        switch (TypeFromToken(tokenAndModulePair.m_TypeToken))
         {
-            AvailableClasses_LockHolder lh(this);
+        case mdtTypeDef:
+            *pmdClassToken = tokenAndModulePair.m_TypeToken;
+            *pmdFoundExportedType = mdTokenNil;
+            break;
+        case mdtExportedType:
+            *pmdClassToken = mdTokenNil;
+            *pmdFoundExportedType = tokenAndModulePair.m_TypeToken;
+            break;
+        default:
+            _ASSERT(false);
+            return FALSE;
+        }
+        *ppModule = tokenAndModulePair.m_pModule;
+        if (pFoundEntry != NULL)
+            *pFoundEntry = foundEntry;
 
-            // Try again with the lock.  This will protect against another thread reallocating
-            // the hash table underneath us
-            pBucket = GetClassValue(
-                nhTable, 
-                pName, 
-                &Data, 
-                &pTable, 
-                pLookInThisModuleOnly);
+        return TRUE;
+    }
+
+    EEClassHashEntry_t * pBucket = foundEntry.GetClassHashBasedEntryValue();
+
+    if (pBucket == NULL && needsToBuildHashtable)
+    {
+        AvailableClasses_LockHolder lh(this);
+
+        // Try again with the lock.  This will protect against another thread reallocating
+        // the hash table underneath us
+        GetClassValue(nhTable, pName, &Data, &pTable, pLookInThisModuleOnly, &foundEntry, loadFlag, needsToBuildHashtable);
+        pBucket = foundEntry.GetClassHashBasedEntryValue();
 
 #ifndef DACCESS_COMPILE
-            if ((pBucket == NULL) && (m_cUnhashedModules > 0))
+        if ((pBucket == NULL) && (m_cUnhashedModules > 0))
+        {
+            _ASSERT(needsToBuildHashtable);
+
+            if (nhTable == nhCaseInsensitive)
             {
                 LazyPopulateCaseInsensitiveHashTables();
-
-                // Try yet again with the new classes added
-                pBucket = GetClassValue(
-                    nhTable, 
-                    pName, 
-                    &Data, 
-                    &pTable, 
-                    pLookInThisModuleOnly);
             }
-#endif
+            else
+            {
+                // Note: This codepath is only valid for R2R scenarios
+                LazyPopulateCaseSensitiveHashTables();
+            }
+
+            // Try yet again with the new classes added
+            GetClassValue(nhTable, pName, &Data, &pTable, pLookInThisModuleOnly, &foundEntry, loadFlag, needsToBuildHashtable);
+            pBucket = foundEntry.GetClassHashBasedEntryValue();
+            _ASSERT(!needsToBuildHashtable);
         }
+#endif
     }
 
     if (pBucket == NULL)
@@ -1807,9 +1677,9 @@ ClassLoader::FindClassModuleThrowing(
         _ASSERTE(!t.IsNull());
 
         *pType = t;
-        if (ppEntry != NULL)
+        if (pFoundEntry != NULL)
         {
-            *ppEntry = pBucket;
+            pFoundEntry->SetClassHashBasedEntryValue(pBucket);
         }
         return TRUE;
     }
@@ -1826,9 +1696,9 @@ ClassLoader::FindClassModuleThrowing(
     }
 
     *pType = TypeHandle();
-    if (ppEntry != NULL)
+    if (pFoundEntry != NULL)
     {
-        *ppEntry = pBucket;
+        pFoundEntry->SetClassHashBasedEntryValue(pBucket);
     }
     return TRUE;
 } // ClassLoader::FindClassModuleThrowing
@@ -1899,11 +1769,9 @@ ClassLoader::LoadTypeHandleThrowing(
     } CONTRACT_END
 
     TypeHandle typeHnd;
-    INTERIOR_STACK_PROBE_NOTHROW_CHECK_THREAD(RETURN_FROM_INTERIOR_PROBE(TypeHandle()));
-
     Module * pFoundModule = NULL;
     mdToken FoundCl;
-    EEClassHashEntry_t * pEntry = NULL;
+    HashedTypeEntry foundEntry;
     mdExportedType FoundExportedType = mdTokenNil;
 
     UINT32 cLoopIterations = 0;
@@ -1931,18 +1799,18 @@ ClassLoader::LoadTypeHandleThrowing(
                 &FoundCl, 
                 &pFoundModule, 
                 &FoundExportedType, 
-                &pEntry, 
+                &foundEntry,
                 pLookInThisModuleOnly, 
                 pName->OKToLoad() ? Loader::Load 
                                   : Loader::DontLoad))
         {   // Didn't find anything, no point looping indefinitely
             break;
         }
-        _ASSERTE(pEntry != NULL);
+        _ASSERTE(!foundEntry.IsNull());
 
         if (pName->GetTypeToken() == mdtBaseType)
         {   // We should return the found bucket in the pName
-            pName->SetBucket(pEntry);
+            pName->SetBucket(foundEntry);
         }
 
         if (!typeHnd.IsNull())
@@ -1970,8 +1838,7 @@ ClassLoader::LoadTypeHandleThrowing(
             BOOL fTrustTD = TRUE;
 #ifndef DACCESS_COMPILE
             CONTRACT_VIOLATION(ThrowsViolation);
-            BOOL fVerifyTD = (FoundExportedType != mdTokenNil) &&
-                             !pClsLdr->GetAssembly()->GetSecurityDescriptor()->IsFullyTrusted();
+            BOOL fVerifyTD = FALSE;
             
             // If this is an exported type with a mdTokenNil class token, then then
             // exported type did not give a typedefID hint. We won't be able to trust the typedef
@@ -2032,14 +1899,18 @@ ClassLoader::LoadTypeHandleThrowing(
         else
         {   //#LoadTypeHandle_TypeForwarded
             // pName is a host instance so it's okay to set fields in it in a DAC build
-            EEClassHashEntry_t * pBucket = pName->GetBucket();
+            HashedTypeEntry& bucket = pName->GetBucket();
 
-            if (pBucket != NULL)
-            {   // Reset pName's bucket entry
-                
+            // Reset pName's bucket entry
+            if (bucket.GetEntryType() == HashedTypeEntry::IsHashedClassEntry && bucket.GetClassHashBasedEntryValue()->GetEncloser())
+            {
                 // We will be searching for the type name again, so set the nesting/context type to the 
                 // encloser of just found type
-                pName->SetBucket(pBucket->GetEncloser());
+                pName->SetBucket(HashedTypeEntry().SetClassHashBasedEntryValue(bucket.GetClassHashBasedEntryValue()->GetEncloser()));
+            }
+            else
+            {
+                pName->SetBucket(HashedTypeEntry());
             }
 
             // Update the class loader for the new module/token pair.
@@ -2051,15 +1922,15 @@ ClassLoader::LoadTypeHandleThrowing(
         // Replace AvailableClasses Module entry with found TypeHandle
         if (!typeHnd.IsNull() && 
             typeHnd.IsRestored() && 
-            (pEntry != NULL) && 
-            (pEntry->GetData() != typeHnd.AsPtr()))
+            foundEntry.GetEntryType() == HashedTypeEntry::EntryType::IsHashedClassEntry &&
+            (foundEntry.GetClassHashBasedEntryValue() != NULL) && 
+            (foundEntry.GetClassHashBasedEntryValue()->GetData() != typeHnd.AsPtr()))
         {
-            pEntry->SetData(typeHnd.AsPtr());
+            foundEntry.GetClassHashBasedEntryValue()->SetData(typeHnd.AsPtr());
         }
 #endif // !DACCESS_COMPILE
     }
 
-    END_INTERIOR_STACK_PROBE;
     RETURN typeHnd;
 } // ClassLoader::LoadTypeHandleThrowing
 
@@ -2654,10 +2525,6 @@ TypeHandle ClassLoader::LoadTypeDefThrowing(Module *pModule,
             RETURN(typeHnd);
     }
 
-    // We don't want to probe on any threads except for those with a managed thread.  This function
-    // can be called from the GC thread etc. so need to control how we probe.
-    INTERIOR_STACK_PROBE_NOTHROW_CHECK_THREAD(goto Exit;);
-
     IMDInternalImport *pInternalImport = pModule->GetMDImport();
 
 #ifndef DACCESS_COMPILE
@@ -2713,63 +2580,60 @@ TypeHandle ClassLoader::LoadTypeDefThrowing(Module *pModule,
 
             if (pModule->IsReflection())
             {
-                //if (!(pModule->IsIntrospectionOnly()))
+                // Don't try to load types that are not in available table, when this
+                // is an in-memory module.  Raise the type-resolve event instead.
+                typeHnd = TypeHandle();
+
+                // Avoid infinite recursion
+                if (tokenNotToLoad != tdAllAssemblies)
                 {
-                    // Don't try to load types that are not in available table, when this
-                    // is an in-memory module.  Raise the type-resolve event instead.
-                    typeHnd = TypeHandle();
+                    AppDomain* pDomain = SystemDomain::GetCurrentDomain();
 
-                    // Avoid infinite recursion
-                    if (tokenNotToLoad != tdAllAssemblies)
+                    LPUTF8 pszFullName;
+                    LPCUTF8 className;
+                    LPCUTF8 nameSpace;
+                    if (FAILED(pInternalImport->GetNameOfTypeDef(typeDef, &className, &nameSpace)))
                     {
-                        AppDomain* pDomain = SystemDomain::GetCurrentDomain();
+                        LOG((LF_CLASSLOADER, LL_INFO10, "Bogus TypeDef record while loading: 0x%08x\n", typeDef));
+                        typeHnd = TypeHandle();
+                    }
+                    else
+                    {
+                        MAKE_FULL_PATH_ON_STACK_UTF8(pszFullName,
+                                                        nameSpace,
+                                                        className);
+                        GCX_COOP();
+                        ASSEMBLYREF asmRef = NULL;
+                        DomainAssembly *pDomainAssembly = NULL;
+                        GCPROTECT_BEGIN(asmRef);
 
-                        LPUTF8 pszFullName;
-                        LPCUTF8 className;
-                        LPCUTF8 nameSpace;
-                        if (FAILED(pInternalImport->GetNameOfTypeDef(typeDef, &className, &nameSpace)))
+                        pDomainAssembly = pDomain->RaiseTypeResolveEventThrowing(
+                            pModule->GetAssembly()->GetDomainAssembly(), 
+                            pszFullName, &asmRef);
+
+                        if (asmRef != NULL)
                         {
-                            LOG((LF_CLASSLOADER, LL_INFO10, "Bogus TypeDef record while loading: 0x%08x\n", typeDef));
-                            typeHnd = TypeHandle();
-                        }
-                        else
-                        {
-                            MAKE_FULL_PATH_ON_STACK_UTF8(pszFullName,
-                                                         nameSpace,
-                                                         className);
-                            GCX_COOP();
-                            ASSEMBLYREF asmRef = NULL;
-                            DomainAssembly *pDomainAssembly = NULL;
-                            GCPROTECT_BEGIN(asmRef);
-
-                            pDomainAssembly = pDomain->RaiseTypeResolveEventThrowing(
-                                pModule->GetAssembly()->GetDomainAssembly(), 
-                                pszFullName, &asmRef);
-
-                            if (asmRef != NULL)
+                            _ASSERTE(pDomainAssembly != NULL);
+                            if (pDomainAssembly->GetAssembly()->GetLoaderAllocator()->IsCollectible())
                             {
-                                _ASSERTE(pDomainAssembly != NULL);
-                                if (pDomainAssembly->GetAssembly()->GetLoaderAllocator()->IsCollectible())
+                                if (!pModule->GetLoaderAllocator()->IsCollectible())
                                 {
-                                    if (!pModule->GetLoaderAllocator()->IsCollectible())
-                                    {
-                                        LOG((LF_CLASSLOADER, LL_INFO10, "Bad result from TypeResolveEvent while loader TypeDef record: 0x%08x\n", typeDef));
-                                        COMPlusThrow(kNotSupportedException, W("NotSupported_CollectibleBoundNonCollectible"));
-                                    }
-
-                                    pModule->GetLoaderAllocator()->EnsureReference(pDomainAssembly->GetAssembly()->GetLoaderAllocator());
+                                    LOG((LF_CLASSLOADER, LL_INFO10, "Bad result from TypeResolveEvent while loader TypeDef record: 0x%08x\n", typeDef));
+                                    COMPlusThrow(kNotSupportedException, W("NotSupported_CollectibleBoundNonCollectible"));
                                 }
+
+                                pModule->GetLoaderAllocator()->EnsureReference(pDomainAssembly->GetAssembly()->GetLoaderAllocator());
                             }
-                            GCPROTECT_END();
-                            if (pDomainAssembly != NULL)
-                            {
-                                Assembly *pAssembly = pDomainAssembly->GetAssembly();
+                        }
+                        GCPROTECT_END();
+                        if (pDomainAssembly != NULL)
+                        {
+                            Assembly *pAssembly = pDomainAssembly->GetAssembly();
                                 
-                                NameHandle name(nameSpace, className);
-                                name.SetTypeToken(pModule, typeDef);
-                                name.SetTokenNotToLoad(tdAllAssemblies);
-                                typeHnd = pAssembly->GetLoader()->LoadTypeHandleThrowing(&name, level);
-                            }
+                            NameHandle name(nameSpace, className);
+                            name.SetTypeToken(pModule, typeDef);
+                            name.SetTokenNotToLoad(tdAllAssemblies);
+                            typeHnd = pAssembly->GetLoader()->LoadTypeHandleThrowing(&name, level);
                         }
                     }
                 }
@@ -2785,11 +2649,6 @@ TypeHandle ClassLoader::LoadTypeDefThrowing(Module *pModule,
 #endif // !DACCESS_COMPILE
     }
 
-// If stack guards are disabled, then this label is unreferenced and produces a compile error.
-#if defined(FEATURE_STACK_PROBE) && !defined(DACCESS_COMPILE)
-Exit:
-#endif
-
 #ifndef DACCESS_COMPILE
     if ((fUninstantiated == FailIfUninstDefOrRef) && !typeHnd.IsNull() && typeHnd.IsGenericTypeDefinition())
     {
@@ -2804,7 +2663,6 @@ Exit:
     }
 #endif
     ;
-    END_INTERIOR_STACK_PROBE;
     
     RETURN(typeHnd);
 }
@@ -3486,48 +3344,22 @@ TypeHandle ClassLoader::CreateTypeHandleForTypeKey(TypeKey* pKey, AllocMemTracke
     }
     else if (pKey->HasInstantiation())
     {
-#ifdef FEATURE_FULL_NGEN
-        // Try to find the type in an NGEN'd image.
-        typeHnd = TryFindDynLinkZapType(pKey);
-
-        if (!typeHnd.IsNull())
+        if (IsCanonicalGenericInstantiation(pKey->GetInstantiation()))
         {
-#ifdef _DEBUG
-            if (LoggingOn(LF_CLASSLOADER, LL_INFO10000))
-            {
-                SString name;
-                TypeString::AppendTypeKeyDebug(name, pKey);
-                LOG((LF_CLASSLOADER, LL_INFO10000, "GENERICS:CreateTypeHandleForTypeKey: found dyn-link ngen type %S with pointer %p in module %S\n", name.GetUnicode(), typeHnd.AsPtr(),
-                     typeHnd.GetLoaderModule()->GetDebugName()));
-            }
-#endif
-            if (typeHnd.GetLoadLevel() == CLASS_LOAD_UNRESTOREDTYPEKEY)
-            {
-                OVERRIDE_TYPE_LOAD_LEVEL_LIMIT(CLASS_LOADED);
-
-                typeHnd.DoRestoreTypeKey();
-            }
+            typeHnd = CreateTypeHandleForTypeDefThrowing(pKey->GetModule(),
+                                                            pKey->GetTypeToken(),
+                                                            pKey->GetInstantiation(),
+                                                            pamTracker);
         }
         else 
-#endif // FEATURE_FULL_NGEN
         {
-            if (IsCanonicalGenericInstantiation(pKey->GetInstantiation()))
-            {
-                typeHnd = CreateTypeHandleForTypeDefThrowing(pKey->GetModule(),
-                                                                pKey->GetTypeToken(),
-                                                                pKey->GetInstantiation(),
-                                                                pamTracker);
-            }
-            else 
-            {
-                typeHnd = CreateTypeHandleForNonCanonicalGenericInstantiation(pKey,
-                                                                                            pamTracker);
-            }
-#if defined(_DEBUG) && !defined(CROSSGEN_COMPILE)
-            if (Nullable::IsNullableType(typeHnd)) 
-                Nullable::CheckFieldOffsets(typeHnd);
-#endif
+            typeHnd = CreateTypeHandleForNonCanonicalGenericInstantiation(pKey,
+                                                                                        pamTracker);
         }
+#if defined(_DEBUG) && !defined(CROSSGEN_COMPILE)
+        if (Nullable::IsNullableType(typeHnd)) 
+            Nullable::CheckFieldOffsets(typeHnd);
+#endif
     }
     else if (pKey->GetKind() == ELEMENT_TYPE_FNPTR) 
     {
@@ -3540,29 +3372,38 @@ TypeHandle ClassLoader::CreateTypeHandleForTypeKey(TypeKey* pKey, AllocMemTracke
             
         typeHnd = TypeHandle(new(mem)  FnPtrTypeDesc(pKey->GetCallConv(), numArgs, pKey->GetRetAndArgTypes()));
     }
-    else 
-    {            
+    else
+    {
         Module *pLoaderModule = ComputeLoaderModule(pKey);
         PREFIX_ASSUME(pLoaderModule!=NULL);
 
         CorElementType kind = pKey->GetKind();
         TypeHandle paramType = pKey->GetElementType();
         MethodTable *templateMT;
-        
+
         // Create a new type descriptor and insert into constructed type table
         if (CorTypeInfo::IsArray(kind)) 
-        {                
-            DWORD rank = pKey->GetRank();                
+        {
+            DWORD rank = pKey->GetRank();
             THROW_BAD_FORMAT_MAYBE((kind != ELEMENT_TYPE_ARRAY) || rank > 0, BFA_MDARRAY_BADRANK, pLoaderModule);
             THROW_BAD_FORMAT_MAYBE((kind != ELEMENT_TYPE_SZARRAY) || rank == 1, BFA_SDARRAY_BADRANK, pLoaderModule);
-            
+
             // Arrays of BYREFS not allowed
-            if (paramType.GetInternalCorElementType() == ELEMENT_TYPE_BYREF || 
-                paramType.GetInternalCorElementType() == ELEMENT_TYPE_TYPEDBYREF)
+            if (paramType.GetInternalCorElementType() == ELEMENT_TYPE_BYREF)
             {
-                ThrowTypeLoadException(pKey, IDS_CLASSLOAD_CANTCREATEARRAYCLASS);
+                ThrowTypeLoadException(pKey, IDS_CLASSLOAD_BYREFARRAY);
             }
-                
+
+            // Arrays of ByRefLike types not allowed
+            MethodTable* pMT = paramType.GetMethodTable();
+            if (pMT != NULL)
+            {
+                if (pMT->IsByRefLike())
+                {
+                    ThrowTypeLoadException(pKey, IDS_CLASSLOAD_BYREFLIKEARRAY);
+                }
+            }
+
             // We really don't need this check anymore.
             if (rank > MAX_RANK)
             {
@@ -3575,14 +3416,17 @@ TypeHandle ClassLoader::CreateTypeHandleForTypeKey(TypeKey* pKey, AllocMemTracke
             typeHnd = TypeHandle(new(mem)  ArrayTypeDesc(templateMT, paramType));
         }
         else 
-        {            
+        {
             // no parameterized type allowed on a reference
-            if (paramType.GetInternalCorElementType() == ELEMENT_TYPE_BYREF || 
+            if (paramType.GetInternalCorElementType() == ELEMENT_TYPE_BYREF ||
                 paramType.GetInternalCorElementType() == ELEMENT_TYPE_TYPEDBYREF)
             {
                 ThrowTypeLoadException(pKey, IDS_CLASSLOAD_GENERAL);
             }
-                
+
+            // We do allow parametrized types of ByRefLike types. Languages may restrict them to produce safe or verifiable code, 
+            // but there is not a good reason for restricting them in the runtime.
+
             // let <Type>* type have a method table
             // System.UIntPtr's method table is used for types like int*, void *, string * etc.
             if (kind == ELEMENT_TYPE_PTR)
@@ -3625,6 +3469,9 @@ TypeHandle ClassLoader::PublishType(TypeKey *pTypeKey, TypeHandle typeHnd)
         Module *pLoaderModule = ComputeLoaderModule(pTypeKey);
         EETypeHashTable *pTable = pLoaderModule->GetAvailableParamTypes();
 
+        // m_AvailableTypesLock has to be taken in cooperative mode to avoid deadlocks during GC
+        GCX_COOP();
+
         CrstHolder ch(&pLoaderModule->GetClassLoader()->m_AvailableTypesLock);
 
         // The type could have been loaded by a different thread as side-effect of avoiding deadlocks caused by LoadsTypeViolation
@@ -3635,44 +3482,44 @@ TypeHandle ClassLoader::PublishType(TypeKey *pTypeKey, TypeHandle typeHnd)
         pTable->InsertValue(typeHnd);
 
 #ifdef _DEBUG
-        // Checks to help ensure that the mscorlib in the ngen process does not get contaminated with pointers to the compilation domains.
+        // Checks to help ensure that the CoreLib in the ngen process does not get contaminated with pointers to the compilation domains.
         if (pLoaderModule->IsSystem() && IsCompilationProcess() && pLoaderModule->HasNativeImage())
         {
             CorElementType kind = pTypeKey->GetKind();
             MethodTable *typeHandleMethodTable = typeHnd.GetMethodTable();
             if ((typeHandleMethodTable != NULL) && (typeHandleMethodTable->GetLoaderAllocator() != pLoaderModule->GetLoaderAllocator()))
             {
-                _ASSERTE(!"MethodTable of type loaded into mscorlib during NGen is not from mscorlib!");
+                _ASSERTE(!"MethodTable of type loaded into CoreLib during NGen is not from CoreLib!");
             }
             if ((kind != ELEMENT_TYPE_FNPTR) && (kind != ELEMENT_TYPE_VAR) && (kind != ELEMENT_TYPE_MVAR))
             {
                 if ((kind == ELEMENT_TYPE_SZARRAY) || (kind == ELEMENT_TYPE_ARRAY) || (kind == ELEMENT_TYPE_BYREF) || (kind == ELEMENT_TYPE_PTR) || (kind == ELEMENT_TYPE_VALUETYPE))
                 {
-                    // Check to ensure param value is also part of mscorlib.
+                    // Check to ensure param value is also part of CoreLib.
                     if (pTypeKey->GetElementType().GetLoaderAllocator() != pLoaderModule->GetLoaderAllocator())
                     {
-                        _ASSERTE(!"Param value of type key used to load type during NGEN not located within mscorlib yet type is placed into mscorlib");
+                        _ASSERTE(!"Param value of type key used to load type during NGEN not located within CoreLib yet type is placed into CoreLib");
                     }
                 }
                 else if (kind == ELEMENT_TYPE_FNPTR)
                 {
-                    // Check to ensure the parameter types of fnptr are in mscorlib
+                    // Check to ensure the parameter types of fnptr are in CoreLib
                     for (DWORD i = 0; i <= pTypeKey->GetNumArgs(); i++)
                     {
                         if (pTypeKey->GetRetAndArgTypes()[i].GetLoaderAllocator() != pLoaderModule->GetLoaderAllocator())
                         {
-                            _ASSERTE(!"Ret or Arg type of function pointer type key used to load type during NGEN not located within mscorlib yet type is placed into mscorlib");
+                            _ASSERTE(!"Ret or Arg type of function pointer type key used to load type during NGEN not located within CoreLib yet type is placed into CoreLib");
                         }
                     }
                 }
                 else if (kind == ELEMENT_TYPE_CLASS)
                 {
-                    // Check to ensure that the generic parameters are all within mscorlib
+                    // Check to ensure that the generic parameters are all within CoreLib
                     for (DWORD i = 0; i < pTypeKey->GetNumGenericArgs(); i++)
                     {
                         if (pTypeKey->GetInstantiation()[i].GetLoaderAllocator() != pLoaderModule->GetLoaderAllocator())
                         {
-                            _ASSERTE(!"Instantiation parameter of generic class type key used to load type during NGEN not located within mscorlib yet type is placed into mscorlib");
+                            _ASSERTE(!"Instantiation parameter of generic class type key used to load type during NGEN not located within CoreLib yet type is placed into CoreLib");
                         }
                     }
                 }
@@ -3689,6 +3536,9 @@ TypeHandle ClassLoader::PublishType(TypeKey *pTypeKey, TypeHandle typeHnd)
     {
         Module *pModule = pTypeKey->GetModule();
         mdTypeDef typeDef = pTypeKey->GetTypeToken();
+
+        // m_AvailableTypesLock has to be taken in cooperative mode to avoid deadlocks during GC
+        GCX_COOP();
 
         CrstHolder ch(&pModule->GetClassLoader()->m_AvailableTypesLock);
 
@@ -3802,10 +3652,6 @@ void ClassLoader::Notify(TypeHandle typeHnd)
             typeHnd.NotifyDebuggerLoad(NULL, FALSE);
         }
 #endif // DEBUGGING_SUPPORTED
-
-#if defined(ENABLE_PERF_COUNTERS)
-        GetPerfCounters().m_Loading.cClassesLoaded ++;
-#endif
     }
 }
 
@@ -3883,15 +3729,6 @@ TypeHandle ClassLoader::LoadTypeHandleForTypeKey(TypeKey *pTypeKey,
 
     GCX_PREEMP();
 
-    // Type loading can be recursive.  Probe for sufficient stack.
-    //
-    // Execution of the FINALLY in LoadTypeHandleForTypeKey_Body can eat 
-    // a lot of stack because LoadTypeHandleForTypeKey_Inner can rethrow 
-    // any non-SO exceptions that it takes, ensure that we have plenty 
-    // of stack before getting into it (>24 pages on AMD64, remember 
-    // that num pages probed is 2*N on AMD64).
-    INTERIOR_STACK_PROBE_FOR(GetThread(),20);
-
 #ifdef _DEBUG
     if (LoggingOn(LF_CLASSLOADER, LL_INFO1000))
     {
@@ -3925,8 +3762,6 @@ TypeHandle ClassLoader::LoadTypeHandleForTypeKey(TypeKey *pTypeKey,
 
     PushFinalLevels(typeHnd, targetLevel, pInstContext);
 
-    END_INTERIOR_STACK_PROBE;
-
     return typeHnd;
 }
 
@@ -3952,9 +3787,6 @@ TypeHandle ClassLoader::LoadTypeHandleForTypeKeyNoLock(TypeKey *pTypeKey,
 
     TypeHandle typeHnd = TypeHandle();
 
-    // Type loading can be recursive.  Probe for sufficient stack.
-    INTERIOR_STACK_PROBE_FOR(GetThread(),8);
-
     ClassLoadLevel currentLevel = CLASS_LOAD_BEGIN;
     ClassLoadLevel targetLevelUnderLock = targetLevel < CLASS_DEPENDENCIES_LOADED ? targetLevel : (ClassLoadLevel) (CLASS_DEPENDENCIES_LOADED-1);
     while (currentLevel < targetLevelUnderLock)
@@ -3965,8 +3797,6 @@ TypeHandle ClassLoader::LoadTypeHandleForTypeKeyNoLock(TypeKey *pTypeKey,
     }
 
     PushFinalLevels(typeHnd, targetLevel, pInstContext);
-
-    END_INTERIOR_STACK_PROBE;
 
     return typeHnd;
 }
@@ -4052,10 +3882,11 @@ ClassLoader::LoadTypeHandleForTypeKey_Body(
 #endif
     }
 
-retry:
     ReleaseHolder<PendingTypeLoadEntry> pLoadingEntry;
+    CrstHolderWithState unresolvedClassLockHolder(&m_UnresolvedClassLock, false);
 
-    CrstHolderWithState unresolvedClassLockHolder(&m_UnresolvedClassLock);
+retry:
+    unresolvedClassLockHolder.Acquire();    
 
     // Is it in the hash of classes currently being loaded?
     pLoadingEntry = m_pUnresolvedClassHash->GetValue(pTypeKey);
@@ -4226,12 +4057,24 @@ retry:
         // Release the lock before proceeding. The unhandled exception filters take number of locks that
         // have ordering violations with this lock.
         unresolvedClassLockHolder.Release();
+        
+        // Unblock any thread waiting to load same type as in TypeLoadEntry
+        pLoadingEntry->UnblockWaiters();
     }
     EX_END_HOOK;
 
     // Unlink this class from the unresolved class list.
     unresolvedClassLockHolder.Acquire();
     m_pUnresolvedClassHash->DeleteValue(pTypeKey);
+    unresolvedClassLockHolder.Release();
+
+    // Unblock any thread waiting to load same type as in TypeLoadEntry. This should be done
+    // after pLoadingEntry is removed from m_pUnresolvedClassHash. Otherwise the other thread
+    // (which was waiting) will keep spinning for a while after waking up, till the current thread removes 
+    //  pLoadingEntry from m_pUnresolvedClassHash. This can cause hang in situation when the current 
+    // thread is a background thread and so will get very less processor cycle to perform subsequent
+    // operations to remove the entry from hash later. 
+    pLoadingEntry->UnblockWaiters();
 
     if (currentLevel < targetLevel)
         goto retry;
@@ -4258,7 +4101,6 @@ ClassLoader::LoadArrayTypeThrowing(
         if (FORBIDGC_LOADER_USE_ENABLED()) GC_NOTRIGGER; else GC_TRIGGERS;
         if (FORBIDGC_LOADER_USE_ENABLED()) FORBID_FAULT; else { INJECT_FAULT(COMPlusThrowOM()); }
         if (FORBIDGC_LOADER_USE_ENABLED() || fLoadTypes != LoadTypes) { LOADS_TYPE(CLASS_LOAD_BEGIN); } else { LOADS_TYPE(level); }
-        if (fLoadTypes == DontLoadTypes) SO_TOLERANT; else SO_INTOLERANT;
         MODE_ANY;
         SUPPORTS_DAC;
         POSTCONDITION(CheckPointer(RETVAL, ((fLoadTypes == LoadTypes) ? NULL_NOT_OK : NULL_OK)));
@@ -4473,29 +4315,7 @@ VOID ClassLoader::AddAvailableClassHaveLock(
                 // However, this used to be allowed in 1.0/1.1, and some third-party DLLs have
                 // been obfuscated so that they have duplicate private typedefs.
                 // We must allow this for old assemblies for app compat reasons
-#ifdef FEATURE_CORECLR
-#ifdef FEATURE_LEGACYNETCF
-                if (!RuntimeIsLegacyNetCF(0))
-#endif
-                {
-                    pModule->GetAssembly()->ThrowBadImageException(pszNameSpace, pszName, BFA_MULT_TYPE_SAME_NAME);
-                }
-#else
-                LPCSTR pszVersion = NULL;
-                if (FAILED(pModule->GetMDImport()->GetVersionString(&pszVersion)))
-                {
-                    pModule->GetAssembly()->ThrowBadImageException(pszNameSpace, pszName, BFA_MULT_TYPE_SAME_NAME);
-                }
-                
-                SString ssVersion(SString::Utf8, pszVersion);
-                SString ssV1(SString::Literal, "v1.");
-
-                AdjustImageRuntimeVersion(&ssVersion);
-
-                // If not "v1.*", throw an exception
-                if (!ssVersion.BeginsWith(ssV1))
-                    pModule->GetAssembly()->ThrowBadImageException(pszNameSpace, pszName, BFA_MULT_TYPE_SAME_NAME);
-#endif
+                pModule->GetAssembly()->ThrowBadImageException(pszNameSpace, pszName, BFA_MULT_TYPE_SAME_NAME);
             }
         }
         else {
@@ -4698,29 +4518,7 @@ static MethodTable* GetEnclosingMethodTable(MethodTable *pMT)
     }
     CONTRACT_END;
 
-    MethodTable *pmtEnclosing = NULL;
-
-    // In the common case, the method table will be either shared or in the AppDomain we're currently
-    // running in.  If this is true, we can just access its enclosing method table directly.
-    // 
-    // However, if the current method table is actually in another AppDomain (for instance, we're reflecting
-    // across AppDomains), then we cannot get its enclsoing type in our AppDomain since doing that may involve
-    // loading the enclosing type.  Instead, we need to transition back to the original domain (which we
-    // should already be running in higher up on the stack) and get the method table we're looking for.
-
-    if (pMT->GetDomain()->IsSharedDomain() || pMT->GetDomain()->AsAppDomain() == GetAppDomain())
-    {
-        pmtEnclosing = pMT->LoadEnclosingMethodTable();
-    }
-    else
-    {
-        GCX_COOP();
-        ENTER_DOMAIN_PTR(pMT->GetDomain()->AsAppDomain(), ADV_RUNNINGIN);
-        pmtEnclosing = pMT->LoadEnclosingMethodTable();
-        END_DOMAIN_TRANSITION;
-    }
-
-    RETURN pmtEnclosing;    
+    RETURN pMT->LoadEnclosingMethodTable();
 }
 
 StaticAccessCheckContext::StaticAccessCheckContext(MethodDesc* pCallerMethod)
@@ -4752,62 +4550,6 @@ StaticAccessCheckContext::StaticAccessCheckContext(MethodDesc* pCallerMethod, Me
     m_pCallerAssembly = pCallerType->GetAssembly();
 }
 
-// Critical callers do not need the extra access checks
-bool StaticAccessCheckContext::IsCallerCritical()
-{
-    CONTRACTL
-    {
-        THROWS;
-        GC_TRIGGERS;
-        MODE_ANY;
-    }
-    CONTRACTL_END;
-    
-    if (m_pCallerMethod == NULL || !Security::IsMethodTransparent(m_pCallerMethod))
-    {
-        return true;
-    }
-    
-    return false;
-}
-
-
-#ifndef FEATURE_CORECLR
-
-//******************************************************************************
-// This function determines whether a Type is accessible from
-//  outside of the assembly it lives in.
-
-static BOOL IsTypeVisibleOutsideAssembly(MethodTable* pMT)
-{
-    CONTRACTL
-    {
-        THROWS;
-        GC_TRIGGERS;
-        MODE_ANY;
-    }
-    CONTRACTL_END;
-    DWORD dwProtection;
-        // check all types in nesting chain, while inner types are public
-    while (IsTdPublic(dwProtection = pMT->GetClass()->GetProtection()) ||
-           IsTdNestedPublic(dwProtection))
-    {
-        // if type is nested, check outer type, too
-        if (IsTdNested(dwProtection))
-        {
-            pMT = GetEnclosingMethodTable(pMT);
-        }
-        // otherwise, type is visible outside of the assembly
-        else
-        {
-            return TRUE;
-        }
-    }
-    return FALSE;
-} // static BOOL IsTypeVisibleOutsideAssembly(MethodTable* pMT)
-
-#endif //!FEATURE_CORECLR
-
 //******************************************************************************
 
 // static
@@ -4829,8 +4571,7 @@ void AccessCheckOptions::Startup()
 //******************************************************************************
 AccessCheckOptions::AccessCheckOptions(
     const AccessCheckOptions & templateOptions,
-    BOOL                       throwIfTargetIsInaccessible,
-    BOOL                       skipCheckForCriticalCode /*=FALSE*/) :
+    BOOL                       throwIfTargetIsInaccessible) :
     m_pAccessContext(templateOptions.m_pAccessContext)
 {
     WRAPPER_NO_CONTRACT;
@@ -4840,8 +4581,7 @@ AccessCheckOptions::AccessCheckOptions(
         throwIfTargetIsInaccessible,
         templateOptions.m_pTargetMT,
         templateOptions.m_pTargetMethod, 
-        templateOptions.m_pTargetField,
-        skipCheckForCriticalCode);
+        templateOptions.m_pTargetField);
 }
 
 //******************************************************************************
@@ -4870,7 +4610,7 @@ BOOL AccessCheckOptions::DemandMemberAccess(AccessCheckContext *pContext, Method
 
         if (m_fThrowIfTargetIsInaccessible)
         {
-            ThrowAccessException(pContext, pTargetMT, NULL, FALSE);
+            ThrowAccessException(pContext, pTargetMT, NULL);
         }
 
         return FALSE;
@@ -4880,7 +4620,7 @@ BOOL AccessCheckOptions::DemandMemberAccess(AccessCheckContext *pContext, Method
     {
         if (m_fThrowIfTargetIsInaccessible)
         {
-            ThrowAccessException(pContext, pTargetMT, NULL, FALSE);
+            ThrowAccessException(pContext, pTargetMT, NULL);
         }
 
         return FALSE;
@@ -4889,152 +4629,26 @@ BOOL AccessCheckOptions::DemandMemberAccess(AccessCheckContext *pContext, Method
     BOOL canAccessTarget = FALSE;
 
 #ifndef CROSSGEN_COMPILE
-#ifdef FEATURE_CORECLR
-
-    BOOL fAccessingFrameworkCode = FALSE;
 
     // In CoreCLR kRestrictedMemberAccess means that one can access private/internal
     // classes/members in app code.
     if (m_accessCheckType != kMemberAccess && pTargetMT)
     {
-        // m_accessCheckType must be kRestrictedMemberAccess if we are running in PT.
-        _ASSERTE(GetAppDomain()->GetSecurityDescriptor()->IsFullyTrusted() ||
-                 m_accessCheckType == kRestrictedMemberAccess);
-
-        if (visibilityCheck && Security::IsTransparencyEnforcementEnabled())
-        {
-            // In CoreCLR RMA means visibility checks always succeed if the target is user code.
-            if ((m_accessCheckType == kRestrictedMemberAccess || m_accessCheckType == kRestrictedMemberAccessNoTransparency) &&
-                !Security::IsMicrosoftPlatform(pTargetMT->GetAssembly()->GetSecurityDescriptor()))
-                return TRUE;
-
-            // Accessing private types/members in platform code.
-            fAccessingFrameworkCode = TRUE;
-        }
-        else
-        {
-            // We allow all transparency checks to succeed in LCG methods and reflection invocation.
-            if (m_accessCheckType == kNormalAccessNoTransparency || m_accessCheckType == kRestrictedMemberAccessNoTransparency)
-                return TRUE;
-        }
+        // We allow all transparency checks to succeed in LCG methods and reflection invocation.
+        if (m_accessCheckType == kNormalAccessNoTransparency || m_accessCheckType == kRestrictedMemberAccessNoTransparency)
+            return TRUE;
     }
 
     // Always allow interop (NULL) callers full access.
     if (pContext->IsCalledFromInterop())
         return TRUE;
 
-    MethodDesc* pCallerMD = pContext->GetCallerMethod();
-
-    // Platform critical code is exempted from all accessibility rules, regardless of the AccessCheckType.
-    if (pCallerMD != NULL && 
-        !Security::IsMethodTransparent(pCallerMD)
-        && Security::IsMicrosoftPlatform(pCallerMD->GetAssembly()->GetSecurityDescriptor()))
-    {
-        return TRUE;
-    }
-
     // No Access
     if (m_fThrowIfTargetIsInaccessible)
     {
-        ThrowAccessException(pContext, pTargetMT, NULL, fAccessingFrameworkCode);
+        ThrowAccessException(pContext, pTargetMT, NULL);
     }
 
-#else // FEATURE_CORECLR
-
-    GCX_COOP();
-
-    // Overriding the rules of visibility checks in Win8 immersive: no access is allowed to internal
-    // code in the framework even in full trust, unless the caller is also framework code.
-    if ( (m_accessCheckType == kUserCodeOnlyRestrictedMemberAccess ||
-          m_accessCheckType == kUserCodeOnlyRestrictedMemberAccessNoTransparency) &&
-        visibilityCheck )
-    {
-        IAssemblyName *pIAssemblyName = pTargetMT->GetAssembly()->GetFusionAssemblyName();
-
-        HRESULT hr = Fusion::Util::IsAnyFrameworkAssembly(pIAssemblyName);
-
-        // S_OK: pIAssemblyName is a framework assembly.
-        // S_FALSE: pIAssemblyName is not a framework assembly.
-        // Other values: pIAssemblyName is an invalid name. 
-        if (hr == S_OK)
-        {
-            if (pContext->IsCalledFromInterop())
-                return TRUE;
-
-            // If the caller method is NULL and we are not called from interop
-            // this is not a normal method access check (e.g. a CA accessibility check)
-            // The access check should fail in this case.
-            hr = S_FALSE;
-
-            MethodDesc* pCallerMD = pContext->GetCallerMethod();
-            if (pCallerMD != NULL)
-            {
-                pIAssemblyName = pCallerMD->GetAssembly()->GetFusionAssemblyName();
-                hr = Fusion::Util::IsAnyFrameworkAssembly(pIAssemblyName);
-            }
-
-            // The caller is not framework code.
-            if (hr != S_OK)
-            {
-                if (m_fThrowIfTargetIsInaccessible)
-                    ThrowAccessException(pContext, pTargetMT, NULL, TRUE);
-                else
-                    return FALSE;
-            }
-        }
-    }
-
-    EX_TRY
-    {
-        if (m_accessCheckType == kMemberAccess)
-        {
-            Security::SpecialDemand(SSWT_LATEBOUND_LINKDEMAND, REFLECTION_MEMBER_ACCESS);
-        }
-        else
-        {
-            _ASSERTE(m_accessCheckType == kRestrictedMemberAccess || 
-                     m_accessCheckType == kUserCodeOnlyRestrictedMemberAccess ||
-                     (m_accessCheckType == kUserCodeOnlyRestrictedMemberAccessNoTransparency && visibilityCheck));
-
-            // JIT guarantees that pTargetMT has been fully loaded and ready to execute by this point, but reflection doesn't. 
-            // So GetSecurityDescriptor could AV because the DomainAssembly cannot be found. 
-            // For now we avoid this by calling EnsureActive aggressively. We might want to move this to the reflection code in the future:
-            // ReflectionInvocation::PerformVisibilityCheck, PerformSecurityCheckHelper, COMDelegate::BindToMethodName/Info, etc.
-            // We don't need to call EnsureInstanceActive because we will be doing access check on all the generic arguments any way so
-            // EnsureActive will be called on everyone of them if needed.
-            pTargetMT->EnsureActive();
-
-            IAssemblySecurityDescriptor * pTargetSecurityDescriptor = pTargetMT->GetModule()->GetSecurityDescriptor();
-            _ASSERTE(pTargetSecurityDescriptor != NULL);
-
-            if (m_pAccessContext != NULL)
-            {
-                // If we have a context, use it to do the demand
-                Security::ReflectionTargetDemand(REFLECTION_MEMBER_ACCESS,
-                    pTargetSecurityDescriptor,
-                    m_pAccessContext);
-            }
-            else
-            {
-                // Just do a normal Demand
-                Security::ReflectionTargetDemand(REFLECTION_MEMBER_ACCESS, pTargetSecurityDescriptor);
-            }
-        }
-
-        canAccessTarget = TRUE;
-    }
-    EX_CATCH 
-    {
-        canAccessTarget = FALSE;
-
-        if (m_fThrowIfTargetIsInaccessible)
-        {
-            ThrowAccessException(pContext, pTargetMT, GET_EXCEPTION());
-        } 
-    }
-    EX_END_CATCH(RethrowTerminalExceptions);
-
-#endif // FEATURE_CORECLR
 #endif // CROSSGEN_COMPILE
 
     return canAccessTarget;
@@ -5048,8 +4662,7 @@ BOOL AccessCheckOptions::DemandMemberAccess(AccessCheckContext *pContext, Method
 void AccessCheckOptions::ThrowAccessException(
     AccessCheckContext* pContext,
     MethodTable*        pFailureMT,             /* = NULL  */
-    Exception*          pInnerException,        /* = NULL  */
-    BOOL                fAccessingFrameworkCode /* = FALSE */) const
+    Exception*          pInnerException         /* = NULL  */) const
 {
     CONTRACTL
     {
@@ -5071,30 +4684,30 @@ void AccessCheckOptions::ThrowAccessException(
         // If we know the specific type that caused the failure, display it.
         // Else display the whole type that we are trying to access.
         MethodTable * pMT = (pFailureMT != NULL) ? pFailureMT : m_pTargetMT;
-        ThrowTypeAccessException(pContext, pMT, 0, pInnerException, fAccessingFrameworkCode);
+        ThrowTypeAccessException(pContext, pMT, 0, pInnerException);
     }
     else if (m_pTargetMethod != NULL) 
     {
         // If the caller and target method are non-null and the same, then this means that we're checking to see
         // if the method has access to itself in order to validate that it has access to its parameter types,
         // containing type, and return type.  In this case, throw a more informative TypeAccessException to
-        // describe the error that occured (for instance, "this method doesn't have access to one of its
+        // describe the error that occurred (for instance, "this method doesn't have access to one of its
         // parameter types", rather than "this method doesn't have access to itself").
         // We only want to do this if we know the exact type that caused the problem, otherwise fall back to
         // throwing the standard MethodAccessException.
         if (pCallerMD != NULL && m_pTargetMethod == pCallerMD && pFailureMT != NULL)
         {
-            ThrowTypeAccessException(pContext, pFailureMT, 0, pInnerException, fAccessingFrameworkCode);
+            ThrowTypeAccessException(pContext, pFailureMT, 0, pInnerException);
         }
         else
         {
-            ThrowMethodAccessException(pContext, m_pTargetMethod, 0, pInnerException, fAccessingFrameworkCode);
+            ThrowMethodAccessException(pContext, m_pTargetMethod, 0, pInnerException);
         }
     }
     else
     {
         _ASSERTE(m_pTargetField != NULL);
-        ThrowFieldAccessException(pContext, m_pTargetField, 0, pInnerException, fAccessingFrameworkCode);
+        ThrowFieldAccessException(pContext, m_pTargetField, 0, pInnerException);
     }
 }
 
@@ -5111,30 +4724,12 @@ BOOL AccessCheckOptions::DemandMemberAccessOrFail(AccessCheckContext *pContext, 
     }
     CONTRACTL_END;
 
-    // m_fSkipCheckForCriticalCode is only ever set to true for CanAccessMemberForExtraChecks.
-    // For legacy compat we allow the access check to succeed for all AccessCheckType if the caller is critical.
-    if (m_fSkipCheckForCriticalCode)
-    {
-        if (pContext->IsCalledFromInterop() ||
-            !Security::IsMethodTransparent(pContext->GetCallerMethod()))
-            return TRUE;
-    }
-
     if (DoNormalAccessibilityChecks())
     {
         if (pContext->GetCallerAssembly()->IgnoresAccessChecksTo(pTargetMT->GetAssembly()))
         {
             return TRUE;
         }
-
-#if defined(FEATURE_CORECLR) && defined(CROSSGEN_COMPILE)
-        CONSISTENCY_CHECK_MSGF(!pContext->GetCallerAssembly()->GetManifestFile()->IsProfileAssembly(), 
-            ("Accessibility check failed while compiling platform assembly. Are you missing FriendAccessAllowed attribute? Caller: %s %s %s Target: %s", 
-                pContext->GetCallerAssembly() ? pContext->GetCallerAssembly()->GetSimpleName() : "",
-                pContext->GetCallerMT() ? pContext->GetCallerMT()->GetDebugClassName() : "",
-                pContext->GetCallerMethod() ? pContext->GetCallerMethod()->GetName() : "",
-                pTargetMT ? pTargetMT->GetDebugClassName() : ""));
-#endif
 
         if (m_fThrowIfTargetIsInaccessible)
         {
@@ -5161,15 +4756,6 @@ BOOL AccessCheckOptions::FailOrThrow(AccessCheckContext *pContext) const
     }
     CONTRACTL_END;
 
-    // m_fSkipCheckForCriticalCode is only ever set to true for CanAccessMemberForExtraChecks.
-    // For legacy compat we allow the access check to succeed for all AccessCheckType if the caller is critical.
-    if (m_fSkipCheckForCriticalCode)
-    {
-        if (pContext->IsCalledFromInterop() ||
-            !Security::IsMethodTransparent(pContext->GetCallerMethod()))
-            return TRUE;
-    }
-
     if (m_fThrowIfTargetIsInaccessible)
     {
         ThrowAccessException(pContext);
@@ -5178,131 +4764,10 @@ BOOL AccessCheckOptions::FailOrThrow(AccessCheckContext *pContext) const
     return FALSE;
 }
 
-// Generate access exception context strings that are due to potential security misconfiguration
-void GetAccessExceptionAdditionalContextForSecurity(Assembly *pAccessingAssembly,
-                                                    Assembly *pTargetAssembly,
-                                                    BOOL isTransparencyError,
-                                                    BOOL fAccessingFrameworkCode,
-                                                    StringArrayList *pContextInformation)
-{
-    CONTRACTL
-    {
-        THROWS;
-        GC_TRIGGERS;
-        MODE_ANY;
-        PRECONDITION(CheckPointer(pAccessingAssembly));
-        PRECONDITION(CheckPointer(pTargetAssembly));
-        PRECONDITION(CheckPointer(pContextInformation));
-    }
-    CONTRACTL_END;
-
-    if (fAccessingFrameworkCode)
-    {
-        SString accessingFrameworkCodeError;
-        EEException::GetResourceMessage(IDS_E_ACCESSING_PRIVATE_FRAMEWORK_CODE, accessingFrameworkCodeError);
-
-        pContextInformation->Append(accessingFrameworkCodeError);
-    }
-
-#ifndef FEATURE_CORECLR
-    if (isTransparencyError)
-    {
-        ModuleSecurityDescriptor *pMSD = ModuleSecurityDescriptor::GetModuleSecurityDescriptor(pAccessingAssembly);
-
-        // If the accessing assembly is APTCA and using level 2 transparency, then transparency errors may be
-        // because APTCA newly opts assemblies into being all transparent.
-        if (pMSD->IsMixedTransparency() && !pAccessingAssembly->GetSecurityTransparencyBehavior()->DoesUnsignedImplyAPTCA())
-        {
-            SString callerDisplayName;
-            pAccessingAssembly->GetDisplayName(callerDisplayName);
-
-            SString level2AptcaTransparencyError;
-            EEException::GetResourceMessage(IDS_ACCESS_EXCEPTION_CONTEXT_LEVEL2_APTCA, level2AptcaTransparencyError, callerDisplayName);
-
-            pContextInformation->Append(level2AptcaTransparencyError);
-        }
-
-        // If the assessing assembly is fully transparent and it is partially trusted, then transparency
-        // errors may be because the CLR forced the assembly to be transparent due to its trust level.
-        if (pMSD->IsAllTransparentDueToPartialTrust())
-        {
-            _ASSERTE(pMSD->IsAllTransparent());
-            SString callerDisplayName;
-            pAccessingAssembly->GetDisplayName(callerDisplayName);
-
-            SString partialTrustTransparencyError;
-            EEException::GetResourceMessage(IDS_ACCESS_EXCEPTION_CONTEXT_PT_TRANSPARENT, partialTrustTransparencyError, callerDisplayName);
-
-            pContextInformation->Append(partialTrustTransparencyError);
-        }
-    }
-#endif // FEATURE_CORECLR
-
-#if defined(FEATURE_APTCA) && !defined(CROSSGEN_COMPILE)
-    // If the target assembly is conditionally APTCA, then it may needed to have been enabled in the domain
-    SString conditionalAptcaContext = Security::GetConditionalAptcaAccessExceptionContext(pTargetAssembly);
-    if (!conditionalAptcaContext.IsEmpty())
-    {
-        pContextInformation->Append(conditionalAptcaContext);
-    }
-
-    // If the target assembly is APTCA killbitted, then indicate that as well
-    SString aptcaKillBitContext = Security::GetAptcaKillBitAccessExceptionContext(pTargetAssembly);
-    if (!aptcaKillBitContext.IsEmpty())
-    {
-        pContextInformation->Append(aptcaKillBitContext);
-    }
-#endif // FEATURE_APTCA && !CROSSGEN_COMPILE
-}
-
-// Generate additional context about the root cause of an access exception which may help in debugging it (for
-// instance v4 APTCA implying transparnecy, or conditional APTCA not being enabled). If no additional
-// context is available, then this returns SString.Empty.
-SString GetAdditionalAccessExceptionContext(Assembly *pAccessingAssembly,
-                                            Assembly *pTargetAssembly,
-                                            BOOL isTransparencyError,
-                                            BOOL fAccessingFrameworkCode)
-{
-    CONTRACTL
-    {
-        THROWS;
-        GC_TRIGGERS;
-        MODE_ANY;
-        PRECONDITION(CheckPointer(pAccessingAssembly));
-        PRECONDITION(CheckPointer(pTargetAssembly));
-    }
-    CONTRACTL_END;
-
-    StringArrayList contextComponents;
-
-    // See if the exception may have been caused by security
-    GetAccessExceptionAdditionalContextForSecurity(pAccessingAssembly,
-                                                   pTargetAssembly,
-                                                   isTransparencyError,
-                                                   fAccessingFrameworkCode,
-                                                   &contextComponents);
-
-    // Append each component of additional context we found into the additional context string in its own
-    // paragraph.
-    SString additionalContext;
-    for (DWORD i = 0; i < contextComponents.GetCount(); ++i)
-    {
-        SString contextComponent = contextComponents.Get(i);
-        if (!contextComponent.IsEmpty())
-        {
-            additionalContext.Append(W("\n\n"));
-            additionalContext.Append(contextComponent);
-        }
-    }
-
-    return additionalContext;
-}
-
 void DECLSPEC_NORETURN ThrowFieldAccessException(AccessCheckContext* pContext,
                                                  FieldDesc *pFD,
                                                  UINT messageID /* = 0 */,
-                                                 Exception *pInnerException /* = NULL */,
-                                                 BOOL fAccessingFrameworkCode /* = FALSE */)
+                                                 Exception *pInnerException /* = NULL */)
 {
     CONTRACTL
     {
@@ -5314,26 +4779,18 @@ void DECLSPEC_NORETURN ThrowFieldAccessException(AccessCheckContext* pContext,
     }
     CONTRACTL_END;
 
-    BOOL isTransparencyError = FALSE;
-
     MethodDesc* pCallerMD = pContext->GetCallerMethod();
-    if (pCallerMD != NULL)
-        isTransparencyError = !Security::CheckCriticalAccess(pContext, NULL, pFD, NULL);
     
     ThrowFieldAccessException(pCallerMD,
                               pFD,
-                              isTransparencyError,
                               messageID,
-                              pInnerException,
-                              fAccessingFrameworkCode);
+                              pInnerException);
 }
 
 void DECLSPEC_NORETURN ThrowFieldAccessException(MethodDesc* pCallerMD,
                                                  FieldDesc *pFD,
-                                                 BOOL isTransparencyError,
                                                  UINT messageID /* = 0 */,
-                                                 Exception *pInnerException /* = NULL */,
-                                                 BOOL fAccessingFrameworkCode /* = FALSE */)
+                                                 Exception *pInnerException /* = NULL */)
 {
     CONTRACTL
     {
@@ -5349,25 +4806,10 @@ void DECLSPEC_NORETURN ThrowFieldAccessException(MethodDesc* pCallerMD,
     {
         if (messageID == 0)
         {
-            // Figure out if we can give a specific reason why this field access was rejected - for instance, if
-            // we see that the caller is transparent and accessing a critical field, then we can put that
-            // information into the exception message.
-            if (isTransparencyError)
-            {
-                messageID = IDS_E_CRITICAL_FIELD_ACCESS_DENIED;
-            }
-            else
-            {
-                messageID = IDS_E_FIELDACCESS;
-            }
+            messageID = IDS_E_FIELDACCESS;
         }
 
-        SString strAdditionalContext = GetAdditionalAccessExceptionContext(pCallerMD->GetAssembly(),
-                                                                           pFD->GetApproxEnclosingMethodTable()->GetAssembly(),
-                                                                           isTransparencyError,
-                                                                           fAccessingFrameworkCode);
-
-        EX_THROW_WITH_INNER(EEFieldException, (pFD, pCallerMD, strAdditionalContext, messageID), pInnerException);
+        EX_THROW_WITH_INNER(EEFieldException, (pFD, pCallerMD, SString::Empty(), messageID), pInnerException);
     }
     else
     {
@@ -5378,8 +4820,7 @@ void DECLSPEC_NORETURN ThrowFieldAccessException(MethodDesc* pCallerMD,
 void DECLSPEC_NORETURN ThrowMethodAccessException(AccessCheckContext* pContext,
                                                   MethodDesc *pCalleeMD,
                                                   UINT messageID /* = 0 */,
-                                                  Exception *pInnerException /* = NULL */,
-                                                  BOOL fAccessingFrameworkCode /* = FALSE */)
+                                                  Exception *pInnerException /* = NULL */)
 {
     CONTRACTL
     {
@@ -5391,26 +4832,18 @@ void DECLSPEC_NORETURN ThrowMethodAccessException(AccessCheckContext* pContext,
     }
     CONTRACTL_END;
 
-    BOOL isTransparencyError = FALSE;
-
     MethodDesc* pCallerMD = pContext->GetCallerMethod();
-    if (pCallerMD != NULL)
-        isTransparencyError = !Security::CheckCriticalAccess(pContext, pCalleeMD, NULL, NULL);
     
     ThrowMethodAccessException(pCallerMD,
                                pCalleeMD,
-                               isTransparencyError,
                                messageID,
-                               pInnerException,
-                               fAccessingFrameworkCode);
+                               pInnerException);
 }
 
 void DECLSPEC_NORETURN ThrowMethodAccessException(MethodDesc* pCallerMD,
                                                   MethodDesc *pCalleeMD,
-                                                  BOOL isTransparencyError,
                                                   UINT messageID /* = 0 */,
-                                                  Exception *pInnerException /* = NULL */,
-                                                  BOOL fAccessingFrameworkCode /* = FALSE */)
+                                                  Exception *pInnerException /* = NULL */)
 {
     CONTRACTL
     {
@@ -5426,25 +4859,10 @@ void DECLSPEC_NORETURN ThrowMethodAccessException(MethodDesc* pCallerMD,
     {
         if (messageID == 0)
         {
-            // Figure out if we can give a specific reason why this method access was rejected - for instance, if
-            // we see that the caller is transparent and the callee is critical, then we can put that
-            // information into the exception message.
-            if (isTransparencyError)
-            {
-                messageID = IDS_E_CRITICAL_METHOD_ACCESS_DENIED;
-            }
-            else
-            {
-                messageID = IDS_E_METHODACCESS;
-            }
+            messageID = IDS_E_METHODACCESS;
         }
 
-        SString strAdditionalContext = GetAdditionalAccessExceptionContext(pCallerMD->GetAssembly(),
-                                                                           pCalleeMD->GetAssembly(),
-                                                                           isTransparencyError,
-                                                                           fAccessingFrameworkCode);
-
-        EX_THROW_WITH_INNER(EEMethodException, (pCalleeMD, pCallerMD, strAdditionalContext, messageID), pInnerException);
+        EX_THROW_WITH_INNER(EEMethodException, (pCalleeMD, pCallerMD, SString::Empty(), messageID), pInnerException);
     }
     else
     {
@@ -5455,8 +4873,7 @@ void DECLSPEC_NORETURN ThrowMethodAccessException(MethodDesc* pCallerMD,
 void DECLSPEC_NORETURN ThrowTypeAccessException(AccessCheckContext* pContext,
                                                 MethodTable *pMT,
                                                 UINT messageID /* = 0 */,
-                                                Exception *pInnerException /* = NULL */,
-                                                BOOL fAccessingFrameworkCode /* = FALSE */)
+                                                Exception *pInnerException /* = NULL */)
 {
     CONTRACTL
     {
@@ -5468,26 +4885,18 @@ void DECLSPEC_NORETURN ThrowTypeAccessException(AccessCheckContext* pContext,
     }
     CONTRACTL_END;
 
-    BOOL isTransparencyError = FALSE;
-
     MethodDesc* pCallerMD = pContext->GetCallerMethod();
-    if (pCallerMD != NULL)
-        isTransparencyError = !Security::CheckCriticalAccess(pContext, NULL, NULL, pMT);
     
     ThrowTypeAccessException(pCallerMD,
                              pMT,
-                             isTransparencyError,
                              messageID,
-                             pInnerException,
-                             fAccessingFrameworkCode);
+                             pInnerException);
 }
 
 void DECLSPEC_NORETURN ThrowTypeAccessException(MethodDesc* pCallerMD,
                                                 MethodTable *pMT,
-                                                BOOL isTransparencyError,
                                                 UINT messageID /* = 0 */,
-                                                Exception *pInnerException /* = NULL */,
-                                                BOOL fAccessingFrameworkCode /* = FALSE */)
+                                                Exception *pInnerException /* = NULL */)
 {
     CONTRACTL
     {
@@ -5503,94 +4912,16 @@ void DECLSPEC_NORETURN ThrowTypeAccessException(MethodDesc* pCallerMD,
     {
         if (messageID == 0)
         {
-            // Figure out if we can give a specific reason why this type access was rejected - for instance, if
-            // we see that the caller is transparent and is accessing a critical type, then we can put that
-            // information into the exception message.
-            if (isTransparencyError)
-            {
-                messageID = IDS_E_CRITICAL_TYPE_ACCESS_DENIED;
-            }
-            else
-            {
-                messageID = IDS_E_TYPEACCESS;
-            }
+            messageID = IDS_E_TYPEACCESS;
         }
 
-        SString strAdditionalContext = GetAdditionalAccessExceptionContext(pCallerMD->GetAssembly(),
-                                                                           pMT->GetAssembly(),
-                                                                           isTransparencyError,
-                                                                           fAccessingFrameworkCode);
-
-        EX_THROW_WITH_INNER(EETypeAccessException, (pMT, pCallerMD, strAdditionalContext, messageID), pInnerException);
+        EX_THROW_WITH_INNER(EETypeAccessException, (pMT, pCallerMD, SString::Empty(), messageID), pInnerException);
     }
     else
     {
         EX_THROW_WITH_INNER(EETypeAccessException, (pMT), pInnerException);
     }
 }
-
-//******************************************************************************
-// This function determines whether a method [if transparent]
-//  can access a specified target (e.g. Type, Method, Field)
-static BOOL CheckTransparentAccessToCriticalCode(
-    AccessCheckContext* pContext,
-    DWORD               dwMemberAccess,
-    MethodTable*        pTargetMT,
-    MethodDesc*         pOptionalTargetMethod,
-    FieldDesc*          pOptionalTargetField,
-    MethodTable*        pOptionalTargetType,
-    const AccessCheckOptions & accessCheckOptions)
-{
-    CONTRACTL
-    {
-        THROWS;
-        GC_TRIGGERS;
-        MODE_ANY;
-        PRECONDITION(CheckPointer(pContext));
-        PRECONDITION(accessCheckOptions.TransparencyCheckNeeded());
-    }
-    CONTRACTL_END;
-
-    if (!Security::IsTransparencyEnforcementEnabled())
-        return TRUE;
-
-    // At most one of these should be non-NULL
-    _ASSERTE(1 >= ((pOptionalTargetMethod ? 1 : 0) +
-                   (pOptionalTargetField ? 1 : 0) +
-                   (pOptionalTargetType ? 1 : 0)));
-
-#ifndef FEATURE_CORECLR
-    if (pTargetMT->GetAssembly()->GetSecurityTransparencyBehavior()->DoesPublicImplyTreatAsSafe())
-    {
-        // @ telesto: public => TAS in non-coreclr only. The intent is to remove this ifdef and remove
-        // public => TAS in all flavors/branches.
-        // check if the Target member accessible outside the assembly
-        if (IsMdPublic(dwMemberAccess) && IsTypeVisibleOutsideAssembly(pTargetMT))
-        {
-            return TRUE;
-        }
-    }
-#endif // !FEATURE_CORECLR
-
-    // if the caller [Method] is transparent, do special security checks
-    // check if security disallows access to target member
-    if (!Security::CheckCriticalAccess(
-                pContext, 
-                pOptionalTargetMethod, 
-                pOptionalTargetField, 
-                pOptionalTargetType))
-    {
-#ifdef _DEBUG
-        if (g_pConfig->LogTransparencyErrors())
-        {
-            SecurityTransparent::LogTransparencyError(pContext->GetCallerMethod(), "Transparent code accessing a critical type, method, or field", pOptionalTargetMethod);
-        }
-#endif // _DEBUG
-        return accessCheckOptions.DemandMemberAccessOrFail(pContext, pTargetMT, FALSE /*visibilityCheck*/);
-    }
-
-    return TRUE;
-} // static BOOL CheckTransparentAccessToCriticalCode
 
 //---------------------------------------------------------------------------------------
 //
@@ -5635,21 +4966,6 @@ static BOOL AssemblyOrFriendAccessAllowed(Assembly       *pAccessingAssembly,
         return TRUE;
     }
 
-#if defined(FEATURE_REMOTING) && !defined(CROSSGEN_COMPILE)
-    else if (pAccessingAssembly->GetDomain() != pTargetAssembly->GetDomain() &&
-             pAccessingAssembly->GetFusionAssemblyName()->IsEqual(pTargetAssembly->GetFusionAssemblyName(), ASM_CMPF_NAME | ASM_CMPF_PUBLIC_KEY_TOKEN) == S_OK)
-    {
-        // If we're accessing an internal type across AppDomains, we'll end up saying that an assembly is
-        // not allowed to access internal types in itself, since the Assembly *'s will not compare equal. 
-        // This ends up being confusing for users who don't have a deep understanding of the loader and type
-        // system, and also creates different behavior if your assembly is shared vs unshared (if you are
-        // shared, your Assembly *'s will match since they're in the shared domain).
-        // 
-        // In order to ease the confusion, we'll consider assemblies to be friends of themselves in this
-        // scenario -- if a name and public key match succeeds, we'll grant internal access across domains.
-        return TRUE;
-    }
-#endif // FEATURE_REMOTING && !CROSSGEN_COMPILE
     else if (pOptionalTargetField != NULL)
     {
         return pTargetAssembly->GrantsFriendAccessTo(pAccessingAssembly, pOptionalTargetField);
@@ -5731,8 +5047,7 @@ BOOL ClassLoader::CanAccessClass(                   // True if access is legal, 
     AccessCheckContext* pContext,                   // The caller context
     MethodTable*        pTargetClass,               // The desired target class.
     Assembly*           pTargetAssembly,            // Assembly containing the target class.    
-    const AccessCheckOptions & accessCheckOptions,
-    BOOL                checkTargetTypeTransparency)// = TRUE
+    const AccessCheckOptions & accessCheckOptions)// = TRUE
 {                                           
     CONTRACTL
     {
@@ -5749,26 +5064,6 @@ BOOL ClassLoader::CanAccessClass(                   // True if access is legal, 
     // @todo: what does that mean?
     //if (!pTargetClass)
     //    return TRUE;
-
-    // check transparent/critical on type
-    // Note that dwMemberAccess is of no use here since we don't have a target method yet. It really should be made an optional arg.
-    // For now, we pass in mdPublic.
-    if (checkTargetTypeTransparency && accessCheckOptions.TransparencyCheckNeeded())
-    {
-        if (!CheckTransparentAccessToCriticalCode(
-                pContext,
-                mdPublic,
-                pTargetClass,
-                NULL,
-                NULL,
-                pTargetClass,
-                accessCheckOptions))
-        {
-            // no need to call accessCheckOptions.DemandMemberAccessOrFail here because
-            // CheckTransparentAccessToCriticalCode does that already
-            return FALSE;
-        }
-    }
 
     // Step 2: Recursively call CanAccessClass on the generic type arguments
     // Is the desired target a generic instantiation?
@@ -5790,8 +5085,7 @@ BOOL ClassLoader::CanAccessClass(                   // True if access is legal, 
                     pContext, 
                     pMT, 
                     th.GetAssembly(), 
-                    accessCheckOptions,
-                    checkTargetTypeTransparency))
+                    accessCheckOptions))
             {
                 // no need to call accessCheckOptions.DemandMemberAccessOrFail here because the base case in
                 // CanAccessClass does that already
@@ -5891,23 +5185,14 @@ BOOL ClassLoader::CanAccessClass(                   // True if access is legal, 
         dwProtection,
         NULL,
         NULL,
-        accessCheckOptions,
-        FALSE,
-        FALSE);
+        accessCheckOptions);
 } // BOOL ClassLoader::CanAccessClass()
 
 //******************************************************************************
 // This is a front-end to CheckAccessMember that handles the nested class scope. If can't access
 // from the current point and are a nested class, then try from the enclosing class.
-// It does two things in addition to CanAccessMember:
-//   1. If the caller class doesn't have access to the caller, see if the enclosing class does.
-//   2. CanAccessMemberForExtraChecks which checks whether the caller class has access to 
-//      the signature of the target method or field.
+// In addition to CanAccessMember, if the caller class doesn't have access to the caller, see if the enclosing class does.
 //
-// checkTargetMethodTransparency is set to FALSE only when the check is for JIT-compilation
-// because the JIT has a mechanism to insert a callout for the case where
-// we need to perform the currentMD <-> TargetMD check at runtime.
-
 /* static */
 BOOL ClassLoader::CanAccess(                            // TRUE if access is allowed, FALSE otherwise.
     AccessCheckContext* pContext,                       // The caller context
@@ -5917,9 +5202,7 @@ BOOL ClassLoader::CanAccess(                            // TRUE if access is all
     MethodDesc*         pOptionalTargetMethod,          // The target method; NULL if the target is a not a method or
                                                         // there is no need to check the method's instantiation.
     FieldDesc*          pOptionalTargetField,           // or The desired field; if NULL, return TRUE
-    const AccessCheckOptions & accessCheckOptions,      // = s_NormalAccessChecks
-    BOOL                checkTargetMethodTransparency,  // = TRUE
-    BOOL                checkTargetTypeTransparency)    // = TRUE
+    const AccessCheckOptions & accessCheckOptions)      // = s_NormalAccessChecks
 {
     CONTRACT(BOOL)
     {
@@ -5930,9 +5213,6 @@ BOOL ClassLoader::CanAccess(                            // TRUE if access is all
         MODE_ANY;
     }
     CONTRACT_END;
-    
-    // Recursive: CanAccess->CheckAccessMember->CanAccessClass->CanAccess
-    INTERIOR_STACK_PROBE(GetThread());
 
     AccessCheckOptions accessCheckOptionsNoThrow(accessCheckOptions, FALSE);
 
@@ -5944,9 +5224,7 @@ BOOL ClassLoader::CanAccess(                            // TRUE if access is all
                            pOptionalTargetField,
                            // Suppress exceptions for nested classes since this is not a hard-failure,
                            // and we can do additional checks
-                           accessCheckOptionsNoThrow,
-                           checkTargetMethodTransparency,
-                           checkTargetTypeTransparency))
+                           accessCheckOptionsNoThrow))
     {
         // If we're here, CheckAccessMember didn't allow access.
         BOOL canAccess = FALSE;
@@ -5980,222 +5258,18 @@ BOOL ClassLoader::CanAccess(                            // TRUE if access is all
                                  dwMemberAccess,
                                  pOptionalTargetMethod,
                                  pOptionalTargetField,
-                                 accessCheckOptionsNoThrow,
-                                 checkTargetMethodTransparency,
-                                 checkTargetTypeTransparency);
+                                 accessCheckOptionsNoThrow);
         }
 
         if (!canAccess)
         {
             BOOL fail = accessCheckOptions.FailOrThrow(pContext);
-            RETURN_FROM_INTERIOR_PROBE(fail);
+            RETURN(fail);
         }
     }
 
-    // For member access, we do additional checks to ensure that the specific member can
-    // be accessed
-
-    if (!CanAccessMemberForExtraChecks(
-                pContext,
-                pTargetMT,
-                pOptionalTargetMethod,
-                pOptionalTargetField,
-                accessCheckOptions,
-                checkTargetMethodTransparency))
-    {
-        RETURN_FROM_INTERIOR_PROBE(FALSE);
-    }
-
-    RETURN_FROM_INTERIOR_PROBE(TRUE);
-
-    END_INTERIOR_STACK_PROBE;
+    RETURN(TRUE);
 } // BOOL ClassLoader::CanAccess()
-
-//******************************************************************************
-// Performs additional checks for member access
-
-BOOL ClassLoader::CanAccessMemberForExtraChecks(
-        AccessCheckContext* pContext,
-        MethodTable*        pTargetExactMT,
-        MethodDesc*         pOptionalTargetMethod,
-        FieldDesc*          pOptionalTargetField,
-        const AccessCheckOptions & accessCheckOptions,
-        BOOL                checkTargetMethodTransparency)
-{
-    CONTRACTL
-    {
-        THROWS;
-        GC_TRIGGERS;
-        MODE_ANY;
-        PRECONDITION(CheckPointer(pContext));
-    }
-    CONTRACTL_END;
-
-    // Critical callers do not need the extra checks
-    // This early-out saves the cost of all the subsequent work
-    if (pContext->IsCallerCritical())
-    {
-        return TRUE;
-    }
-    
-    if (pOptionalTargetMethod == NULL && pOptionalTargetField == NULL)
-        return TRUE;
-
-    _ASSERTE((pOptionalTargetMethod == NULL) != (pOptionalTargetField == NULL));
-
-    // We should always do checks on member signatures. But for backward compatibility we skip this check
-    // for critical callers. And since we don't want to look for the caller here which might incur a stack walk,
-    // we delay the check to DemandMemberAccessOrFail time.
-    AccessCheckOptions legacyAccessCheckOptions(accessCheckOptions, accessCheckOptions.Throws(), TRUE);
-
-    if (pOptionalTargetMethod)
-    {
-        // A method is accessible only if all the types in the signature
-        // are also accessible.
-        if (!CanAccessSigForExtraChecks(pContext,
-                                        pOptionalTargetMethod,
-                                        pTargetExactMT,
-                                        legacyAccessCheckOptions,
-                                        checkTargetMethodTransparency))
-        {
-            return FALSE;
-        }
-    }
-    else
-    {
-        _ASSERTE(pOptionalTargetField != NULL);
-
-        // A field is accessible only if the field type is also accessible
-
-        TypeHandle fieldType = pOptionalTargetField->GetExactFieldType(TypeHandle(pTargetExactMT));
-        CorElementType fieldCorType = fieldType.GetSignatureCorElementType();
-        
-        MethodTable * pFieldTypeMT = fieldType.GetMethodTableOfElementType();
-
-        // No access check needed on a generic variable or a function pointer
-        if (pFieldTypeMT != NULL)
-        {
-            if (!CanAccessClassForExtraChecks(pContext,
-                                              pFieldTypeMT,
-                                              pFieldTypeMT->GetAssembly(),
-                                              legacyAccessCheckOptions,
-                                              TRUE))
-            {
-                return FALSE;
-            }
-        }
-    }
-
-    return TRUE;
-}
-
-//******************************************************************************
-// Can all the types in the signature of the pTargetMethodSig be accessed?
-//
-// "ForExtraChecks" means that we only do extra checks (security and transparency)
-// instead of the usual loader visibility checks. Post V2, we can enable all checks.
-
-BOOL ClassLoader::CanAccessSigForExtraChecks(   // TRUE if access is allowed, FALSE otherwise.
-    AccessCheckContext* pContext,
-    MethodDesc*         pTargetMethodSig,       // The target method. If this is a shared method, pTargetExactMT gives 
-                                                // additional information about the exact type
-    MethodTable*        pTargetExactMT,         // or The desired field; if NULL, return TRUE
-    const AccessCheckOptions & accessCheckOptions,
-    BOOL                checkTargetTransparency)
-{
-    CONTRACTL
-    {
-        THROWS;
-        GC_TRIGGERS;
-        MODE_ANY;
-        PRECONDITION(CheckPointer(pContext));
-    }
-    CONTRACTL_END;
-
-    MetaSig sig(pTargetMethodSig, TypeHandle(pTargetExactMT));
-
-    // First, check the return type
-
-    TypeHandle retType = sig.GetRetTypeHandleThrowing();
-    MethodTable * pRetMT = retType.GetMethodTableOfElementType();
-
-    // No access check needed on a generic variable or a function pointer
-    if (pRetMT != NULL)
-    {
-        if (!CanAccessClassForExtraChecks(pContext,
-                                          pRetMT,
-                                          retType.GetAssembly(),
-                                          accessCheckOptions,
-                                          checkTargetTransparency))
-        {
-            return FALSE;
-        }
-    }
-
-    //
-    // Now walk all the arguments in the signature
-    //
-
-    for (CorElementType argType = sig.NextArg(); argType != ELEMENT_TYPE_END; argType = sig.NextArg())
-    {
-        TypeHandle thArg = sig.GetLastTypeHandleThrowing();
-
-        MethodTable * pArgMT = thArg.GetMethodTableOfElementType();
-
-        // Either a TypeVarTypeDesc or a FnPtrTypeDesc. No access check needed.
-        if (pArgMT == NULL)
-            continue;
-
-        BOOL canAcesssElement = CanAccessClassForExtraChecks(
-                                        pContext,
-                                        pArgMT,
-                                        thArg.GetAssembly(),
-                                        accessCheckOptions,
-                                        checkTargetTransparency);
-        if (!canAcesssElement)
-        {
-            return FALSE;
-        }
-    }
-
-    return TRUE;
-}
-
-//******************************************************************************
-// Can the type be accessed?
-//
-// "ForExtraChecks" means that we only do extra checks (security and transparency)
-// instead of the usual loader visibility checks. Post V2, we can enable all checks.
-
-BOOL ClassLoader::CanAccessClassForExtraChecks( // True if access is legal, false otherwise.
-    AccessCheckContext* pContext,
-    MethodTable*        pTargetClass,           // The desired target class.
-    Assembly*           pTargetAssembly,        // Assembly containing that class.
-    const AccessCheckOptions & accessCheckOptions,
-    BOOL                checkTargetTypeTransparency)
-{
-    CONTRACTL
-    {
-        THROWS;
-        GC_TRIGGERS;
-        MODE_ANY;
-        PRECONDITION(CheckPointer(pContext));
-    }
-    CONTRACTL_END;
-
-    // ------------- Old comments begins ------------
-    // Critical callers do not need the extra checks
-    // TODO: can we enable full access checks now?
-    // ------------- Old comments ends   ------------
-
-    // We shouldn't bypass accessibility check on member signature for FT/Critical callers
-
-    return CanAccessClass(pContext,
-                          pTargetClass,
-                          pTargetAssembly,
-                          accessCheckOptions,
-                          checkTargetTypeTransparency);
-}
 
 //******************************************************************************
 // This is the helper function for the corresponding CanAccess()
@@ -6214,9 +5288,7 @@ BOOL ClassLoader::CheckAccessMember(                // TRUE if access is allowed
     MethodDesc*             pOptionalTargetMethod,  // The target method; NULL if the target is a not a method or
                                                     // there is no need to check the method's instantiation.
     FieldDesc*              pOptionalTargetField,   // target field, NULL if there is no Target field
-    const AccessCheckOptions & accessCheckOptions,
-    BOOL                    checkTargetMethodTransparency,
-    BOOL                    checkTargetTypeTransparency
+    const AccessCheckOptions & accessCheckOptions
     )             
 {
     CONTRACTL
@@ -6235,17 +5307,13 @@ BOOL ClassLoader::CheckAccessMember(                // TRUE if access is allowed
     if (!CanAccessClass(pContext,
                         pTargetMT,
                         pTargetAssembly,
-                        accessCheckOptions,
-                        checkTargetTypeTransparency))
+                        accessCheckOptions))
     {
         return FALSE;
     }
     
     // If we are trying to access a generic method, we have to ensure its instantiation is accessible.
     // Note that we need to perform transparency checks on the instantiation even if we have
-    // checkTargetMethodTransparency set to false, since generic type parameters by design do not effect
-    // the transparency of the generic method that is closing over them.  This means standard transparency
-    // checks between caller and closed callee may succeed even if the callee's closure includes a critical type.
     if (!CanAccessMethodInstantiation(
             pContext, 
             pOptionalTargetMethod, 
@@ -6260,23 +5328,6 @@ BOOL ClassLoader::CheckAccessMember(                // TRUE if access is allowed
     // Perform transparency checks
     // We don't need to do transparency check against pTargetMT here because
     // it was already done in CanAccessClass above.
-
-    if (accessCheckOptions.TransparencyCheckNeeded() &&
-        ((checkTargetMethodTransparency && pOptionalTargetMethod) ||
-         pOptionalTargetField))
-    {
-        if (!CheckTransparentAccessToCriticalCode(
-                pContext,
-                dwMemberAccess,
-                pTargetMT,
-                pOptionalTargetMethod, 
-                pOptionalTargetField, 
-                NULL,
-                accessCheckOptions))
-        {
-            return FALSE;
-        }
-    }
 
     if (IsMdPublic(dwMemberAccess))
     {
@@ -6445,19 +5496,35 @@ BOOL ClassLoader::CanAccessFamily(
     _ASSERTE(pCurrentClass);
     _ASSERTE(pTargetClass);
 
+    BOOL bIsInterface = pTargetClass->IsInterface();
+
     //Look to see if Current is a child of the Target.
     while (pCurrentClass) {
-        MethodTable *pCurInstance = pCurrentClass;
-
-        while (pCurInstance) {
-            //This is correct.  csc is incredibly lax about generics.  Essentially if you are a subclass of
-            //any type of generic it lets you access it.  Since the standard is totally unclear, mirror that
-            //behavior here.
-            if (pCurInstance->HasSameTypeDefAs(pTargetClass)) {
-                return TRUE;
+        if (bIsInterface)
+        {
+            // Calling a protected interface member
+            MethodTable::InterfaceMapIterator it = pCurrentClass->IterateInterfaceMap();
+            while (it.Next())
+            {
+                // We only loosely check if they are of the same generic type
+                if (it.GetInterface()->HasSameTypeDefAs(pTargetClass))
+                    return TRUE;
             }
+        }
+        else
+        {
+            MethodTable *pCurInstance = pCurrentClass;
 
-            pCurInstance = pCurInstance->GetParentMethodTable();
+            while (pCurInstance) {
+                //This is correct.  csc is incredibly lax about generics.  Essentially if you are a subclass of
+                //any type of generic it lets you access it.  Since the standard is totally unclear, mirror that
+                //behavior here.
+                if (pCurInstance->HasSameTypeDefAs(pTargetClass)) {
+                    return TRUE;
+                }
+
+                pCurInstance = pCurInstance->GetParentMethodTable();
+            }
         }
 
         ///Looking at 8.5.3, it looks like a protected member of a nested class in a parent type is also

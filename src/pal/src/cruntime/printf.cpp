@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 /*++
 
@@ -45,83 +44,6 @@ const static char *scanf_longlongfmt = "q";
 static int SscanfFloatCheckExponent(LPCSTR buff, LPCSTR floatFmt,
                                       void * voidPtr, int * pn);
 #endif // SSCANF_CANNOT_HANDLE_MISSING_EXPONENT
-
-/*******************************************************************************
-Function:
-  Internal_AddPaddingA
-
-Parameters:
-  Out
-    - buffer to place padding and given string (In)
-  Count
-    - maximum chars to be copied so as not to overrun given buffer
-  In
-    - string to place into (Out) accompanied with padding
-  Padding
-    - number of padding chars to add
-  Flags
-    - padding style flags (PRINTF_FORMAT_FLAGS)
-*******************************************************************************/
-BOOL Internal_AddPaddingA(LPSTR *Out, INT Count, LPSTR In,
-                                 INT Padding, INT Flags)
-{
-    LPSTR OutOriginal = *Out;
-    INT PaddingOriginal = Padding;
-    INT LengthInStr;
-    LengthInStr = strlen(In);
- 
- 
-    if (Padding < 0)
-    {
-        /* this is used at the bottom to determine if the buffer ran out */
-        PaddingOriginal = 0;
-    }
-    if (Flags & PFF_MINUS) /* pad on right */
-    {
-        if (strncpy_s(*Out, Count, In, min(LengthInStr + 1, Count)) != SAFECRT_SUCCESS)
-        {
-            return FALSE;
-        }
-
-        *Out += min(LengthInStr, Count);
-    }
-    if (Padding > 0)
-    {
-        if (Flags & PFF_ZERO) /* '0', pad with zeros */
-        {
-            while (Padding-- && Count > *Out - OutOriginal)
-            {
-                *(*Out)++ = '0';
-            }
-        }
-        else /* pad left with spaces */
-        {
-            while (Padding-- && Count > *Out - OutOriginal)
-            {
-                *(*Out)++ = ' ';
-            }
-        }
-    }
-    if (!(Flags & PFF_MINUS)) /* put 'In' after padding */
-    {
-        if (strncpy_s(*Out, Count, In,
-                min(LengthInStr + 1, Count - (*Out - OutOriginal))) != SAFECRT_SUCCESS)
-        {
-            return FALSE;
-        }
-
-        *Out += min(LengthInStr, Count - (*Out - OutOriginal));
-    }
-
-    if (LengthInStr + PaddingOriginal > Count)
-    {
-        return FALSE;
-    }
-    else
-    {
-        return TRUE;
-    }
-}
 
 /*******************************************************************************
 Function:
@@ -275,124 +197,6 @@ PAL_vprintf(
     return Length;
 }
 
-
-/*++
-Function:
-  wsprintfA
-
-See MSDN doc.
---*/
-int
-PALAPIV
-wsprintfA(
-      OUT LPSTR buffer,
-      IN LPCSTR format,
-      ...)
-{
-    LONG Length;
-    va_list ap;
-
-    PERF_ENTRY(wsprintfA);
-    ENTRY("wsprintfA (buffer=%p, format=%p (%s))\n", buffer, format, format);
-
-    va_start(ap, format);
-    Length = PAL__vsnprintf(buffer, 1024, format, ap);
-    va_end(ap);
-
-    LOGEXIT("wsprintfA returns int %d\n", Length);
-    PERF_EXIT(wsprintfA);
-    return Length;
-}
-
-/*++
-Function:
-  wsprintfW
-
-See MSDN doc.
---*/
-int
-PALAPIV
-wsprintfW(
-      OUT LPWSTR buffer,
-      IN LPCWSTR format,
-      ...)
-{
-    LONG Length;
-    va_list ap;
-
-    PERF_ENTRY(wsprintfW);
-    ENTRY("wsprintfW (buffer=%p, format=%p (%S))\n", buffer, format, format);
-	
-    va_start(ap, format);
-    Length = PAL__wvsnprintf(buffer, 1024, format, ap);
-    va_end(ap);
-
-    LOGEXIT("wsprintfW returns int %d\n", Length);
-    PERF_EXIT(wsprintfW);
-    return Length;
-}
-
-
-/*++
-Function:
-  _snprintf
-
-See MSDN doc.
---*/
-int
-__cdecl
-_snprintf(
-     char *buffer,
-     size_t count,
-     const char *format,
-     ...)
-{
-    LONG Length;
-    va_list ap;
-
-    PERF_ENTRY(_snprintf);
-    ENTRY("_snprintf (buffer=%p, count=%lu, format=%p (%s))\n",
-          buffer, (unsigned long) count, format, format);
-
-    va_start(ap, format);
-    Length = PAL__vsnprintf(buffer, count, format, ap);
-    va_end(ap);
-
-    LOGEXIT("_snprintf returns int %d\n", Length);
-    PERF_EXIT(_snprintf);
-    return Length;
-} 
-
-
-/*++
-Function:
-  _snwprintf
-
-See MSDN doc.
---*/
-int
-__cdecl
-_snwprintf(
-     wchar_16 *buffer,
-     size_t count,
-     const wchar_16 *format,
-     ...)
-{
-    LONG Length;
-    va_list ap;
-
-    PERF_ENTRY(_snwprintf);
-    ENTRY("_snwprintf (buffer=%p, count=%lu, format=%p (%S))\n",
-          buffer, (unsigned long) count, format, format);
-
-    va_start(ap, format);
-    Length = PAL__wvsnprintf(buffer, count, format, ap);
-    va_end(ap);
-
-    LOGEXIT("_snwprintf returns int %d\n", Length);
-    PERF_EXIT(_snwprintf);
-    return Length;
-}
 
 /*++
 Function:
@@ -1087,8 +891,6 @@ int PAL_vsscanf(LPCSTR Buffer, LPCSTR Format, va_list ap)
     INT Prefix;
     INT Type = -1;
 
-    THREADMarkDiagnostic("PAL_vsscanf");
-
     while (*Fmt)
     {
         if (!*Buff && Length == 0)
@@ -1263,7 +1065,6 @@ int PAL_wvsscanf(LPCWSTR Buffer, LPCWSTR Format, va_list ap)
     INT Prefix;
     INT Type = -1;
 
-    THREADMarkDiagnostic("PAL_wvsscanf");
     while (*Fmt)
     {
         if (!*Buff && Length == 0)
@@ -1487,92 +1288,6 @@ int PAL_wvsscanf(LPCWSTR Buffer, LPCWSTR Format, va_list ap)
 
 /*++
 Function:
-  PAL_sscanf
-
-See MSDN doc.
---*/
-int
-__cdecl
-PAL_sscanf(
-           const char *buffer,
-           const char *format,
-           ...)
-{
-    int Length;
-    va_list ap;
-
-    PERF_ENTRY(sscanf);
-    ENTRY("PAL_sscanf (buffer=%p (%s), format=%p (%s))\n", buffer, buffer, format, format);
-    THREADMarkDiagnostic("PAL_sscanf");
-
-    va_start(ap, format);
-    Length = PAL_vsscanf(buffer, format, ap);
-    va_end(ap);
-	
-    LOGEXIT("PAL_sscanf returns int %d\n", Length);
-    PERF_EXIT(sscanf);
-    return Length;
-}
-
-/*++
-Function:
-  PAL_sprintf
-
-See MSDN doc.
---*/
-int
-__cdecl
-PAL_sprintf(
-          char *buffer,
-          const char *format,
-          ...)
-{
-    LONG Length;
-    va_list ap;
-
-    PERF_ENTRY(sprintf);
-    ENTRY("PAL_sprintf (buffer=%p, format=%p (%s))\n", buffer, format, format);
-
-    va_start(ap, format);
-    Length = PAL__vsnprintf(buffer, 0x7fffffff, format, ap);
-    va_end(ap);
-
-    LOGEXIT("PAL_sprintf returns int %d\n", Length);
-    PERF_EXIT(sprintf);
-    return Length;
-}
-
-
-/*++
-Function:
-  PAL_swprintf
-
-See MSDN doc.
---*/
-int
-__cdecl
-PAL_swprintf(
-          wchar_16 *buffer,
-          const wchar_16 *format,
-          ...)
-{
-    LONG Length;
-    va_list ap;
-
-    PERF_ENTRY(swprintf);
-    ENTRY("PAL_swprintf (buffer=%p, format=%p (%S))\n", buffer, format, format);
-	
-    va_start(ap, format);
-    Length = PAL__wvsnprintf(buffer, 0x7fffffff, format, ap);
-    va_end(ap);
-
-    LOGEXIT("PAL_swprintf returns int %d\n", Length);
-    PERF_EXIT(swprintf);
-    return Length;
-}
-
-/*++
-Function:
   PAL_swscanf
 
 See MSDN doc.
@@ -1589,7 +1304,6 @@ PAL_swscanf(
 
     PERF_ENTRY(swscanf);
     ENTRY("PAL_swscanf (buffer=%p (%S), format=%p (%S))\n", buffer, buffer, format, format);
-    THREADMarkDiagnostic("PAL_swscanf");
 
     va_start(ap, format);
     Length = PAL_wvsscanf(buffer, format, ap);
@@ -1600,116 +1314,6 @@ PAL_swscanf(
     return Length;
 }
 
-
-/*++
-Function:
-  PAL_vsprintf
-
-See MSDN doc.
---*/
-int 
-__cdecl 
-PAL_vsprintf(char *buffer, 
-         const char *format, 
-         va_list argptr)
-{
-    LONG Length;
-
-    PERF_ENTRY(vsprintf);
-    ENTRY("PAL_vsprintf (buffer=%p, format=%p (%s), argptr=%p)\n", 
-          buffer, format, format, argptr);
-
-    Length = PAL__vsnprintf(buffer, 0x7fffffff, format, argptr);
-
-    LOGEXIT("PAL_vsprintf returns int %d\n", Length);
-    PERF_EXIT(vsprintf);
-
-    return Length;
-}
-
-
-/*++
-Function:
-  _vsnprintf
-
-See MSDN doc.
---*/
-int 
-__cdecl 
-_vsnprintf(char *buffer, 
-           size_t count, 
-           const char *format, 
-           va_list argptr)
-{
-    LONG Length;
-
-    PERF_ENTRY(_vsnprintf);
-    ENTRY("_vsnprintf (buffer=%p, count=%d, format=%p (%s), argptr=%p)\n", 
-          buffer, count, format, format, argptr);
-
-    Length = PAL__vsnprintf(buffer, count, format, argptr);
-
-    LOGEXIT("_vsnprintf returns int %d\n", Length);
-    PERF_EXIT(_vsnprintf);
-
-    return Length;
-}
-
-
-
-/*++
-Function:
-  PAL_vswprintf
-
-See MSDN doc.
---*/
-int 
-__cdecl 
-PAL_vswprintf(wchar_16 *buffer, 
-              const wchar_16 *format, 
-              va_list argptr)
-{
-    LONG Length;
-
-    PERF_ENTRY(vswprintf);
-    ENTRY("PAL_vswprintf (buffer=%p, format=%p (%S), argptr=%p)\n", 
-          buffer, format, format, argptr);
-
-    Length = PAL__wvsnprintf(buffer, 0x7fffffff, format, argptr);
-
-    LOGEXIT("PAL_vswprintf returns int %d\n", Length);
-    PERF_EXIT(vswprintf);
-
-    return Length;
-}
-
-
-/*++
-Function:
-  _vsnwprintf
-
-See MSDN doc.
---*/
-int 
-__cdecl 
-_vsnwprintf(wchar_16 *buffer, 
-            size_t count, 
-            const wchar_16 *format, 
-            va_list argptr)
-{
-    LONG Length;
-
-    PERF_ENTRY(_vsnwprintf);
-    ENTRY("_vsnwprintf (buffer=%p, count=%lu, format=%p (%S), argptr=%p)\n", 
-          buffer, (unsigned long) count, format, format, argptr);
-	
-    Length = PAL__wvsnprintf(buffer, count, format, argptr);
-
-    LOGEXIT("_vsnwprintf returns int %d\n", Length);
-    PERF_EXIT(_vsnwprintf);
-
-    return Length;
-}
 
 #if SSCANF_CANNOT_HANDLE_MISSING_EXPONENT
 /*++
@@ -1791,4 +1395,3 @@ static int SscanfFloatCheckExponent(LPCSTR buff, LPCSTR floatFmt,
     return ret;
 }
 #endif // SSCANF_CANNOT_HANDLE_MISSING_EXPONENT
-

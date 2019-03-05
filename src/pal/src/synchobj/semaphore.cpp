@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 /*++
 
@@ -31,23 +30,21 @@ using namespace CorUnix;
 /* ------------------- Definitions ------------------------------*/
 SET_DEFAULT_DEBUG_CHANNEL(SYNC);
 
-enum
-{
-    c_cchMaxSemaphore = MAX_LONGPATH + 1
-};
-
 CObjectType CorUnix::otSemaphore(
                 otiSemaphore,
                 NULL,   // No cleanup routine
                 NULL,   // No initialization routine
                 sizeof(SemaphoreImmutableData),
+                NULL,   // No immutable data copy routine
+                NULL,   // No immutable data cleanup routine
                 0,      // No process local data
+                NULL,   // No process local data cleanup routine
                 0,      // No shared data
                 0,      // Should be SEMAPHORE_ALL_ACCESS; currently ignored (no Win32 security)
                 CObjectType::SecuritySupported,
                 CObjectType::SecurityInfoNotPersisted,
-                CObjectType::ObjectCanHaveName,
-                CObjectType::CrossProcessDuplicationAllowed,
+                CObjectType::UnnamedObject,
+                CObjectType::LocalDuplicationOnly,
                 CObjectType::WaitableObject,
                 CObjectType::ObjectCanBeUnsignaled,
                 CObjectType::ThreadReleaseAltersSignalCount,
@@ -167,7 +164,6 @@ Parameters:
 See MSDN doc.
 --*/
 
-PALIMPORT
 HANDLE
 PALAPI
 CreateSemaphoreExW(
@@ -178,10 +174,7 @@ CreateSemaphoreExW(
         IN /*_Reserved_*/  DWORD dwFlags,
         IN DWORD dwDesiredAccess)
 {
-    // dwFlags is reserved and unused, and dwDesiredAccess is currently
-    // only ever used as SEMAPHORE_ALL_ACCESS.  The other parameters
-    // all map to CreateSemaphoreW.
-    _ASSERTE(SEMAPHORE_ALL_ACCESS == dwDesiredAccess);
+    // dwFlags is reserved and unused
 
     return CreateSemaphoreW(
         lpSemaphoreAttributes,
@@ -517,7 +510,7 @@ CorUnix::InternalReleaseSemaphore(
     _ASSERTE(lOldCount <= pSemaphoreData->lMaximumCount);
     if (lReleaseCount > pSemaphoreData->lMaximumCount - lOldCount)
     {
-        palError = ERROR_INVALID_PARAMETER;
+        palError = ERROR_TOO_MANY_POSTS;
         goto InternalReleaseSemaphoreExit;
     }
 
@@ -604,83 +597,3 @@ OpenSemaphoreW(
 
     return hSemaphore;
 }
-
-/*++
-Function:
-  InternalOpenSemaphore
-
-Note:
-  dwDesiredAccess is currently ignored (no Win32 object security support)
-  bInheritHandle is currently ignored (handles to semaphores are not inheritable)
-
-Parameters:
-  pthr -- thread data for calling thread
-  phEvent -- on success, receives the allocated semaphore handle
-  
-  See MSDN docs on OpenSemaphore for all other parameters.
---*/
-
-PAL_ERROR
-CorUnix::InternalOpenSemaphore(
-    CPalThread *pthr,
-    DWORD dwDesiredAccess,
-    BOOL bInheritHandle,
-    LPCWSTR lpName,
-    HANDLE *phSemaphore
-    )
-{
-    PAL_ERROR palError = NO_ERROR;
-    IPalObject *pobjSemaphore = NULL;
-    CPalString sObjectName(lpName);
-
-    _ASSERTE(NULL != pthr);
-    _ASSERTE(NULL != lpName);
-    _ASSERTE(NULL != phSemaphore);
-
-    ENTRY("InternalOpenSemaphore(pthr=%p, dwDesiredAccess=%d, bInheritHandle=%d, "
-        "lpName=%p, phSemaphore=%p)\n",
-        pthr,
-        dwDesiredAccess,
-        bInheritHandle,
-        phSemaphore
-        );
-
-    palError = g_pObjectManager->LocateObject(
-        pthr,
-        &sObjectName,
-        &aotSempahore,
-        &pobjSemaphore
-        );
-
-    if (NO_ERROR != palError)
-    {
-        goto InternalOpenSemaphoreExit;
-    }
-
-    palError = g_pObjectManager->ObtainHandleForObject(
-        pthr,
-        pobjSemaphore,
-        dwDesiredAccess,
-        bInheritHandle,
-        NULL,
-        phSemaphore
-        );
-
-    if (NO_ERROR != palError)
-    {
-        goto InternalOpenSemaphoreExit;
-    }
-
-InternalOpenSemaphoreExit:
-
-    if (NULL != pobjSemaphore)
-    {
-        pobjSemaphore->ReleaseReference(pthr);
-    }
-
-    LOGEXIT("InternalOpenSemaphore returns %d\n", palError);
-    
-    return palError;
-}
-
-

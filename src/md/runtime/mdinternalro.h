@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //*****************************************************************************
 // MDInternalRO.h
 // 
@@ -72,12 +71,14 @@ public:
     STDMETHODIMP SetOptimizeAccessForSpeed(
         BOOL fOptSpeed)
     {
+#ifdef FEATURE_PREJIT
         // The metadata cache of hot items is an optional working-set optimization 
         // that has a large speed cost relative to direct table lookup
         if (fOptSpeed)
         {   // We want to disable usage of hot data (e.g. in ngen compilation process)
             m_LiteWeightStgdb.m_MiniMd.DisableHotDataUsage();
         }
+#endif
         return S_OK;
     }
 

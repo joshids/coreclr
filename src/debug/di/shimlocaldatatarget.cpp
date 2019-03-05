@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //*****************************************************************************
 
 // 
@@ -66,6 +65,9 @@ public:
     virtual HRESULT STDMETHODCALLTYPE ContinueStatusChanged(
         DWORD dwThreadId,
         CORDB_CONTINUE_STATUS dwContinueStatus);
+
+    virtual HRESULT STDMETHODCALLTYPE VirtualUnwind(
+        DWORD threadId, ULONG32 contextSize, PBYTE context);
 
 private:
     // Handle to the process. We own this.
@@ -206,7 +208,7 @@ void ShimLocalDataTarget::Dispose()
 //
 
 HRESULT BuildPlatformSpecificDataTarget(MachineInfo machineInfo,
-                                        DWORD processId, 
+                                        const ProcessDescriptor * pProcessDescriptor,
                                         ShimDataTarget ** ppDataTarget)
 {
     HRESULT hr = S_OK;
@@ -224,7 +226,7 @@ HRESULT BuildPlatformSpecificDataTarget(MachineInfo machineInfo,
         PROCESS_VM_WRITE          |
         SYNCHRONIZE,
         FALSE,
-        processId);
+        pProcessDescriptor->m_Pid);
 
     if (hProcess == NULL)
     {
@@ -245,7 +247,7 @@ HRESULT BuildPlatformSpecificDataTarget(MachineInfo machineInfo,
     {
         goto Label_Exit;
     }
-    pLocalDataTarget = new (nothrow) ShimLocalDataTarget(processId, hProcess);
+    pLocalDataTarget = new (nothrow) ShimLocalDataTarget(pProcessDescriptor->m_Pid, hProcess);
     if (pLocalDataTarget == NULL)
     {
         hr = E_OUTOFMEMORY;
@@ -320,7 +322,7 @@ ShimLocalDataTarget::ReadVirtual(
     {
         // Calculate bytes to read and don't let read cross
         // a page boundary.
-        readSize = OS_PAGE_SIZE - (ULONG32)(address & (OS_PAGE_SIZE - 1));
+        readSize = GetOsPageSize() - (ULONG32)(address & (GetOsPageSize() - 1));
         readSize = min(cbRequestSize, readSize);
 
         if (!ReadProcessMemory(m_hProcess, (PVOID)(ULONG_PTR)address,
@@ -450,3 +452,20 @@ ShimLocalDataTarget::ContinueStatusChanged(
     }
     return E_NOTIMPL;
 }
+
+//---------------------------------------------------------------------------------------
+//
+// Unwind the stack to the next frame.
+//
+// Return Value: 
+//     context filled in with the next frame
+//
+HRESULT STDMETHODCALLTYPE 
+ShimLocalDataTarget::VirtualUnwind(DWORD threadId, ULONG32 contextSize, PBYTE context)
+{
+#ifndef FEATURE_PAL
+    _ASSERTE(!"ShimLocalDataTarget::VirtualUnwind NOT IMPLEMENTED");
+#endif 
+    return E_NOTIMPL;
+}
+

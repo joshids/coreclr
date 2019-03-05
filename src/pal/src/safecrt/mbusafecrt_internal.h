@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 /***
 *   mbusafecrt_internal.h - internal declarations for SafeCRT functions
@@ -21,6 +20,14 @@
 
 #include "pal_char16.h"
 #include "pal_mstypes.h"
+
+#ifndef DLLEXPORT
+#ifdef _MSC_VER
+#define DLLEXPORT __declspec(dllexport)
+#else
+#define DLLEXPORT __attribute__ ((visibility ("default")))
+#endif // _MSC_VER
+#endif // !DLLEXPORT
 
 typedef __builtin_va_list va_list;
 

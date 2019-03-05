@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 // ---------------------------------------------------------------------------
 // EEContract.cpp
@@ -24,13 +23,12 @@ void EEContract::Disable()
     BaseContract::Disable();
 }
 
-void EEContract::DoChecks(UINT testmask, __in_z const char *szFunction, __in_z char *szFile, int lineNum)
+void EEContract::DoChecks(UINT testmask, __in_z const char *szFunction, __in_z const char *szFile, int lineNum)
 {
     SCAN_IGNORE_THROW;      // Tell the static contract analyzer to ignore contract violations
     SCAN_IGNORE_FAULT;      // due to the contract checking logic itself.
     SCAN_IGNORE_TRIGGER;
     SCAN_IGNORE_LOCK;
-    SCAN_IGNORE_SO;
     
     // Many of the checks below result in calls to GetThread()
     // that work just fine if GetThread() returns NULL, so temporarily

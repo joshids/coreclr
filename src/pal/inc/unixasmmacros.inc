@@ -1,9 +1,8 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
-#define INVALIDGCVALUE -0x33333333 // 0CCCCCCCDh - the assembler considers it to be a signed integer constant
+#define INVALIDGCVALUE 0xCCCCCCCD
 
 #if defined(__APPLE__)
 #define C_FUNC(name) _##name
@@ -11,7 +10,11 @@
 #define LOCAL_LABEL(name) L##name
 #else
 #define C_FUNC(name) name
+#if defined(_AMD64_) || defined(_X86_)
 #define EXTERNAL_C_FUNC(name) C_FUNC(name)@plt
+#else
+#define EXTERNAL_C_FUNC(name) C_FUNC(name)
+#endif
 #define LOCAL_LABEL(name) .L##name
 #endif
 
@@ -21,9 +24,6 @@
 #define C_PLTFUNC(name) name@PLT
 #endif
 
-.macro LEAF_END Name, Section
-        LEAF_END_MARKED \Name, \Section
-.endm
 
 .macro END_PROLOGUE
 .endm
@@ -32,7 +32,9 @@
         .equiv \New, \Old
 .endm
 
-#if defined(_AMD64_)
+#if defined(_X86_)
+#include "unixasmmacrosx86.inc"
+#elif defined(_AMD64_)
 #include "unixasmmacrosamd64.inc"
 #elif defined(_ARM_)
 #include "unixasmmacrosarm.inc"

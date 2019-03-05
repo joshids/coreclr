@@ -1,8 +1,6 @@
-//
-// Copyright (c) Geoff Norton. All rights reserved.
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 #include "unixasmmacros.inc"
 #include "asmconstants.h"
@@ -13,9 +11,9 @@
 //-----------------------------------------------------------------------------
 //void CallDescrWorkerInternal(CallDescrData * pCallDescrData);
 
-NESTED_ENTRY CallDescrWorkerInternal, _TEXT, UnhandledExceptionHandlerUnix
-    PROLOG_SAVE_REG_PAIR_INDEXED   fp, lr, #-32
-    PROLOG_SAVE_REG    x19, #16   //the stack slot at sp+24 is empty for 16 byte alligment
+NESTED_ENTRY CallDescrWorkerInternal, _TEXT, NoHandler
+    PROLOG_SAVE_REG_PAIR_INDEXED   fp, lr, -32
+    PROLOG_SAVE_REG    x19, 16           //the stack slot at sp+24 is empty for 16 byte alligment
 
     mov     x19, x0 // save pCallDescrData in x19
 
@@ -46,29 +44,32 @@ LOCAL_LABEL(stackloop):
     bne     LOCAL_LABEL(stackloop)
 LOCAL_LABEL(donestack):
 
-    // If FP arguments are supplied in registers (x8 != NULL) then initialize all of them from the pointer
+    // If FP arguments are supplied in registers (x9 != NULL) then initialize all of them from the pointer
     // given in x8. 
-    ldr     x8, [x19,#CallDescrData__pFloatArgumentRegisters]
-    cbz     x8, LOCAL_LABEL(NoFloatingPoint)
-    ldp     d0, d1, [x8]
-    ldp     d2, d3, [x8, #16]
-    ldp     d4, d5, [x8, #32]
-    ldp     d6, d7, [x8, #48]
+    ldr     x9, [x19,#CallDescrData__pFloatArgumentRegisters]
+    cbz     x9, LOCAL_LABEL(NoFloatingPoint)
+    ldp     q0, q1, [x9]
+    ldp     q2, q3, [x9, #32]
+    ldp     q4, q5, [x9, #64]
+    ldp     q6, q7, [x9, #96]
 LOCAL_LABEL(NoFloatingPoint):
 
     // Copy [pArgumentRegisters, ..., pArgumentRegisters + 56]
     // into x0, ..., x7
 
-    ldr     x8, [x19,#CallDescrData__pArgumentRegisters]
-    ldp     x0, x1, [x8]
-    ldp     x2, x3, [x8, #16]
-    ldp     x4, x5, [x8, #32]
-    ldp     x6, x7, [x8, #48]
+    ldr     x9, [x19,#CallDescrData__pArgumentRegisters]
+    ldp     x0, x1, [x9]
+    ldp     x2, x3, [x9, #16]
+    ldp     x4, x5, [x9, #32]
+    ldp     x6, x7, [x9, #48]
 
-    // ARM64TODO: => see if anything special needs to be done for remoting
+    // Copy pRetBuffArg into x8
+    ldr     x9, [x19,#CallDescrData__pRetBuffArg]
+    ldr     x8, [x9]
+
     // call pTarget
-    ldr     x8, [x19,#CallDescrData__pTarget]
-    blr     x8
+    ldr     x9, [x19,#CallDescrData__pTarget]
+    blr     x9
 
     ldr     w3, [x19,#CallDescrData__fpReturnSize]
 
@@ -112,7 +113,7 @@ LOCAL_LABEL(NoDoubleHFAReturn):
 
 LOCAL_LABEL(IntReturn):
     // Save return value into retbuf for int
-    str     x0, [x19, #(CallDescrData__returnValue + 0)]
+    stp     x0, x1, [x19, #(CallDescrData__returnValue + 0)]
 
 LOCAL_LABEL(ReturnDone):
 
@@ -124,7 +125,7 @@ LOCAL_LABEL(ReturnDone):
 #endif
 
     EPILOG_STACK_RESTORE
-    EPILOG_RESTORE_REG      x19, #16    //the stack slot at sp+24 is empty for 16 byte alligment
-    EPILOG_RESTORE_REG_PAIR_INDEXED fp, lr, #32
+    EPILOG_RESTORE_REG      x19, 16    //the stack slot at sp+24 is empty for 16 byte alligment
+    EPILOG_RESTORE_REG_PAIR_INDEXED fp, lr, 32
     EPILOG_RETURN
 NESTED_END CallDescrWorkerInternal, _TEXT

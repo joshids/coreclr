@@ -1,8 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Copyright (c) Geoff Norton. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 .intel_syntax noprefix
 #include "unixasmmacros.inc"
@@ -85,7 +83,7 @@ LOCAL_LABEL(HaveThread):
 
         mov             r12, rax                // r12 <- Thread*
 
-        //FailFast if a native callable method invoked via ldftn and calli.
+        //FailFast if a native callable method is invoked via ldftn and calli.
         cmp             dword ptr [r12 + OFFSETOF__Thread__m_fPreemptiveGCDisabled], 1
         jz              LOCAL_LABEL(InvalidTransition)
 
@@ -198,15 +196,3 @@ LOCAL_LABEL(WrongAppDomain):
 #endif
 
 NESTED_END UMThunkStub, _TEXT
-
-//
-// EXTERN_C void __stdcall UM2MThunk_WrapperHelper(
-//       void *pThunkArgs,               // rdi
-//       int argLen,                     // rsi
-//       void *pAddr,                    // rdx            // not used
-//       UMEntryThunk *pEntryThunk,      // rcx
-//       Thread *pThread);               // r8
-//
-NESTED_ENTRY UM2MThunk_WrapperHelper, _TEXT, NoHandler
-        int3
-NESTED_END UM2MThunk_WrapperHelper, _TEXT

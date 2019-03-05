@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 /*++
 
@@ -15,7 +14,9 @@
 #include "pal/thread.hpp"
 #include "../thread/procprivate.hpp"
 #include "pal/module.h"
+#include "pal/process.h"
 #include "pal/seh.hpp"
+#include "pal/signal.hpp"
 
 using namespace CorUnix;
 
@@ -95,7 +96,7 @@ CreateCurrentThreadData()
         if (NO_ERROR != palError)
         {
             ASSERT("Unable to allocate pal thread: error %d - aborting\n", palError);
-            abort();
+            PROCAbort();
         }
     }
 
@@ -106,12 +107,24 @@ PAL_ERROR
 AllocatePalThread(CPalThread **ppThread)
 {
     CPalThread *pThread = NULL;
+    PAL_ERROR palError;
 
-    PAL_ERROR palError = CreateThreadData(&pThread);
+    palError = CreateThreadData(&pThread);
     if (NO_ERROR != palError)
     {
         goto exit;
     }
+
+#if !HAVE_MACH_EXCEPTIONS
+    // Ensure alternate stack for SIGSEGV handling. Our SIGSEGV handler is set to
+    // run on an alternate stack and the stack needs to be allocated per thread.
+    if (!pThread->EnsureSignalAlternateStack())
+    {
+        ERROR("Cannot allocate alternate stack for SIGSEGV handler!\n");
+        palError = ERROR_NOT_ENOUGH_MEMORY;
+        goto exit;
+    }
+#endif // !HAVE_MACH_EXCEPTIONS
 
     HANDLE hThread;
     palError = CreateThreadObject(pThread, pThread, &hThread);
@@ -230,7 +243,7 @@ PAL_ReenterForEH()
     }
     else if (!pThread->IsInPal())
     {
-#if !_NO_DEBUG_MESSAGES_                
+#if _ENABLE_DEBUG_MESSAGES_
         DBG_PRINTF(DLI_ENTRY, defdbgchan, TRUE)("PAL_ReenterForEH()\n");
 #endif
 

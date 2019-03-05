@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 /*****************************************************************************
  **                                                                         **
  ** sospriv.idl - The private interface that SOS uses to query the runtime  **
@@ -335,4 +334,46 @@ interface ISOSDacInterface2 : IUnknown
 {
     HRESULT GetObjectExceptionData(CLRDATA_ADDRESS objAddr, struct DacpExceptionObjectData *data);
     HRESULT IsRCWDCOMProxy(CLRDATA_ADDRESS rcwAddr, BOOL* isDCOMProxy);
+};
+
+[
+    object,
+    local,
+    uuid(B08C5CDC-FD8A-49C5-AB38-5FEEF35235B4)
+]
+interface ISOSDacInterface3 : IUnknown
+{
+    HRESULT GetGCInterestingInfoData(CLRDATA_ADDRESS interestingInfoAddr, struct DacpGCInterestingInfoData *data);
+    HRESULT GetGCInterestingInfoStaticData(struct DacpGCInterestingInfoData *data);
+    HRESULT GetGCGlobalMechanisms(size_t* globalMechanisms);
+};
+
+[
+    object,
+    local,
+    uuid(74B9D34C-A612-4B07-93DD-5462178FCE11)
+]
+interface ISOSDacInterface4 : IUnknown
+{
+    HRESULT GetClrNotification(CLRDATA_ADDRESS arguments[], int count, int *pNeeded);
+};
+
+[
+    object,
+    local,
+    uuid(127d6abe-6c86-4e48-8e7b-220781c58101)
+]
+interface ISOSDacInterface5 : IUnknown
+{
+    HRESULT GetTieredVersions(CLRDATA_ADDRESS methodDesc, int rejitId, struct DacpTieredVersionData *nativeCodeAddrs, int cNativeCodeAddrs, int *pcNativeCodeAddrs);
+};
+
+[
+    object,
+    local,
+    uuid(11206399-4B66-4EDB-98EA-85654E59AD45)
+]
+interface ISOSDacInterface6 : IUnknown
+{
+    HRESULT GetMethodTableFieldData(CLRDATA_ADDRESS mt, struct DacpMethodTableFieldData *data);
 };

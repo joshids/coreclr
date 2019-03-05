@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 // ============================================================
 //
 // Utils.cpp
@@ -145,12 +144,6 @@ namespace BINDER_SPACE
         
         BINDER_LOG_LEAVE_HR(W("Utils::FileOrDirectoryExistsLog"), hr);
         return hr;
-    }
-
-    BOOL IsURL(SString &urlOrPath)
-    {
-        // This is also in defined rotor pal
-        return PathIsURLW(urlOrPath);
     }
 
     void MutateUrlToPath(SString &urlOrPath)

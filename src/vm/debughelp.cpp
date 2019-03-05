@@ -1,15 +1,14 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 
 #include "common.h"
 
 /*******************************************************************/
-/* The folowing routines used to exist in all builds so they could called from the
+/* The following routines used to exist in all builds so they could called from the
  * debugger before we had strike.
- * Now most of them are only inclued in debug builds for diagnostics purposes.
+ * Now most of them are only included in debug builds for diagnostics purposes.
 */
 /*******************************************************************/
 
@@ -21,9 +20,14 @@ BOOL isMemoryReadable(const TADDR start, unsigned len)
     {
         NOTHROW;
         GC_NOTRIGGER;
-        SO_TOLERANT;
     }
     CONTRACTL_END;
+
+#if !defined(DACCESS_COMPILE) && defined(FEATURE_PAL)
+
+    return PAL_ProbeMemory((PVOID)start, len, FALSE);
+
+#else // !DACCESS_COMPILE && FEATURE_PAL
 
     //
     // To accomplish this in a no-throw way, we have to touch each and every page
@@ -68,10 +72,10 @@ BOOL isMemoryReadable(const TADDR start, unsigned len)
     // Now we have to loop thru each and every page in between and touch them.
     //
     location = start;
-    while (len > PAGE_SIZE)
+    while (len > GetOsPageSize())
     {
-        location += PAGE_SIZE;
-        len -= PAGE_SIZE;
+        location += GetOsPageSize();
+        len -= GetOsPageSize();
 
 #ifdef DACCESS_COMPILE
         if (DacReadAll(location, &buff, 1, false) != S_OK)
@@ -88,6 +92,7 @@ BOOL isMemoryReadable(const TADDR start, unsigned len)
     }
 
     return 1;
+#endif // !DACCESS_COMPILE && FEATURE_PAL
 }
 
 
@@ -102,7 +107,6 @@ bool isRetAddr(TADDR retAddr, TADDR* whereCalled)
     {
         NOTHROW;
         GC_NOTRIGGER;
-        SO_NOT_MAINLINE;
     }
     CONTRACTL_END;
 
@@ -203,7 +207,7 @@ void *DumpEnvironmentBlock(void)
     return WszGetEnvironmentStrings();
 }
 
-#if defined(_TARGET_X86_)
+#if defined(_TARGET_X86_) && !defined(FEATURE_PAL)
 /*******************************************************************/
 // Dump the SEH chain to stderr
 void PrintSEHChain(void)
@@ -239,7 +243,7 @@ MethodDesc* IP2MD(ULONG_PTR IP)
 }
 
 /*******************************************************************/
-/* if addr is a valid method table, return a poitner to it */
+/* if addr is a valid method table, return a pointer to it */
 MethodTable* AsMethodTable(size_t addr)
 {
     CONTRACTL
@@ -312,7 +316,7 @@ MethodDesc* AsMethodDesc(size_t addr)
                 // extra indirection if the address is tagged (the low bit is set).
                 // That could AV if we don't check it first.
 
-                if (!ppMT->IsTagged((TADDR)ppMT) || isMemoryReadable((TADDR)ppMT->GetValuePtr((TADDR)ppMT), sizeof(MethodTable*)))
+                if (!ppMT->IsTagged((TADDR)ppMT) || isMemoryReadable((TADDR)ppMT->GetValuePtr(), sizeof(MethodTable*)))
                 {
                     if (AsMethodTable((size_t)RelativeFixupPointer<PTR_MethodTable>::GetValueAtPtr((TADDR)ppMT)) != 0)
                     {
@@ -398,7 +402,7 @@ wchar_t* formatMethodDesc(MethodDesc* pMD,
     }
 
     buff[bufSize - 1] = W('\0');    // this will guarantee the buffer is also NULL-terminated
-    if(_snwprintf_s( &buff[lstrlenW(buff)] , bufSize -lstrlenW(buff) - 1, _TRUNCATE, W("::%S"), pMD->GetName()) < 0)
+    if(_snwprintf_s( &buff[wcslen(buff)] , bufSize - wcslen(buff) - 1, _TRUNCATE, W("::%S"), pMD->GetName()) < 0)
     {
         return NULL;
     }
@@ -406,8 +410,8 @@ wchar_t* formatMethodDesc(MethodDesc* pMD,
 #ifdef _DEBUG
     if (pMD->m_pszDebugMethodSignature)
     {
-        if(_snwprintf_s(&buff[lstrlenW(buff)],
-                      bufSize -lstrlenW(buff) - 1,
+        if(_snwprintf_s(&buff[wcslen(buff)],
+                      bufSize - wcslen(buff) - 1,
                       _TRUNCATE,
                       W(" %S"),
                       pMD->m_pszDebugMethodSignature) < 0)
@@ -418,7 +422,7 @@ wchar_t* formatMethodDesc(MethodDesc* pMD,
     }
 #endif
 
-    if(_snwprintf_s(&buff[lstrlenW(buff)], bufSize -lstrlenW(buff) - 1, _TRUNCATE, W("(%x)"), (size_t)pMD) < 0)
+    if(_snwprintf_s(&buff[wcslen(buff)], bufSize - wcslen(buff) - 1, _TRUNCATE, W("(%x)"), (size_t)pMD) < 0)
     {
         return NULL;
     }
@@ -477,7 +481,7 @@ int dumpStack(BYTE* topOfStack, unsigned len)
                 return(0);
             }
 
-            buffPtr += lstrlenW(buffPtr);
+            buffPtr += wcslen(buffPtr);
 
             const wchar_t* kind = W("RETADDR ");
 
@@ -520,7 +524,7 @@ int dumpStack(BYTE* topOfStack, unsigned len)
                 return(0);
             }
 
-            buffPtr += lstrlenW(buffPtr);
+            buffPtr += wcslen(buffPtr);
 
             if (ftn != 0)
             {
@@ -530,12 +534,12 @@ int dumpStack(BYTE* topOfStack, unsigned len)
                     return(0);
                 }
 
-                buffPtr += lstrlenW(buffPtr);
+                buffPtr += wcslen(buffPtr);
             }
             else
             {
                 wcsncpy_s(buffPtr, nLen - (buffPtr - buff), W("<UNKNOWN FTN>"), _TRUNCATE);
-                buffPtr += lstrlenW(buffPtr);
+                buffPtr += wcslen(buffPtr);
             }
 
             if (whereCalled != 0)
@@ -545,11 +549,11 @@ int dumpStack(BYTE* topOfStack, unsigned len)
                     return(0);
                 }
 
-                buffPtr += lstrlenW(buffPtr);
+                buffPtr += wcslen(buffPtr);
             }
 
             wcsncpy_s(buffPtr, nLen - (buffPtr - buff), W("\n"), _TRUNCATE);
-            buffPtr += lstrlenW(buffPtr);
+            buffPtr += wcslen(buffPtr);
             WszOutputDebugString(buff);
         }
 
@@ -562,14 +566,14 @@ int dumpStack(BYTE* topOfStack, unsigned len)
                 return(0);
             }
 
-            buffPtr += lstrlenW(buffPtr);
+            buffPtr += wcslen(buffPtr);
 
             if( formatMethodTable(pMT, buffPtr, static_cast<DWORD>(buff+ nLen -buffPtr-1)) == NULL)
             {
                 return(0);
             }
 
-            buffPtr += lstrlenW(buffPtr);
+            buffPtr += wcslen(buffPtr);
 
             wcsncpy_s(buffPtr, nLen - (buffPtr - buff), W("\n"), _TRUNCATE);
             WszOutputDebugString(buff);
@@ -897,8 +901,8 @@ StackWalkAction PrintStackTraceCallback(CrawlFrame* pCF, VOID* pData)
 
         if (pCBD->withAppDomain)
         {
-            if(_snwprintf_s(&buff[lstrlenW(buff)],
-                          nLen -lstrlenW(buff) - 1,
+            if(_snwprintf_s(&buff[wcslen(buff)],
+                          nLen - wcslen(buff) - 1,
                           _TRUNCATE,
                           W("{[%3.3x] %s} "),
                           pCF->GetAppDomain()->GetId().m_dwId,
@@ -914,7 +918,7 @@ StackWalkAction PrintStackTraceCallback(CrawlFrame* pCF, VOID* pData)
 
         if (clsName != 0)
         {
-            if(_snwprintf_s(&buff[lstrlenW(buff)], nLen -lstrlenW(buff) - 1, _TRUNCATE, W("%S::"), clsName) < 0)
+            if(_snwprintf_s(&buff[wcslen(buff)], nLen - wcslen(buff) - 1, _TRUNCATE, W("%S::"), clsName) < 0)
             {
                 return SWA_CONTINUE;
             }
@@ -924,8 +928,8 @@ StackWalkAction PrintStackTraceCallback(CrawlFrame* pCF, VOID* pData)
         // But this routine is diagnostic aid, not customer-reachable so we won't bother to plug.
         AllocMemTracker dummyAmTracker;
 
-        int buffLen = _snwprintf_s(&buff[lstrlenW(buff)],
-                      nLen -lstrlenW(buff) - 1,
+        int buffLen = _snwprintf_s(&buff[wcslen(buff)],
+                      nLen - wcslen(buff) - 1,
                       _TRUNCATE,
                       W("%S %S  "),
                       pMD->GetName(),
@@ -946,8 +950,8 @@ StackWalkAction PrintStackTraceCallback(CrawlFrame* pCF, VOID* pData)
 
             TADDR start = pCF->GetCodeInfo()->GetStartAddress();
 
-            if(_snwprintf_s(&buff[lstrlenW(buff)],
-                          nLen -lstrlenW(buff) - 1,
+            if(_snwprintf_s(&buff[wcslen(buff)],
+                          nLen - wcslen(buff) - 1,
                           _TRUNCATE,
                           W("JIT ESP:%X MethStart:%X EIP:%X(rel %X)"),
                           (size_t)GetRegdisplaySP(regs),
@@ -962,7 +966,7 @@ StackWalkAction PrintStackTraceCallback(CrawlFrame* pCF, VOID* pData)
         else
         {
 
-            if(_snwprintf_s(&buff[lstrlenW(buff)], nLen -lstrlenW(buff) - 1, _TRUNCATE, W("EE implemented")) < 0)
+            if(_snwprintf_s(&buff[wcslen(buff)], nLen - wcslen(buff) - 1, _TRUNCATE, W("EE implemented")) < 0)
             {
                 return SWA_CONTINUE;
             }
@@ -973,8 +977,8 @@ StackWalkAction PrintStackTraceCallback(CrawlFrame* pCF, VOID* pData)
     {
         Frame* frame = pCF->GetFrame();
 
-        if(_snwprintf_s(&buff[lstrlenW(buff)],
-                      nLen -lstrlenW(buff) - 1,
+        if(_snwprintf_s(&buff[wcslen(buff)],
+                      nLen - wcslen(buff) - 1,
                       _TRUNCATE,
                       W("EE Frame is") LFMT_ADDR,
                       (size_t)DBG_ADDR(frame)) < 0)
@@ -1199,24 +1203,24 @@ void DumpGCInfo(MethodDesc* method)
     _ASSERTE(codeInfo.GetRelOffset() == 0);
 
     ICodeManager* codeMan = codeInfo.GetCodeManager();
-    BYTE* table = (BYTE*) codeInfo.GetGCInfo();
+    GCInfoToken gcInfoToken = codeInfo.GetGCInfoToken();
 
-    unsigned methodSize = (unsigned)codeMan->GetFunctionSize(table);
+    unsigned methodSize = (unsigned)codeMan->GetFunctionSize(gcInfoToken);
 
-    GCDump gcDump;
+    GCDump gcDump(gcInfoToken.Version);
+    PTR_CBYTE gcInfo = PTR_CBYTE(gcInfoToken.Info);
 
     gcDump.gcPrintf = printfToDbgOut;
 
     InfoHdr header;
 
     printfToDbgOut ("Method info block:\n");
-
-    table += gcDump.DumpInfoHdr(table, &header, &methodSize, 0);
+    gcInfo += gcDump.DumpInfoHdr(gcInfo, &header, &methodSize, 0);
 
     printfToDbgOut ("\n");
     printfToDbgOut ("Pointer table:\n");
 
-    table += gcDump.DumpGCTable(table, header, methodSize, 0);
+    gcInfo += gcDump.DumpGCTable(gcInfo, header, methodSize, 0);
 }
 
 void DumpGCInfoMD(size_t method)

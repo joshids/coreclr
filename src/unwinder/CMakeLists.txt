@@ -11,29 +11,11 @@ set(UNWINDER_SOURCES
     unwinder.cpp
 )
 
-if(CLR_CMAKE_PLATFORM_ARCH_AMD64)
-    include_directories(amd64)
-    
-    list(APPEND UNWINDER_SOURCES
-        amd64/unwinder_amd64.cpp
-    )
-elseif(CLR_CMAKE_PLATFORM_ARCH_I386)
-# nothing needed for x86
-elseif(CLR_CMAKE_PLATFORM_ARCH_ARM)
-    include_directories(arm)
-    
-    list(APPEND UNWINDER_SOURCES
-        arm/unwinder_arm.cpp
-    )
-elseif(CLR_CMAKE_PLATFORM_ARCH_ARM64)
-    include_directories(arm64)
-    
-    list(APPEND UNWINDER_SOURCES
-        arm64/unwinder_arm64.cpp
-    )
-else()
-  clr_unknown_arch()
-endif()
+# Include platform specific unwinder for applicable (native and cross-target) builds.
+include_directories(${ARCH_SOURCES_DIR})
+list(APPEND UNWINDER_SOURCES
+    ${ARCH_SOURCES_DIR}/unwinder_${ARCH_SOURCES_DIR}.cpp
+)
 
 convert_to_absolute_path(UNWINDER_SOURCES ${UNWINDER_SOURCES})
 

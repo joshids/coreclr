@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //*****************************************************************************
 // File: ShimProcess.cpp
 // 
@@ -133,9 +132,7 @@ void ShimProcess::SetProcess(ICorDebugProcess * pProcess)
     if (pProcess != NULL)
     {
         // Verify that DataTarget + new process have the same pid?
-        DWORD pid = 0;
-        _ASSERTE(SUCCEEDED(m_pLiveDataTarget->GetPid(&pid)));
-        _ASSERTE(m_pProcess->GetPid() == pid);
+        _ASSERTE(m_pProcess->GetProcessDescriptor()->m_Pid == m_pLiveDataTarget->GetPid());
     }
 }
 
@@ -155,12 +152,12 @@ void ShimProcess::SetProcess(ICorDebugProcess * pProcess)
 // Notes:
 //    Only call this once, during the initialization dance. 
 //
-HRESULT ShimProcess::InitializeDataTarget(DWORD processId)
+HRESULT ShimProcess::InitializeDataTarget(const ProcessDescriptor * pProcessDescriptor)
 {
     _ASSERTE(m_pLiveDataTarget == NULL);
 
     
-    HRESULT hr = BuildPlatformSpecificDataTarget(GetMachineInfo(), processId, &m_pLiveDataTarget);
+    HRESULT hr = BuildPlatformSpecificDataTarget(GetMachineInfo(), pProcessDescriptor, &m_pLiveDataTarget);
     if (FAILED(hr))
     {
         _ASSERTE(m_pLiveDataTarget == NULL);
@@ -368,12 +365,12 @@ DWORD WINAPI CallStopGoThreadProc(LPVOID parameter)
     // Calling Stop + Continue will synchronize the process and force any queued events to be called.
     // Stop is synchronous and will block until debuggee is synchronized.
     hr = pProc->Stop(INFINITE);
-    SIMPLIFYING_ASSUMPTION(SUCCEEDED(hr));
+    SIMPLIFYING_ASSUMPTION_SUCCEEDED(hr);
 
     // Continue will resume the debuggee. If there are queued events (which we expect in this case)
     // then continue will drain the event queue instead of actually resuming the process.
     hr = pProc->Continue(FALSE);
-    SIMPLIFYING_ASSUMPTION(SUCCEEDED(hr));
+    SIMPLIFYING_ASSUMPTION_SUCCEEDED(hr);
 
     // This thread just needs to trigger an event dispatch. Now that it's done that, it can exit.
     return 0;
@@ -681,10 +678,8 @@ CorDebugRecordFormat GetHostExceptionRecordFormat()
 {
 #if defined(_WIN64)
     return FORMAT_WINDOWS_EXCEPTIONRECORD64;
-#elif defined(_WIN32)
-    return FORMAT_WINDOWS_EXCEPTIONRECORD32;
 #else
-    C_ASSERTE(!"CorDebugRecordFormat not implemented for this platform");
+    return FORMAT_WINDOWS_EXCEPTIONRECORD32;
 #endif
 }
 
@@ -740,11 +735,8 @@ HRESULT ShimProcess::HandleWin32DebugEvent(const DEBUG_EVENT * pEvent)
             // This assert could be our only warning of various catastrophic failures in the left-side.
             if (!dwFirstChance && (pRecord->ExceptionCode == STATUS_BREAKPOINT) && !m_fIsInteropDebugging)
             {            
-                DWORD pid = 0;
-                if (m_pLiveDataTarget != NULL) 
-                {
-                    m_pLiveDataTarget->GetPid(&pid);
-                }
+                DWORD pid = (m_pLiveDataTarget == NULL) ? 0 : m_pLiveDataTarget->GetPid();
+
                 CONSISTENCY_CHECK_MSGF(false, 
                     ("Unhandled breakpoint exception in debuggee (pid=%d (0x%x)) on thread %d(0x%x)\n"
                     "This may mean there was an assert in the debuggee on that thread.\n"
@@ -822,7 +814,7 @@ HRESULT ShimProcess::HandleWin32DebugEvent(const DEBUG_EVENT * pEvent)
                 // Call back into that. This will handle Continuing the debug event.
                 m_pProcess->HandleDebugEventForInteropDebugging(pEvent); 
 #else
-                _ASSERTE(!"Interop debugging not supported on Rotor");
+                _ASSERTE(!"Interop debugging not supported");
 #endif
             }
             else
@@ -841,7 +833,7 @@ HRESULT ShimProcess::HandleWin32DebugEvent(const DEBUG_EVENT * pEvent)
     EX_CATCH_HRESULT(hrIgnore);
     // Dont' expect errors here (but could probably return it up to become an
     // unrecoverable error if necessary). We still want to call Continue thought.
-    SIMPLIFYING_ASSUMPTION(SUCCEEDED(hrIgnore));
+    SIMPLIFYING_ASSUMPTION_SUCCEEDED(hrIgnore);
 
     //
     // Continue the debuggee if needed.
@@ -881,7 +873,7 @@ HRESULT ShimProcess::HandleWin32DebugEvent(const DEBUG_EVENT * pEvent)
             {
                 ::Sleep(500);
                 hrIgnore = GetNativePipeline()->EnsureThreadsRunning();
-                SIMPLIFYING_ASSUMPTION(SUCCEEDED(hrIgnore));
+                SIMPLIFYING_ASSUMPTION_SUCCEEDED(hrIgnore);
             }
         }
     }    
@@ -1748,11 +1740,8 @@ void ShimProcess::PreDispatchEvent(bool fRealCreateProcessEvent /*= false*/)
 CORDB_ADDRESS ShimProcess::GetCLRInstanceBaseAddress()
 {
     CORDB_ADDRESS baseAddress = CORDB_ADDRESS(NULL);
-    DWORD dwPid = 0;
-    if (FAILED(m_pLiveDataTarget->GetPid(&dwPid)))
-    {
-        return baseAddress;
-    }
+    DWORD dwPid = m_pLiveDataTarget->GetPid();
+
 #if defined(FEATURE_CORESYSTEM)
     // Debugger attaching to CoreCLR via CoreCLRCreateCordbObject should have already specified CLR module address.
     // Code that help to find it now lives in dbgshim.
@@ -1833,51 +1822,38 @@ HRESULT ShimProcess::FindLoadedCLR(CORDB_ADDRESS * pClrInstanceId)
 
 HMODULE ShimProcess::GetDacModule()
 {
-    
     HModuleHolder hDacDll;
+    PathString wszAccessDllPath;
 
 #ifdef FEATURE_PAL
-    // For now on Unix we'll just search for DAC in the default location.
-    // Debugger can always control it by setting LD_LIBRARY_PATH env var.
-    WCHAR wszAccessDllPath[MAX_LONGPATH] = MAKEDLLNAME_W(W("mscordaccore"));
-
-#else    
-    WCHAR wszAccessDllPath[MAX_LONGPATH];
+    if (!PAL_GetPALDirectoryWrapper(wszAccessDllPath))
+    {
+        ThrowLastError();
+    }
+    PCWSTR eeFlavor = MAKEDLLNAME_W(W("mscordaccore"));
+#else
     //
     // Load the access DLL from the same directory as the the current CLR Debugging Services DLL.
     //
 
-    if (!WszGetModuleFileName(GetModuleInst(), wszAccessDllPath, NumItems(wszAccessDllPath)))
+    if (!WszGetModuleFileName(GetModuleInst(), wszAccessDllPath))
     {
         ThrowLastError();
     }
 
-    PWSTR pPathTail = wcsrchr(wszAccessDllPath, '\\');
-    if (!pPathTail)
+	if (!SUCCEEDED(CopySystemDirectory(wszAccessDllPath, wszAccessDllPath)))
     {
         ThrowHR(E_INVALIDARG);
     }
-    pPathTail++;
 
     // Dac Dll is named:
     //   mscordaccore.dll  <-- coreclr
     //   mscordacwks.dll   <-- desktop
     PCWSTR eeFlavor = 
-#ifdef FEATURE_MAIN_CLR_MODULE_USES_CORE_NAME
-        W("core");    
-#else
-        W("wks");    
-#endif
-
-    if (_snwprintf_s(pPathTail, 
-                     _countof(wszAccessDllPath) + (wszAccessDllPath - pPathTail),
-                     NumItems(wszAccessDllPath) - (pPathTail - wszAccessDllPath),
-                     MAKEDLLNAME_W(W("mscordac%s")), 
-                     eeFlavor) <= 0)
-    {
-        ThrowHR(E_INVALIDARG);
-    }
-#endif //!FEATURE_PAL  
+        W("mscordaccore.dll");
+    
+#endif // FEATURE_PAL
+    wszAccessDllPath.Append(eeFlavor);
 
     hDacDll.Assign(WszLoadLibrary(wszAccessDllPath));
     if (!hDacDll)

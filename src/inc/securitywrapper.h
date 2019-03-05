@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //*****************************************************************************
 // File: SecurityWrapper.h
 //
@@ -13,7 +12,9 @@
 #ifndef _SECURITY_WRAPPER_H
 #define _SECURITY_WRAPPER_H
 
-// This file should not even be included on Rotor.
+#ifdef FEATURE_PAL
+#error This file should not be included on non-Windows platforms.
+#endif
 
 //-----------------------------------------------------------------------------
 // Wrapper around a PSID.
@@ -61,8 +62,6 @@ protected:
     BYTE * m_pBuffer;
 };
 
-#ifndef FEATURE_PAL
-
 //-----------------------------------------------------------------------------
 // Access Control List.
 //-----------------------------------------------------------------------------
@@ -99,14 +98,6 @@ public:
 protected:
     PSECURITY_DESCRIPTOR m_pDesc;
 };
-
-#endif // FEATURE_PAL
-
-//-----------------------------------------------------------------------------
-// Check if the handle owner belongs to either the process specified by the pid 
-// or the current process. This lets us know if the handle is spoofed.
-//-----------------------------------------------------------------------------
-bool IsHandleSpoofed(HANDLE handle, DWORD pid);
 
 
 #endif // _SECURITY_WRAPPER_H

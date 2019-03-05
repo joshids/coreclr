@@ -1,10 +1,12 @@
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //
 
 //Testing the special values
 
 using System;
+using System.Runtime.InteropServices;
 
 internal class pow1
 {
@@ -13,21 +15,9 @@ internal class pow1
         double x, y, z;
         bool pass = true;
 
-        //Check if the test is being executed on ARM
-        bool isProcessorArm = false;
-
-        string processorArchEnvVar = null;
-
-#if CORECLR 
-        processorArchEnvVar = TestLibrary.Env.GetEnvVariable("PROCESSOR_ARCHITECTURE");
-#else
-        processorArchEnvVar = Environment.GetEnvironmentVariable("PROCESSOR_ARCHITECTURE");
-#endif
-
-        if ((processorArchEnvVar != null) && processorArchEnvVar.Equals("ARM", StringComparison.CurrentCultureIgnoreCase))
-        {
-            isProcessorArm = true;
-        }
+        //Check if the test is being executed on ARMARCH
+        bool isProcessorArmArch = RuntimeInformation.ProcessArchitecture == Architecture.Arm
+                                || RuntimeInformation.ProcessArchitecture == Architecture.Arm64;
 
         x = 0;
         y = 0;
@@ -47,10 +37,10 @@ internal class pow1
             pass = false;
         }
 
-        if (isProcessorArm)
+        if (isProcessorArmArch)
         {
-            //Skip this Test due to the way how Double.Epsilon is defined on ARM
-            Console.WriteLine("Skipping Pow(Double.Epsilon,1) test on ARM");
+            //Skip this Test due to the way how Double.Epsilon is defined on ARMARCH
+            Console.WriteLine("Skipping Pow(Double.Epsilon,1) test on ARMARCH");
         }
         else
         {
@@ -130,7 +120,7 @@ internal class pow1
         x = 1;
         y = Double.NaN;
         z = Math.Pow(x, y);
-        if (!Double.IsNaN(z))
+        if (z != 1)
         {
             Console.WriteLine("x: {0}, y: {1}, Pow(x,y): {2}", x, y, z);
             pass = false;

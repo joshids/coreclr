@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 // ---------------------------------------------------------------------------
 // safemath.h
 //
@@ -23,7 +22,7 @@
 #define _ASSERTE_SAFEMATH _ASSERTE
 #else
 // Otherwise (eg. we're being used from a tool like SOS) there isn't much
-// we can rely on that is both available everywhere and rotor-safe.  In 
+// we can rely on that is available everywhere.  In
 // several other tools we just take the recourse of disabling asserts,
 // we'll do the same here.  
 // Ideally we'd have a collection of common utilities available evererywhere.
@@ -855,19 +854,5 @@ typedef ClrSafeInt<UINT16> S_UINT16;
 #define S_UINT32 ClrSafeInt<UINT32>
 typedef ClrSafeInt<UINT64> S_UINT64; 
 typedef ClrSafeInt<SIZE_T> S_SIZE_T;
-
-// Note: we can get bogus /Wp64 compiler warnings when S_SIZE_T is used.
-// This is due to VSWhidbey 138322 which the C++ folks have said they can't 
-// currently fix. We can work around the problem by using this macro to force
-// a no-op cast on 32-bit MSVC platforms.  It's not yet clear why we need to
-// use this in some places (specifically, rotor lkgvc builds) and not others.
-// We also make the error less likely by using a #define instead of a 
-// typedef for S_UINT32 above since that means we're less likely to instantiate
-// ClrSafeInt<UINT32> AND ClrSafeInt<SIZE_T> in the same compliation unit.
-#if defined(_TARGET_X86_) && defined( _MSC_VER )
-#define S_SIZE_T_WP64BUG(v)  S_SIZE_T( static_cast<UINT32>( v ) )
-#else
-#define S_SIZE_T_WP64BUG(v)  S_SIZE_T( v )
-#endif
 
  #endif // SAFEMATH_H_

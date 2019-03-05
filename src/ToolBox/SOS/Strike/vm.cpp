@@ -1,13 +1,7 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
-// ==++==
-// 
- 
-// 
-// ==--==
 /*++
 
 Module Name:
@@ -23,7 +17,10 @@ Revision History:
 
 --*/
 
-#ifndef FEATURE_PAL
+#ifdef FEATURE_PAL
+#error This file is Win32 only.
+#endif // #ifdef FEATURE_PAL
+
 #include <tchar.h>
 
 
@@ -83,7 +80,7 @@ typedef struct _VM_STATS
 typedef struct PROTECT_MASK
 {
     DWORD Bit;
-    PSTR Name;
+    PCSTR Name;
 
 } PROTECT_MASK, *PPROTECT_MASK;
 
@@ -325,7 +322,7 @@ PrintVmStatsHeader(
 
 VOID
 PrintIndividualStat(
-    ___in __in_z IN PSTR Name,
+    ___in __in_z IN PCSTR Name,
     IN PINDIVIDUAL_STAT Stat
     )
 {
@@ -380,7 +377,7 @@ PrintIndividualStat(
 
 VOID
 PrintVmStats(
-    ___in __in_z IN PSTR Name,
+    ___in __in_z IN PCSTR Name,
     IN PVM_STATS Stats
     )
 {
@@ -444,7 +441,7 @@ VmStateToString(
     size_t capacity_Buffer
     )
 {
-    PSTR result;
+    PCSTR result;
     CHAR invalidStr[sizeof("12345678")];
 
     switch( State )
@@ -479,7 +476,7 @@ VmTypeToString(
     size_t capacity_Buffer
     )
 {
-    PSTR result;
+    PCSTR result;
     CHAR invalidStr[sizeof("12345678")];
 
     switch( Type )
@@ -696,9 +693,9 @@ Return Value:
 
         ExtOut(
             "%p-%p %p  %-13s %-13s %-8s %-8s\n",
-            (ULONG64) memInfo.BaseAddress,
-            (ULONG64)((ULONG_PTR)memInfo.BaseAddress + memInfo.RegionSize - 1),
-            (ULONG64)memInfo.RegionSize,
+            SOS_PTR(memInfo.BaseAddress),
+            SOS_PTR(((ULONG_PTR)memInfo.BaseAddress + memInfo.RegionSize - 1)),
+            SOS_PTR(memInfo.RegionSize),
             VmProtectToString( memInfo.AllocationProtect, aprotectStr, _countof(aprotectStr) ),
             VmProtectToString( memInfo.Protect, protectStr, _countof(protectStr)  ),
             VmStateToString( memInfo.State, stateStr, _countof(stateStr) ),
@@ -713,21 +710,3 @@ Return Value:
     }
 
 }   // DECLARE_API( vmmap )
-
-#else
-
-#include <rotor_pal.h>
-#include <assert.h>
-
-void vmstat()
-{
-   assert(false);
-}
-
-void vmmap()
-{
-
-   assert(false);
-}
-
-#endif  // #ifndef FEATURE_PAL

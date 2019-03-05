@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 // ============================================================
 //
 // CoreBindResult.h
@@ -22,8 +21,6 @@ struct CoreBindResult : public IUnknown
 {
 protected:
     ReleaseHolder<ICLRPrivAssembly> m_pAssembly;
-    BOOL m_bIsFromGAC;
-    BOOL m_bIsOnTpaList;
     HRESULT m_hrBindResult;
     LONG m_cRef;
     
@@ -39,13 +36,11 @@ public:
     CoreBindResult() : m_cRef(1) {}
     virtual ~CoreBindResult() {}
     
-    void Init(ICLRPrivAssembly* pAssembly, BOOL bFromGAC, BOOL bIsOnTpaList);	
+    void Init(ICLRPrivAssembly* pAssembly);
     void Reset();
 	
     BOOL Found();
     PEImage* GetPEImage();
-    BOOL IsFromGAC();
-    BOOL IsOnTpaList();
     BOOL IsMscorlib();
     void GetBindAssembly(ICLRPrivAssembly** ppAssembly);
 #ifdef FEATURE_PREJIT

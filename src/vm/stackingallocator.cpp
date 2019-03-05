@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 // StackingAllocator.cpp -
 //
 
@@ -75,7 +74,6 @@ StackingAllocator::~StackingAllocator()
     {
         NOTHROW;
         GC_NOTRIGGER;
-        SO_TOLERANT;
         MODE_ANY;
     }
     CONTRACTL_END;
@@ -105,7 +103,6 @@ void *StackingAllocator::GetCheckpoint()
     CONTRACTL {
         THROWS;
         GC_NOTRIGGER;
-        SO_TOLERANT;
     } CONTRACTL_END;
 
 #ifdef _DEBUG
@@ -224,7 +221,6 @@ void* StackingAllocator::UnsafeAllocSafeThrow(UINT32 Size)
         THROWS;
         GC_TRIGGERS;
         MODE_ANY;
-        SO_TOLERANT;
         INJECT_FAULT(ThrowOutOfMemory());
         PRECONDITION(m_CheckpointDepth > 0);
         POSTCONDITION(CheckPointer(RETVAL));
@@ -247,7 +243,6 @@ void *StackingAllocator::UnsafeAlloc(UINT32 Size)
         THROWS;
         GC_NOTRIGGER;
         MODE_ANY;
-        SO_TOLERANT;
         INJECT_FAULT(ThrowOutOfMemory());
         PRECONDITION(m_CheckpointDepth > 0);
         POSTCONDITION(CheckPointer(RETVAL));
@@ -312,7 +307,6 @@ void * __cdecl operator new(size_t n, StackingAllocator * alloc)
 {
     STATIC_CONTRACT_THROWS;
     STATIC_CONTRACT_FAULT;
-    STATIC_CONTRACT_SO_TOLERANT;    
 
 #ifdef _WIN64
     // size_t's too big on 64-bit platforms so we check for overflow
@@ -328,13 +322,12 @@ void * __cdecl operator new[](size_t n, StackingAllocator * alloc)
 {
     STATIC_CONTRACT_THROWS;
     STATIC_CONTRACT_FAULT;
-    STATIC_CONTRACT_SO_TOLERANT;    
 
 #ifdef _WIN64
     // size_t's too big on 64-bit platforms so we check for overflow
     if(n > (size_t)(1<<31)) ThrowOutOfMemory();
 #else
-    if(n == (size_t)-1) ThrowOutOfMemory();    // overflow occured 
+    if(n == (size_t)-1) ThrowOutOfMemory();    // overflow occurred 
 #endif
 
     void *retval = alloc->UnsafeAllocNoThrow((unsigned)n);
@@ -348,7 +341,6 @@ void * __cdecl operator new(size_t n, StackingAllocator * alloc, const NoThrow&)
 {
     STATIC_CONTRACT_NOTHROW;
     STATIC_CONTRACT_FAULT;
-    STATIC_CONTRACT_SO_TOLERANT;    
 
 #ifdef _WIN64
     // size_t's too big on 64-bit platforms so we check for overflow
@@ -362,13 +354,12 @@ void * __cdecl operator new[](size_t n, StackingAllocator * alloc, const NoThrow
 {
     STATIC_CONTRACT_NOTHROW;
     STATIC_CONTRACT_FAULT;
-    STATIC_CONTRACT_SO_TOLERANT;    
 
 #ifdef _WIN64
     // size_t's too big on 64-bit platforms so we check for overflow
     if(n > (size_t)(1<<31)) return NULL;
 #else
-    if(n == (size_t)-1) return NULL;    // overflow occured 
+    if(n == (size_t)-1) return NULL;    // overflow occurred 
 #endif
 
     return alloc->UnsafeAllocNoThrow((unsigned)n);

@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //*****************************************************************************
 // File: ShimEvents.cpp
 // 
@@ -52,11 +51,12 @@ void * ManagedEvent::GetDebugCookie()
 //    We'll have a lot of derived classes of ManagedEvent, and so encapsulating the arguments
 //    for the Dispatch() function lets us juggle them around easily without hitting every signature.
 //---------------------------------------------------------------------------------------
-ManagedEvent::DispatchArgs::DispatchArgs(ICorDebugManagedCallback * pCallback1, ICorDebugManagedCallback2 * pCallback2, ICorDebugManagedCallback3 * pCallback3)
+ManagedEvent::DispatchArgs::DispatchArgs(ICorDebugManagedCallback * pCallback1, ICorDebugManagedCallback2 * pCallback2, ICorDebugManagedCallback3 * pCallback3, ICorDebugManagedCallback4 * pCallback4)
 {
     m_pCallback1 = pCallback1;
     m_pCallback2 = pCallback2;
     m_pCallback3 = pCallback3;
+    m_pCallback4 = pCallback4;
 }
 
 
@@ -78,7 +78,13 @@ ICorDebugManagedCallback3 * ManagedEvent::DispatchArgs::GetCallback3()
     return m_pCallback3;
 }
 
-// Returns OS Thread Id that this event occured on, 0 if no thread affinity.
+// trivial accessor to get callback 4
+ICorDebugManagedCallback4 * ManagedEvent::DispatchArgs::GetCallback4()
+{
+    return m_pCallback4;
+}
+
+// Returns OS Thread Id that this event occurred on, 0 if no thread affinity.
 DWORD ManagedEvent::GetOSTid()
 {
     return m_dwThreadId;

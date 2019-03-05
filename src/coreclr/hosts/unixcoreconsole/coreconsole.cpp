@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 //
 // A simple CoreCLR host that runs a managed binary with the same name as this executable but with the *.dll extension
@@ -94,8 +93,9 @@ bool ParseArguments(
 int main(const int argc, const char* argv[])
 {
     // Make sure we have a full path for argv[0].
-    std::string argv0AbsolutePath;
-    if (!GetAbsolutePath(argv[0], argv0AbsolutePath))
+    std::string entryPointExecutablePath;
+
+    if (!GetEntrypointExecutableAbsolutePath(entryPointExecutablePath))
     {
         perror("Could not get full path to current executable");
         return -1;
@@ -103,7 +103,7 @@ int main(const int argc, const char* argv[])
 
     // We will try to load the managed assembly with the same name as this executable
     // but with the .dll extension.
-    std::string programPath(argv0AbsolutePath);
+    std::string programPath(entryPointExecutablePath);
     programPath.append(".dll");
     const char* managedAssemblyAbsolutePath = programPath.c_str();
 
@@ -139,13 +139,13 @@ int main(const int argc, const char* argv[])
     }
 
     std::string clrFilesAbsolutePath;
-    if(!GetClrFilesAbsolutePath(argv0AbsolutePath.c_str(), clrFilesPath, clrFilesAbsolutePath))
+    if(!GetClrFilesAbsolutePath(entryPointExecutablePath.c_str(), clrFilesPath, clrFilesAbsolutePath))
     {
         return -1;
     }
 
     int exitCode = ExecuteManagedAssembly(
-                            argv0AbsolutePath.c_str(),
+                            entryPointExecutablePath.c_str(),
                             clrFilesAbsolutePath.c_str(),
                             managedAssemblyAbsolutePath,
                             managedAssemblyArgc,

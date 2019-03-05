@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 
 // 
@@ -604,25 +603,10 @@ HRESULT CLRTestHookManager::CheckConfig()
 
 HRESULT CLRTestHookManager::UnloadAppDomain(DWORD adid,DWORD flags)
 {
-    HRESULT hr = S_OK;
-    BEGIN_ENTRYPOINT_NOTHROW;
-    // We do not use BEGIN_EXTERNAL_ENTRYPOINT here because
-    // we do not want to setup Thread.  Process may be OOM, and we want Unload
-    // to work.
-    if (flags==ADUF_FORCEFULLGC)
-    {
-        SystemDomain::LockHolder ulh;
-        ADID id(adid);
-        AppDomainFromIDHolder pApp(id,TRUE,AppDomainFromIDHolder::SyncType_ADLock);//, AppDomainFromIDHolder::SyncType_ADLock); 
-        if(!pApp.IsUnloaded())
-            pApp->SetForceGCOnUnload(TRUE);
-    }
-    hr =  AppDomain::UnloadById(ADID(adid), flags!=ADUF_ASYNCHRONOUS,TRUE);
-    END_ENTRYPOINT_NOTHROW;
-    return hr;
+    return COR_E_CANNOTUNLOADAPPDOMAIN;
 }
 
-VOID CLRTestHookManager::DoApproriateWait( int cObjs, HANDLE *pObjs, INT32 iTimeout, BOOL bWaitAll, int* res)
+VOID CLRTestHookManager::DoAppropriateWait( int cObjs, HANDLE *pObjs, INT32 iTimeout, BOOL bWaitAll, int* res)
 {
     CONTRACTL
     {
@@ -639,7 +623,6 @@ VOID CLRTestHookManager::DoApproriateWait( int cObjs, HANDLE *pObjs, INT32 iTime
         result=thread->DoAppropriateWait(cObjs,pObjs,bWaitAll,iTimeout,WaitMode_Alertable,NULL);
     else
     {
-        LeaveRuntimeHolder holder((size_t)WaitForSingleObjectEx);
         result = WaitForMultipleObjectsEx(cObjs,pObjs,bWaitAll,iTimeout,TRUE);
     }
 }
@@ -656,7 +639,7 @@ HRESULT CLRTestHookManager::GC(int generation)
     CONTRACTL_END;
 
     _ASSERTE(GetThread()==NULL || !GetThread()->PreemptiveGCDisabled());
-    GCHeap::GetGCHeap()->GarbageCollect(generation);
+    GCHeapUtilities::GetGCHeap()->GarbageCollect(generation);
     FinalizerThread::FinalizerThreadWait();
     return S_OK;
 }

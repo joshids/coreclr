@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 
 
@@ -22,14 +21,6 @@ inline InstantiatedMethodDesc* MethodDesc::AsInstantiatedMethodDesc() const
     _ASSERTE(GetClassification() == mcInstantiated);
     return dac_cast<PTR_InstantiatedMethodDesc>(this);
 }
-
-#ifndef BINDER
-inline BOOL MethodDesc::IsDomainNeutral()
-{
-    WRAPPER_NO_CONTRACT;
-    return !IsLCGMethod() && GetDomain()->IsSharedDomain();
-}
-#endif // !BINDER
 
 inline BOOL MethodDesc::IsZapped()
 {
@@ -59,7 +50,6 @@ inline SigParser MethodDesc::GetSigParser()
     return SigParser(pSig, cSig);
 }
 
-#ifndef BINDER
 inline SigPointer MethodDesc::GetSigPointer()
 {
     WRAPPER_NO_CONTRACT;
@@ -70,7 +60,6 @@ inline SigPointer MethodDesc::GetSigPointer()
 
     return SigPointer(pSig, cSig);
 }
-#endif // !BINDER
 
 inline PTR_LCGMethodResolver DynamicMethodDesc::GetLCGMethodResolver()
 {
@@ -80,7 +69,6 @@ inline PTR_LCGMethodResolver DynamicMethodDesc::GetLCGMethodResolver()
         GC_NOTRIGGER;
         NOTHROW;
         PRECONDITION(IsLCGMethod());
-        SO_TOLERANT;
     }
     CONTRACTL_END;
 
@@ -95,7 +83,6 @@ inline PTR_ILStubResolver DynamicMethodDesc::GetILStubResolver()
         GC_NOTRIGGER;
         NOTHROW;
         PRECONDITION(IsILStub());
-        SO_TOLERANT;
     }
     CONTRACTL_END;
 
@@ -110,7 +97,6 @@ inline PTR_DynamicMethodDesc MethodDesc::AsDynamicMethodDesc()
         GC_NOTRIGGER;
         NOTHROW;
         PRECONDITION(IsDynamicMethod());
-        SO_TOLERANT;
         SUPPORTS_DAC;
     }
     CONTRACTL_END;
@@ -157,27 +143,6 @@ inline void MethodDesc::SetupGenericComPlusCall()
 }
 #endif // FEATURE_COMINTEROP
 
-#ifndef FEATURE_REMOTING
-
-inline BOOL MethodDesc::MayBeRemotingIntercepted()
-{
-    LIMITED_METHOD_CONTRACT;
-    return FALSE;
-}
-
-inline BOOL MethodDesc::IsRemotingInterceptedViaPrestub()
-{
-    LIMITED_METHOD_CONTRACT;
-    return FALSE;
-}
-
-inline BOOL MethodDesc::IsRemotingInterceptedViaVirtualDispatch()
-{
-    LIMITED_METHOD_CONTRACT;
-    return FALSE;
-}
-
-#endif // FEATURE_REMOTING
 
 #ifdef FEATURE_COMINTEROP
 
@@ -202,21 +167,29 @@ inline ComPlusCallInfo *ComPlusCallInfo::FromMethodDesc(MethodDesc *pMD)
 
 #endif //FEATURE_COMINTEROP
 
-#ifndef FEATURE_TYPEEQUIVALENCE
-inline BOOL HasTypeEquivalentStructParameters()
+#ifdef FEATURE_CODE_VERSIONING
+inline CodeVersionManager * MethodDesc::GetCodeVersionManager()
 {
     LIMITED_METHOD_CONTRACT;
-    return FALSE;
+    return GetModule()->GetCodeVersionManager();
 }
-#endif // FEATURE_TYPEEQUIVALENCE
+#endif
 
-#ifndef BINDER
-inline ReJitManager * MethodDesc::GetReJitManager()
+#ifdef FEATURE_TIERED_COMPILATION
+inline CallCounter * MethodDesc::GetCallCounter()
 {
     LIMITED_METHOD_CONTRACT;
-    return GetModule()->GetReJitManager();
+    return GetLoaderAllocator()->GetCallCounter();
 }
-#endif // !BINDER
+#endif
+
+#ifndef CROSSGEN_COMPILE
+inline MethodDescBackpatchInfoTracker * MethodDesc::GetBackpatchInfoTracker()
+{
+    LIMITED_METHOD_CONTRACT;
+    return GetLoaderAllocator()->GetMethodDescBackpatchInfoTracker();
+}
+#endif
 
 #endif  // _METHOD_INL_
 
